@@ -1,0 +1,50 @@
+#!/usr/bin/expect
+
+set timeout 300
+set password "iMpresora\$2016A"
+set ip "157.230.138.178"
+set user "root"
+
+puts "=== DESPLEGANDO MEJORAS AL VPS ==="
+puts ""
+
+# Copiar server.js actualizado
+puts "Copiando server.js mejorado al VPS..."
+spawn scp backend/server.js root@$ip:/root/active-scan-insight/backend/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+puts "Archivo copiado exitosamente"
+puts ""
+
+# Reiniciar backend
+puts "Reiniciando contenedor backend..."
+spawn ssh root@$ip "cd /root/active-scan-insight && docker compose restart backend"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+puts "Backend reiniciado"
+puts ""
+
+# Esperar 5 segundos para que el servicio inicie
+puts "Esperando 5 segundos para inicio del servicio..."
+sleep 5
+
+# Verificar logs
+puts "Verificando logs del backend..."
+spawn ssh root@$ip "cd /root/active-scan-insight && docker compose logs --tail 30 backend"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+puts ""
+puts "=== DEPLOY COMPLETADO ==="
+puts "Los prompts mejorados estan ahora activos en el VPS"
+puts ""
+puts "Proximo paso: Ejecutar un nuevo assessment para validar las mejoras"

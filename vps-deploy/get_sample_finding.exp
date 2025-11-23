@@ -1,0 +1,9 @@
+#!/usr/bin/expect -f
+set timeout 30
+
+spawn ssh root@157.230.138.178 "docker exec active-scan-insight-db-1 psql -U postgres -d active_scan_insight -c \"SELECT title, severity, description, recommendation FROM findings ORDER BY created_at DESC LIMIT 1;\""
+
+expect "password:"
+send "Gilberth\$2025\r"
+
+expect eof

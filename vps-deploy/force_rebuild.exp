@@ -1,0 +1,30 @@
+#!/usr/bin/expect
+
+set timeout 300
+set password "iMpresora\$2016A"
+set ip "157.230.138.178"
+set user "root"
+
+# Copy updated server.js
+spawn scp vps-deploy/backend/server.js $user@$ip:/root/active-scan-insight/backend/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+# Stop containers
+spawn ssh $user@$ip "cd /root/active-scan-insight && docker compose down"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+# Rebuild and start
+spawn ssh $user@$ip "cd /root/active-scan-insight && docker compose up -d --build"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof

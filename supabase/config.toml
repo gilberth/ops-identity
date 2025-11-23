@@ -1,0 +1,16 @@
+project_id = "wgbdwdrnatnalzctteyd"
+
+[functions.upload-data]
+verify_jwt = false
+
+[functions.analyze-assessment]
+verify_jwt = false
+
+[functions.analyze-category]
+verify_jwt = false
+
+[functions.process-large-file]
+verify_jwt = false
+
+[functions.get-assessment-logs]
+verify_jwt = false

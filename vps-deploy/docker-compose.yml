@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: active_scan_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    shm_size: 1G
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c work_mem=256MB
+      -c maintenance_work_mem=512MB
+      -c effective_cache_size=2GB
+      -c max_wal_size=2GB
+
+  backend:
+    build: ./backend
+    restart: always
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://postgres:postgrespassword@db:5432/active_scan_db
+      NODE_OPTIONS: "--max-old-space-size=6144"
+      # Add your AI keys here - use environment variables or .env file
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-your_openai_key_here}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+
+  frontend:
+    build: ./frontend
+    restart: always
+    ports:
+      - "80:80"
+
+
+volumes:
+  postgres_data:

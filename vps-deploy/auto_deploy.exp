@@ -1,0 +1,66 @@
+#!/usr/bin/expect
+
+set timeout 300
+set password "iMpresora\$2016A"
+set ip "157.230.138.178"
+set user "root"
+
+# 0. Install Docker if missing
+spawn ssh $user@$ip "if ! command -v docker &> /dev/null; then curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh; fi"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+# 1. Create directory
+spawn ssh $user@$ip "mkdir -p /root/active-scan-insight/backend"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+# 2. Copy files
+spawn scp vps-deploy/docker-compose.yml $user@$ip:/root/active-scan-insight/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+spawn scp vps-deploy/init.sql $user@$ip:/root/active-scan-insight/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+spawn scp vps-deploy/backend/Dockerfile $user@$ip:/root/active-scan-insight/backend/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+spawn scp vps-deploy/backend/package.json $user@$ip:/root/active-scan-insight/backend/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+spawn scp vps-deploy/backend/server.js $user@$ip:/root/active-scan-insight/backend/
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+# 3. Start services
+spawn ssh $user@$ip "cd /root/active-scan-insight && docker compose down && docker compose up -d --build"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof

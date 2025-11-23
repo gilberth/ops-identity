@@ -1,0 +1,1854 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Download, Shield, Terminal, ArrowLeft } from "lucide-react";
+import Header from "@/components/layout/Header";
+import { toast } from "sonner";
+import { Link } from "react-router-dom";
+import { api } from "@/utils/api";
+
+const NewAssessment = () => {
+    const [domain, setDomain] = useState("");
+    const [scriptGenerated, setScriptGenerated] = useState(false);
+    const [assessmentId, setAssessmentId] = useState<string | null>(null);
+    const navigate = useNavigate();
+
+    const generateScript = async () => {
+        if (!domain.trim()) {
+            toast.error("Por favor ingresa un nombre de dominio");
+            return;
+        }
+
+        try {
+            // Create assessment in database
+            const data = await api.createAssessment(domain.trim());
+
+            setAssessmentId(data.id);
+            setScriptGenerated(true);
+            toast.success("Script PowerShell generado exitosamente");
+        } catch (error) {
+            console.error('Error creating assessment:', error);
+            toast.error("Error al crear el assessment");
+        }
+    };
+
+    const downloadScript = () => {
+        const uploadEndpoint = import.meta.env.VITE_VPS_ENDPOINT
+            ? `${import.meta.env.VITE_VPS_ENDPOINT}/api/process-assessment`
+            : `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-data`;
+
+        // PowerShell script template with ALL advanced security functions
+        const script = `# =============================================================================
+# Active Directory Security Assessment - Data Collection Script
+# Generated for: ${domain}
+# Assessment ID: ${assessmentId}
+# Generated on: ${new Date().toISOString()}
+# =============================================================================
+# IMPORTANT:
+# 1. Run this script from a Domain Controller or a member server with
+#    Active Directory PowerShell Module installed.
+# 2. Execute with an account that has Domain Admins or equivalent privileges
+#    to ensure all necessary data can be collected.
+# 3. For DCs without internet: Use -OfflineMode to save JSON locally only
+#    Example: .\\script.ps1 -OfflineMode
+# =============================================================================
+
+# --- Parameters ---
+param(
+    [switch]$OfflineMode
+)
+
+# --- Configuration ---
+$ApiEndpoint = "${uploadEndpoint}"
+$AssessmentId = "${assessmentId}"
+$DomainName = "${domain}"
+
+# --- Script Start ---
+Write-Host "=" * 80 -ForegroundColor Cyan
+Write-Host "Active Directory Security Assessment" -ForegroundColor Cyan
+Write-Host "Domain: $DomainName" -ForegroundColor Cyan
+Write-Host "Assessment ID: $AssessmentId" -ForegroundColor Cyan
+if ($OfflineMode) {
+    Write-Host "Mode: OFFLINE (Save JSON locally only)" -ForegroundColor Yellow
+} else {
+    Write-Host "Mode: ONLINE (Send to API)" -ForegroundColor Green
+}
+Write-Host "=" * 80 -ForegroundColor Cyan
+Write-Host ""
+
+# Configurar codificacion UTF-8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = "Continue"
+
+# Check PowerShell version
+Write-Host "[*] Checking PowerShell version..." -ForegroundColor Green
+$psVersion = $PSVersionTable.PSVersion
+Write-Host "[+] PowerShell version: $($psVersion.Major).$($psVersion.Minor)" -ForegroundColor Green
+
+if ($psVersion.Major -lt 5) {
+    Write-Host "[!] WARNING: PowerShell 5.0+ recommended. Current version: $($psVersion.Major).$($psVersion.Minor)" -ForegroundColor Yellow
+}
+
+# Check if running as Administrator
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host "WARNING: Script is not running as Administrator. Some data may not be collected." -ForegroundColor Yellow
+}
+
+# Import Active Directory Module
+Write-Host "[*] Importing Active Directory module..." -ForegroundColor Green
+try {
+    Import-Module ActiveDirectory -ErrorAction Stop
+    Write-Host "[+] Active Directory module loaded successfully" -ForegroundColor Green
+} catch {
+    Write-Host "[!] ERROR: Active Directory module not found. Please install RSAT tools." -ForegroundColor Red
+    Write-Host "    Install with: Add-WindowsFeature RSAT-AD-PowerShell" -ForegroundColor Yellow
+    exit 1
+}
+
+# Check for GroupPolicy module (optional)
+$gpModuleAvailable = $false
+Write-Host "[*] Checking for GroupPolicy module..." -ForegroundColor Green
+try {
+    Import-Module GroupPolicy -ErrorAction Stop
+    $gpModuleAvailable = $true
+    Write-Host "[+] GroupPolicy module loaded successfully" -ForegroundColor Green
+} catch {
+    Write-Host "[!] WARNING: GroupPolicy module not available. Using alternative methods for GPO analysis." -ForegroundColor Yellow
+    Write-Host "    For full GPO analysis, install with: Add-WindowsFeature GPMC" -ForegroundColor Yellow
+}
+
+# Check for DNSServer module (optional)
+$dnsModuleAvailable = $false
+Write-Host "[*] Checking for DNSServer module..." -ForegroundColor Green
+try {
+    Import-Module DnsServer -ErrorAction Stop
+    $dnsModuleAvailable = $true
+    Write-Host "[+] DNSServer module loaded successfully" -ForegroundColor Green
+} catch {
+    Write-Host "[!] WARNING: DNSServer module not available. DNS scavenging analysis will be limited." -ForegroundColor Yellow
+}
+
+# =============================================================================
+# DATA COLLECTION FUNCTIONS
+# =============================================================================
+
+function Get-DomainInformation {
+    Write-Host "\`n[*] Collecting Domain Information..." -ForegroundColor Green
+    try {
+        $domain = Get-ADDomain
+        $forest = Get-ADForest
+
+        $domainInfo = @{
+            DomainDNS = $domain.DNSRoot
+            DomainNetBIOS = $domain.NetBIOSName
+            ForestName = $forest.Name
+            DomainFunctionalLevel = $domain.DomainMode.ToString()
+            ForestFunctionalLevel = $forest.ForestMode.ToString()
+            DomainSID = $domain.DomainSID.Value
+            SchemaVersion = (Get-ADObject (Get-ADRootDSE).schemaNamingContext -Property objectVersion).objectVersion
+        }
+
+        Write-Host "[+] Domain information collected" -ForegroundColor Green
+        return $domainInfo
+    } catch {
+        Write-Host "[!] Error collecting domain information: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-DomainControllerInfo {
+    Write-Host "\`n[*] Collecting Domain Controllers..." -ForegroundColor Green
+    try {
+        $dcs = Get-ADDomainController -Filter * | ForEach-Object {
+            @{
+                Name = $_.Name
+                HostName = $_.HostName
+                IPv4Address = $_.IPv4Address
+                OperatingSystem = $_.OperatingSystem
+                OperatingSystemVersion = $_.OperatingSystemVersion
+                IsGlobalCatalog = $_.IsGlobalCatalog
+                IsReadOnly = $_.IsReadOnly
+                Site = $_.Site
+                Enabled = $_.Enabled
+                Roles = @($_.OperationMasterRoles)
+            }
+        }
+
+        Write-Host "[+] Collected $($dcs.Count) Domain Controllers" -ForegroundColor Green
+        return $dcs
+    } catch {
+        Write-Host "[!] Error collecting DCs: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-ADSiteTopology {
+    Write-Host "\`n[*] Collecting Site Topology..." -ForegroundColor Green
+    try {
+        $sites = Get-ADReplicationSite -Filter * | ForEach-Object {
+            @{
+                Name = $_.Name
+                Description = $_.Description
+                Location = $_.Location
+            }
+        }
+
+        $subnets = Get-ADReplicationSubnet -Filter * | ForEach-Object {
+            @{
+                Name = $_.Name
+                Site = $_.Site
+                Description = $_.Description
+            }
+        }
+
+        Write-Host "[+] Collected $($sites.Count) sites and $($subnets.Count) subnets" -ForegroundColor Green
+        return @{
+            Sites = $sites
+            Subnets = $subnets
+        }
+    } catch {
+        Write-Host "[!] Error collecting site topology: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-TrustRelationships {
+    Write-Host "\`n[*] Collecting Trust Relationships..." -ForegroundColor Green
+    try {
+        $trusts = Get-ADTrust -Filter * | ForEach-Object {
+            @{
+                Name = $_.Name
+                Direction = $_.Direction.ToString()
+                TrustType = $_.TrustType.ToString()
+                Source = $_.Source
+                Target = $_.Target
+                SelectiveAuthentication = $_.SelectiveAuthentication
+                SIDFilteringQuarantined = $_.SIDFilteringQuarantined
+                DisallowTransivity = $_.DisallowTransivity
+            }
+        }
+
+        Write-Host "[+] Collected $($trusts.Count) trust relationships" -ForegroundColor Green
+        return $trusts
+    } catch {
+        Write-Host "[!] Error collecting trusts: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-AllADUsers {
+    Write-Host "\`n[*] Collecting Active Directory Users (this may take a while)..." -ForegroundColor Green
+    try {
+        $users = Get-ADUser -Filter * -Properties \`
+            DisplayName, UserPrincipalName, Enabled, PasswordLastSet, PasswordNeverExpires, \`
+            PasswordNotRequired, LastLogonDate, whenCreated, ServicePrincipalName, \`
+            DoesNotRequirePreAuth, TrustedForDelegation, TrustedToAuthForDelegation, \`
+            MemberOf, msDS-SupportedEncryptionTypes, \`
+            msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity | ForEach-Object {
+
+            $privilegedGroups = @(
+                "Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators",
+                "Account Operators", "Backup Operators", "Server Operators", "Print Operators",
+                "DnsAdmins", "Group Policy Creator Owners"
+            )
+
+            $userGroups = $_.MemberOf | ForEach-Object {
+                (Get-ADGroup $_ -ErrorAction SilentlyContinue).Name
+            }
+
+            $isPrivileged = ($userGroups | Where-Object { $privilegedGroups -contains $_ }).Count -gt 0
+
+            $isStale = $false
+            if ($_.LastLogonDate) {
+                $daysSinceLogon = (Get-Date) - $_.LastLogonDate
+                $isStale = $daysSinceLogon.Days -gt 90
+            } elseif ($_.whenCreated) {
+                $daysSinceCreation = (Get-Date) - $_.whenCreated
+                $isStale = $daysSinceCreation.Days -gt 90
+            }
+
+            @{
+                SamAccountName = $_.SamAccountName
+                DisplayName = $_.DisplayName
+                UserPrincipalName = $_.UserPrincipalName
+                DistinguishedName = $_.DistinguishedName
+                Enabled = $_.Enabled
+                PasswordLastSet = $_.PasswordLastSet
+                PasswordNeverExpires = $_.PasswordNeverExpires
+                PasswordNotRequired = $_.PasswordNotRequired
+                LastLogonDate = $_.LastLogonDate
+                WhenCreated = $_.whenCreated
+                IsPrivileged = $isPrivileged
+                PrivilegedGroups = @($userGroups | Where-Object { $privilegedGroups -contains $_ })
+                ServicePrincipalNames = @($_.ServicePrincipalName)
+                IsKerberoastable = ($_.ServicePrincipalName.Count -gt 0)
+                DoNotRequirePreAuth = $_.DoesNotRequirePreAuth
+                IsASREPRoastable = $_.DoesNotRequirePreAuth
+                TrustedForDelegation = $_.TrustedForDelegation
+                TrustedToAuthForDelegation = $_.TrustedToAuthForDelegation
+                AllowedToDelegateTo = @($_.'msDS-AllowedToDelegateTo')
+                IsStale = $isStale
+            }
+        }
+
+        Write-Host "[+] Collected $($users.Count) users" -ForegroundColor Green
+        return $users
+    } catch {
+        Write-Host "[!] Error collecting users: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-AllADComputers {
+    Write-Host "\`n[*] Collecting Active Directory Computers..." -ForegroundColor Green
+    try {
+        $computers = Get-ADComputer -Filter * -Properties \`
+            DNSHostName, Enabled, OperatingSystem, OperatingSystemVersion, \`
+            LastLogonDate, PasswordLastSet, whenCreated, TrustedForDelegation, \`
+            PrimaryGroupID | ForEach-Object {
+
+            $isDC = $_.PrimaryGroupID -eq 516
+
+            $isStale = $false
+            if ($_.LastLogonDate) {
+                $daysSinceLogon = (Get-Date) - $_.LastLogonDate
+                $isStale = $daysSinceLogon.Days -gt 90
+            }
+
+            @{
+                Name = $_.Name
+                DNSHostName = $_.DNSHostName
+                DistinguishedName = $_.DistinguishedName
+                Enabled = $_.Enabled
+                OperatingSystem = $_.OperatingSystem
+                OperatingSystemVersion = $_.OperatingSystemVersion
+                LastLogonDate = $_.LastLogonDate
+                PasswordLastSet = $_.PasswordLastSet
+                WhenCreated = $_.whenCreated
+                IsDomainController = $isDC
+                TrustedForDelegation = $_.TrustedForDelegation
+                IsStale = $isStale
+            }
+        }
+
+        Write-Host "[+] Collected $($computers.Count) computers" -ForegroundColor Green
+        return $computers
+    } catch {
+        Write-Host "[!] Error collecting computers: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-AllADGroups {
+    Write-Host "\`n[*] Collecting Active Directory Groups..." -ForegroundColor Green
+    try {
+        $groups = Get-ADGroup -Filter * -Properties Members, Description | ForEach-Object {
+            $memberCount = if ($_.Members) { $_.Members.Count } else { 0 }
+
+            $privilegedGroups = @(
+                "Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators"
+            )
+            $isPrivileged = $privilegedGroups -contains $_.Name
+
+            $privilegeLevel = $null
+            if ($_.Name -in @("Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators")) {
+                $privilegeLevel = "TIER0"
+            } elseif ($_.Name -in @("Account Operators", "Backup Operators", "Server Operators")) {
+                $privilegeLevel = "TIER1"
+            }
+
+            @{
+                Name = $_.Name
+                DistinguishedName = $_.DistinguishedName
+                GroupCategory = $_.GroupCategory.ToString()
+                GroupScope = $_.GroupScope.ToString()
+                Description = $_.Description
+                MemberCount = $memberCount
+                Members = @($_.Members)
+                IsPrivileged = $isPrivileged
+                PrivilegeLevel = $privilegeLevel
+            }
+        }
+
+        Write-Host "[+] Collected $($groups.Count) groups" -ForegroundColor Green
+        return $groups
+    } catch {
+        Write-Host "[!] Error collecting groups: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-PasswordPolicies {
+    Write-Host "\`n[*] Collecting Password Policies..." -ForegroundColor Green
+    try {
+        $defaultPolicy = Get-ADDefaultDomainPasswordPolicy
+
+        $policyInfo = @{
+            ComplexityEnabled = $defaultPolicy.ComplexityEnabled
+            LockoutDuration = $defaultPolicy.LockoutDuration.TotalMinutes
+            LockoutObservationWindow = $defaultPolicy.LockoutObservationWindow.TotalMinutes
+            LockoutThreshold = $defaultPolicy.LockoutThreshold
+            MaxPasswordAge = $defaultPolicy.MaxPasswordAge.Days
+            MinPasswordAge = $defaultPolicy.MinPasswordAge.Days
+            MinPasswordLength = $defaultPolicy.MinPasswordLength
+            PasswordHistoryCount = $defaultPolicy.PasswordHistoryCount
+            ReversibleEncryptionEnabled = $defaultPolicy.ReversibleEncryptionEnabled
+        }
+
+        try {
+            $fgpp = Get-ADFineGrainedPasswordPolicy -Filter * | ForEach-Object {
+                @{
+                    Name = $_.Name
+                    Precedence = $_.Precedence
+                    ComplexityEnabled = $_.ComplexityEnabled
+                    LockoutThreshold = $_.LockoutThreshold
+                    MinPasswordLength = $_.MinPasswordLength
+                    PasswordHistoryCount = $_.PasswordHistoryCount
+                    AppliesTo = @($_.AppliesTo)
+                }
+            }
+            $policyInfo.FineGrainedPolicies = $fgpp
+        } catch {
+            $policyInfo.FineGrainedPolicies = @()
+        }
+
+        Write-Host "[+] Password policies collected" -ForegroundColor Green
+        return $policyInfo
+    } catch {
+        Write-Host "[!] Error collecting password policies: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-GPOInventory {
+    Write-Host "\`n[*] Collecting Group Policy Objects..." -ForegroundColor Green
+    try {
+        if ($gpModuleAvailable) {
+            $gpos = Get-GPO -All | ForEach-Object {
+                $linkedOUs = @()
+                $linkInfo = @()
+                
+                try {
+                    # Get GPO links
+                    $gpoReport = Get-GPOReport -Guid $_.Id -ReportType XML
+                    $linksTo = ([xml]$gpoReport).GPO.LinksTo
+                    
+                    if ($linksTo) {
+                        foreach ($link in $linksTo) {
+                            $linkInfo += @{
+                                SOMPath = $link.SOMPath
+                                SOMName = $link.SOMName
+                                Enabled = $link.Enabled
+                                NoOverride = $link.NoOverride
+                            }
+                        }
+                    }
+                } catch {}
+
+                # Get permissions
+                $permissions = @()
+                try {
+                    $perms = Get-GPPermission -Guid $_.Id -All
+                    foreach ($perm in $perms) {
+                        $permissions += @{
+                            Trustee = $perm.Trustee.Name
+                            Permission = $perm.Permission.ToString()
+                        }
+                    }
+                } catch {}
+
+                @{
+                    DisplayName = $_.DisplayName
+                    GpoId = $_.Id.ToString()
+                    GpoStatus = $_.GpoStatus.ToString()
+                    CreationTime = $_.CreationTime
+                    ModificationTime = $_.ModificationTime
+                    Owner = $_.Owner
+                    Description = $_.Description
+                    UserVersionDS = $_.User.DSVersion
+                    UserVersionSysvol = $_.User.SysvolVersion
+                    ComputerVersionDS = $_.Computer.DSVersion
+                    ComputerVersionSysvol = $_.Computer.SysvolVersion
+                    Links = $linkInfo
+                    Permissions = $permissions
+                    WmiFilterApplied = ($_.WmiFilter.Name -ne $null)
+                    WmiFilterName = if ($_.WmiFilter.Name) { $_.WmiFilter.Name } else { "None" }
+                }
+            }
+        } else {
+            # Use AD queries as fallback
+            $domain = Get-ADDomain
+            $gpoContainer = "CN=Policies,CN=System," + $domain.DistinguishedName
+            $gpos = Get-ADObject -Filter {objectClass -eq "groupPolicyContainer"} -SearchBase $gpoContainer -Properties displayName, gPCFileSysPath, whenCreated, whenChanged | ForEach-Object {
+                @{
+                    DisplayName = $_.displayName
+                    DN = $_.DistinguishedName
+                    CreationTime = $_.whenCreated
+                    ModificationTime = $_.whenChanged
+                    Path = $_.gPCFileSysPath
+                    Note = "Limited information - GroupPolicy module not available"
+                }
+            }
+        }
+
+        Write-Host "[+] Collected $($gpos.Count) GPOs with detailed information" -ForegroundColor Green
+        return $gpos
+    } catch {
+        Write-Host "[!] Error collecting GPOs: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-KerberosConfiguration {
+    Write-Host "\`n[*] Collecting Kerberos Configuration..." -ForegroundColor Green
+    try {
+        $krbtgt = Get-ADUser krbtgt -Properties PasswordLastSet
+
+        $kerberosInfo = @{
+            KRBTGTPasswordLastSet = $krbtgt.PasswordLastSet
+            KRBTGTPasswordAge = ((Get-Date) - $krbtgt.PasswordLastSet).Days
+        }
+
+        Write-Host "[+] Kerberos configuration collected" -ForegroundColor Green
+        return $kerberosInfo
+    } catch {
+        Write-Host "[!] Error collecting Kerberos config: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-LAPSStatus {
+    Write-Host "\`n[*] Checking LAPS Deployment..." -ForegroundColor Green
+    try {
+        $lapsSchema = Get-ADObject -SearchBase (Get-ADRootDSE).schemaNamingContext -Filter "name -eq 'ms-Mcs-AdmPwd'" -ErrorAction SilentlyContinue
+
+        $lapsInfo = @{
+            SchemaExtended = ($lapsSchema -ne $null)
+            GPOConfigured = $false
+            ComputersWithLAPS = 0
+        }
+
+        if ($lapsSchema) {
+            $computersWithLAPS = (Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd | Where-Object { $_.'ms-Mcs-AdmPwd' -ne $null }).Count
+            $lapsInfo.ComputersWithLAPS = $computersWithLAPS
+        }
+
+        Write-Host "[+] LAPS status collected" -ForegroundColor Green
+        return $lapsInfo
+    } catch {
+        Write-Host "[!] Error checking LAPS: $_" -ForegroundColor Red
+        return @{ SchemaExtended = $false; GPOConfigured = $false; ComputersWithLAPS = 0 }
+    }
+}
+
+function Get-ReplicationStatus {
+    Write-Host "\`n[*] Analyzing AD Replication Status..." -ForegroundColor Green
+    try {
+        $replSummary = @()
+
+        try {
+            $replData = Get-ADReplicationPartnerMetadata -Target $DomainName -ErrorAction SilentlyContinue
+
+            foreach ($repl in $replData) {
+                $replSummary += @{
+                    Server = $repl.Server
+                    Partner = $repl.Partner
+                    LastReplicationSuccess = $repl.LastReplicationSuccess
+                    LastReplicationResult = $repl.LastReplicationResult
+                    ConsecutiveReplicationFailures = $repl.ConsecutiveReplicationFailures
+                    LastChangeUsn = $repl.LastChangeUsn
+                }
+            }
+        } catch {
+            Write-Host "[*] Using fallback method: Querying each DC..." -ForegroundColor Yellow
+            $dcs = Get-ADDomainController -Filter * -Server $DomainName
+
+            foreach ($dc in $dcs) {
+                try {
+                    $replPartners = Get-ADReplicationPartnerMetadata -Target $dc.HostName -ErrorAction SilentlyContinue
+
+                    foreach ($partner in $replPartners) {
+                        $replSummary += @{
+                            Server = $partner.Server
+                            Partner = $partner.Partner
+                            LastReplicationSuccess = $partner.LastReplicationSuccess
+                            LastReplicationResult = $partner.LastReplicationResult
+                            ConsecutiveReplicationFailures = $partner.ConsecutiveReplicationFailures
+                            LastChangeUsn = $partner.LastChangeUsn
+                        }
+                    }
+                } catch {
+                    Write-Host "[!] Could not get replication data from $($dc.HostName)" -ForegroundColor Yellow
+                }
+            }
+        }
+
+        Write-Host "[+] Collected replication status from $($replSummary.Count) replication partners" -ForegroundColor Green
+        return $replSummary
+    } catch {
+        Write-Host "[!] Error collecting replication status: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-DCSyncPermissions {
+    Write-Host "\`n[*] Analyzing DCSync Attack Permissions (CRITICAL)..." -ForegroundColor Green
+    try {
+        $domainDN = (Get-ADDomain).DistinguishedName
+        $acl = Get-Acl "AD:$domainDN"
+
+        $dangerousPermissions = @()
+
+        foreach ($access in $acl.Access) {
+            if ($access.ActiveDirectoryRights -like "*Replication*" -and
+                ($access.ObjectType -eq "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" -or
+                 $access.ObjectType -eq "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")) {
+
+                $dangerousPermissions += @{
+                    IdentityReference = $access.IdentityReference.ToString()
+                    ActiveDirectoryRights = $access.ActiveDirectoryRights.ToString()
+                    AccessControlType = $access.AccessControlType.ToString()
+                    ObjectType = $access.ObjectType.ToString()
+                    IsInherited = $access.IsInherited
+                    RiskLevel = "CRITICAL"
+                    AttackTechnique = "DCSync (MITRE T1003.006)"
+                }
+            }
+        }
+
+        Write-Host "[+] Found $($dangerousPermissions.Count) potentially dangerous replication permissions" -ForegroundColor $(if ($dangerousPermissions.Count -gt 0) { "Red" } else { "Green" })
+        return $dangerousPermissions
+    } catch {
+        Write-Host "[!] Error analyzing DCSync permissions: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-RC4EncryptionTypes {
+    Write-Host "\`n[*] Detecting RC4 Kerberos Encryption (Weak Crypto)..." -ForegroundColor Green
+    try {
+        $usersWithRC4 = @()
+
+        $kerberoastableUsers = Get-ADUser -Filter {ServicePrincipalName -like "*"} -Properties \`
+            ServicePrincipalName, "msDS-SupportedEncryptionTypes", PasswordLastSet, Enabled
+
+        foreach ($user in $kerberoastableUsers) {
+            $encTypes = $user."msDS-SupportedEncryptionTypes"
+            $usesRC4 = ($null -eq $encTypes) -or (($encTypes -band 4) -ne 0)
+
+            if ($usesRC4) {
+                $usersWithRC4 += @{
+                    SamAccountName = $user.SamAccountName
+                    DistinguishedName = $user.DistinguishedName
+                    Enabled = $user.Enabled
+                    PasswordLastSet = $user.PasswordLastSet
+                    EncryptionTypes = $encTypes
+                    UsesRC4 = $true
+                    ServicePrincipalNames = @($user.ServicePrincipalName)
+                    RiskLevel = "HIGH"
+                    Vulnerability = "RC4_HMAC vulnerable to offline cracking"
+                }
+            }
+        }
+
+        Write-Host "[+] Found $($usersWithRC4.Count) users with RC4 encryption enabled" -ForegroundColor $(if ($usersWithRC4.Count -gt 0) { "Yellow" } else { "Green" })
+        return $usersWithRC4
+    } catch {
+        Write-Host "[!] Error detecting RC4 encryption: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-OldPasswords {
+    Write-Host "\`n[*] Identifying Users with Old Passwords (>365 days)..." -ForegroundColor Green
+    try {
+        $oldPasswordUsers = @()
+
+        $users = Get-ADUser -Filter {Enabled -eq $true} -Properties PasswordLastSet, PasswordNeverExpires
+
+        foreach ($user in $users) {
+            if ($user.PasswordLastSet) {
+                $passwordAge = ((Get-Date) - $user.PasswordLastSet).Days
+
+                if ($passwordAge -gt 365) {
+                    $oldPasswordUsers += @{
+                        SamAccountName = $user.SamAccountName
+                        DistinguishedName = $user.DistinguishedName
+                        PasswordLastSet = $user.PasswordLastSet
+                        PasswordAgeDays = $passwordAge
+                        PasswordNeverExpires = $user.PasswordNeverExpires
+                        RiskLevel = if ($passwordAge -gt 730) { "HIGH" } elseif ($passwordAge -gt 365) { "MEDIUM" } else { "LOW" }
+                    }
+                }
+            }
+        }
+
+        Write-Host "[+] Found $($oldPasswordUsers.Count) users with passwords older than 365 days" -ForegroundColor $(if ($oldPasswordUsers.Count -gt 0) { "Yellow" } else { "Green" })
+        return $oldPasswordUsers
+    } catch {
+        Write-Host "[!] Error identifying old passwords: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-RecycleBinStatus {
+    Write-Host "\`n[*] Checking AD Recycle Bin Status..." -ForegroundColor Green
+    try {
+        $recycleBin = Get-ADOptionalFeature -Filter {name -like "Recycle Bin Feature"} -Properties *
+
+        $recycleBinInfo = @{
+            FeatureName = $recycleBin.Name
+            IsEnabled = ($recycleBin.EnabledScopes.Count -gt 0)
+            EnabledScopes = @($recycleBin.EnabledScopes)
+            FeatureGUID = $recycleBin.FeatureGUID.ToString()
+            RiskLevel = if ($recycleBin.EnabledScopes.Count -eq 0) { "HIGH" } else { "LOW" }
+        }
+
+        Write-Host "[+] AD Recycle Bin status: $(if ($recycleBinInfo.IsEnabled) { 'ENABLED' } else { 'DISABLED - CRITICAL' })" -ForegroundColor $(if ($recycleBinInfo.IsEnabled) { "Green" } else { "Red" })
+        return $recycleBinInfo
+    } catch {
+        Write-Host "[!] Error checking Recycle Bin status: $_" -ForegroundColor Red
+        return @{
+            IsEnabled = $false
+            RiskLevel = "UNKNOWN"
+        }
+    }
+}
+
+function Get-AdminCountObjects {
+    Write-Host "\`n[*] Collecting Objects with AdminCount=1 (Protected Accounts)..." -ForegroundColor Green
+    try {
+        $adminCountObjects = @()
+
+        $objects = Get-ADObject -LDAPFilter "(adminCount=1)" -Properties adminCount, whenCreated, whenChanged, objectClass
+
+        foreach ($obj in $objects) {
+            $adminCountObjects += @{
+                Name = $obj.Name
+                DistinguishedName = $obj.DistinguishedName
+                ObjectClass = $obj.objectClass
+                WhenCreated = $obj.whenCreated
+                WhenChanged = $obj.whenChanged
+                AdminCount = $obj.adminCount
+            }
+        }
+
+        Write-Host "[+] Found $($adminCountObjects.Count) objects with AdminCount=1" -ForegroundColor Green
+        return $adminCountObjects
+    } catch {
+        Write-Host "[!] Error collecting AdminCount objects: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-SMBv1Status {
+    Write-Host "\`n[*] Checking SMBv1 Protocol Status..." -ForegroundColor Green
+    try {
+        $smbv1Status = @{
+            IsEnabled = $false
+            DomainControllers = @()
+        }
+
+        $dcs = Get-ADDomainController -Filter *
+        foreach ($dc in $dcs) {
+            try {
+                $smb = Get-WindowsFeature -Name FS-SMB1 -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                if ($smb -and $smb.Installed) {
+                    $smbv1Status.IsEnabled = $true
+                    $smbv1Status.DomainControllers += @{
+                        Name = $dc.Name
+                        HostName = $dc.HostName
+                        SMBv1Installed = $true
+                    }
+                }
+            } catch {
+                Write-Host "[!] Could not check SMBv1 on $($dc.Name)" -ForegroundColor Yellow
+            }
+        }
+
+        Write-Host "[+] SMBv1 status collected" -ForegroundColor Green
+        return $smbv1Status
+    } catch {
+        Write-Host "[!] Error checking SMBv1 status: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-ProtectedUsersGroup {
+    Write-Host "\`n[*] Checking Protected Users Group..." -ForegroundColor Green
+    try {
+        $protectedGroup = Get-ADGroup "Protected Users" -Properties Members, WhenCreated
+
+        $protectedUsersInfo = @{
+            Exists = $true
+            MemberCount = $protectedGroup.Members.Count
+            Members = @()
+            WhenCreated = $protectedGroup.WhenCreated
+        }
+
+        foreach ($member in $protectedGroup.Members) {
+            $user = Get-ADUser $member -Properties DisplayName, Enabled, LastLogonDate -ErrorAction SilentlyContinue
+            if ($user) {
+                $protectedUsersInfo.Members += @{
+                    SAMAccountName = $user.SAMAccountName
+                    DisplayName = $user.DisplayName
+                    Enabled = $user.Enabled
+                    LastLogonDate = $user.LastLogonDate
+                }
+            }
+        }
+
+        Write-Host "[+] Protected Users group analyzed: $($protectedUsersInfo.MemberCount) members" -ForegroundColor Green
+        return $protectedUsersInfo
+    } catch {
+        Write-Host "[!] Error getting Protected Users group: $_" -ForegroundColor Red
+        return @{ Exists = $false; MemberCount = 0 }
+    }
+}
+
+function Get-UnconstrainedDelegation {
+    Write-Host "\`n[*] Checking for Unconstrained Delegation..." -ForegroundColor Green
+    try {
+        $unconstrainedComputers = Get-ADComputer -Filter {
+            (TrustedForDelegation -eq $true) -and (PrimaryGroupID -ne 516) -and (PrimaryGroupID -ne 521)
+        } -Properties TrustedForDelegation, ServicePrincipalNames, OperatingSystem, LastLogonDate
+
+        $unconstrainedUsers = Get-ADUser -Filter {
+            TrustedForDelegation -eq $true
+        } -Properties TrustedForDelegation, ServicePrincipalNames, LastLogonDate
+
+        $delegationInfo = @{
+            ComputersCount = $unconstrainedComputers.Count
+            UsersCount = $unconstrainedUsers.Count
+            Computers = @()
+            Users = @()
+        }
+
+        foreach ($computer in $unconstrainedComputers) {
+            $delegationInfo.Computers += @{
+                Name = $computer.Name
+                DNSHostName = $computer.DNSHostName
+                OperatingSystem = $computer.OperatingSystem
+                SPNs = @($computer.ServicePrincipalNames)
+                LastLogonDate = $computer.LastLogonDate
+            }
+        }
+
+        foreach ($user in $unconstrainedUsers) {
+            $delegationInfo.Users += @{
+                SAMAccountName = $user.SAMAccountName
+                DisplayName = $user.DisplayName
+                SPNs = @($user.ServicePrincipalNames)
+                LastLogonDate = $user.LastLogonDate
+            }
+        }
+
+        Write-Host "[+] Unconstrained Delegation: $($delegationInfo.ComputersCount) computers, $($delegationInfo.UsersCount) users" -ForegroundColor Green
+        return $delegationInfo
+    } catch {
+        Write-Host "[!] Error checking unconstrained delegation: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-AdminSDHolderProtection {
+    Write-Host "\`n[*] Checking AdminSDHolder Protection..." -ForegroundColor Green
+    try {
+        $protectedObjects = @{
+            Users = @()
+            Groups = @()
+            Total = 0
+        }
+
+        $usersWithAdminCount = Get-ADUser -Filter {adminCount -eq 1} -Properties adminCount, whenChanged, LastLogonDate
+        $groupsWithAdminCount = Get-ADGroup -Filter {adminCount -eq 1} -Properties adminCount, whenChanged
+
+        foreach ($user in $usersWithAdminCount) {
+            $protectedObjects.Users += @{
+                SAMAccountName = $user.SAMAccountName
+                DistinguishedName = $user.DistinguishedName
+                WhenChanged = $user.whenChanged
+                LastLogonDate = $user.LastLogonDate
+            }
+        }
+
+        foreach ($group in $groupsWithAdminCount) {
+            $protectedObjects.Groups += @{
+                Name = $group.Name
+                DistinguishedName = $group.DistinguishedName
+                WhenChanged = $group.whenChanged
+            }
+        }
+
+        $protectedObjects.Total = $protectedObjects.Users.Count + $protectedObjects.Groups.Count
+
+        Write-Host "[+] AdminSDHolder protected objects: $($protectedObjects.Total)" -ForegroundColor Green
+        return $protectedObjects
+    } catch {
+        Write-Host "[!] Error checking AdminSDHolder: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-NTLMSettings {
+    Write-Host "\`n[*] Checking NTLM Authentication Settings..." -ForegroundColor Green
+    try {
+        $ntlmSettings = @{
+            DomainControllers = @()
+        }
+
+        $dcs = Get-ADDomainController -Filter *
+
+        foreach ($dc in $dcs) {
+            try {
+                $lmCompatLevel = $null
+
+                try {
+                    $reg = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $dc.HostName)
+                    $regKey = $reg.OpenSubKey("SYSTEM\\CurrentControlSet\\Control\\Lsa")
+                    $lmCompatLevel = $regKey.GetValue("LmCompatibilityLevel")
+                    $regKey.Close()
+                    $reg.Close()
+                } catch {
+                    $lmCompatLevel = "Unable to query"
+                }
+
+                $ntlmSettings.DomainControllers += @{
+                    Name = $dc.Name
+                    HostName = $dc.HostName
+                    LMCompatibilityLevel = $lmCompatLevel
+                }
+            } catch {
+                Write-Host "[!] Could not check NTLM settings on $($dc.Name)" -ForegroundColor Yellow
+            }
+        }
+
+        Write-Host "[+] NTLM settings collected from $($ntlmSettings.DomainControllers.Count) DCs" -ForegroundColor Green
+        return $ntlmSettings
+    } catch {
+        Write-Host "[!] Error checking NTLM settings: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-BackupStatus {
+    Write-Host "\`n[*] Checking Domain Backup Status..." -ForegroundColor Green
+    try {
+        $backupInfo = @{
+            DomainControllers = @()
+        }
+
+        $dcs = Get-ADDomainController -Filter *
+
+        foreach ($dc in $dcs) {
+            try {
+                $backupInfo.DomainControllers += @{
+                    Name = $dc.Name
+                    HostName = $dc.HostName
+                    LastBackup = "Manual verification required"
+                }
+            } catch {
+                Write-Host "[!] Could not check backup status on $($dc.Name)" -ForegroundColor Yellow
+            }
+        }
+
+        Write-Host "[+] Backup status information collected" -ForegroundColor Green
+        return $backupInfo
+    } catch {
+        Write-Host "[!] Error checking backup status: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-GPOPermissions {
+    Write-Host "\`n[*] Analyzing GPO Permissions..." -ForegroundColor Green
+    try {
+        if ($gpModuleAvailable) {
+            # Use GroupPolicy module if available
+            $gpos = Get-GPO -All
+            $gpoPermissions = @{
+                TotalGPOs = $gpos.Count
+                GPOsWithIssues = @()
+                AuthenticatedUsersHasPermissions = 0
+                Method = "GroupPolicy Module"
+            }
+
+            foreach ($gpo in $gpos) {
+                $perms = Get-GPPermission -Guid $gpo.Id -All
+
+                $issues = @()
+
+                foreach ($perm in $perms) {
+                    if ($perm.Trustee.Name -eq "Authenticated Users" -and $perm.Permission -eq "GpoEdit") {
+                        $issues += "Authenticated Users can edit GPO"
+                        $gpoPermissions.AuthenticatedUsersHasPermissions++
+                    }
+
+                    if ($perm.Trustee.Name -eq "Domain Users" -and ($perm.Permission -eq "GpoEdit" -or $perm.Permission -eq "GpoEditDeleteModifySecurity")) {
+                        $issues += "Domain Users have edit permissions"
+                    }
+                }
+
+                if ($issues.Count -gt 0) {
+                    $gpoPermissions.GPOsWithIssues += @{
+                        Name = $gpo.DisplayName
+                        Id = $gpo.Id
+                        Issues = $issues
+                    }
+                }
+            }
+        } else {
+            # Use AD queries as fallback
+            $domain = Get-ADDomain
+            $gpoContainer = "CN=Policies,CN=System," + $domain.DistinguishedName
+            $gpos = Get-ADObject -Filter {objectClass -eq "groupPolicyContainer"} -SearchBase $gpoContainer -Properties displayName, gPCFileSysPath
+            
+            $gpoPermissions = @{
+                TotalGPOs = $gpos.Count
+                GPOList = @()
+                Method = "AD Query (Limited)"
+                Note = "Install GroupPolicy module for detailed permissions analysis"
+            }
+
+            foreach ($gpo in $gpos) {
+                $gpoPermissions.GPOList += @{
+                    Name = $gpo.displayName
+                    DN = $gpo.DistinguishedName
+                    Path = $gpo.gPCFileSysPath
+                }
+            }
+        }
+
+        Write-Host "[+] GPO analysis completed using $($gpoPermissions.Method)" -ForegroundColor Green
+        return $gpoPermissions
+    } catch {
+        Write-Host "[!] Error analyzing GPO permissions: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-DNSScavengingStatus {
+    Write-Host "\`n[*] Checking DNS Scavenging Settings..." -ForegroundColor Green
+    try {
+        $dnsSettings = @{
+            DomainControllers = @()
+            ScavengingEnabled = 0
+            ScavengingDisabled = 0
+            Method = if ($dnsModuleAvailable) { "DNSServer Module" } else { "Limited Check" }
+        }
+
+        $dcs = Get-ADDomainController -Filter *
+
+        foreach ($dc in $dcs) {
+            if ($dc.IsGlobalCatalog) {
+                try {
+                    if ($dnsModuleAvailable) {
+                        $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+
+                        if ($dnsServer) {
+                            $scavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
+
+                            if ($scavengingEnabled) {
+                                $dnsSettings.ScavengingEnabled++
+                            } else {
+                                $dnsSettings.ScavengingDisabled++
+                            }
+
+                            $dnsSettings.DomainControllers += @{
+                                Name = $dc.Name
+                                HostName = $dc.HostName
+                                ScavengingEnabled = $scavengingEnabled
+                                ScavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
+                            }
+                        }
+                    } else {
+                        # Without DNSServer module, just list the DCs
+                        $dnsSettings.DomainControllers += @{
+                            Name = $dc.Name
+                            HostName = $dc.HostName
+                            Note = "DNSServer module required for scavenging status"
+                        }
+                    }
+                } catch {
+                    Write-Host "[!] Could not check DNS scavenging on $($dc.Name)" -ForegroundColor Yellow
+                }
+            }
+        }
+
+        Write-Host "[+] DNS scavenging status collected" -ForegroundColor Green
+        return $dnsSettings
+    } catch {
+        Write-Host "[!] Error checking DNS scavenging: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-DefaultDomainControllerPolicy {
+    Write-Host "\`n[*] Analyzing Default Domain Controllers Policy..." -ForegroundColor Green
+    try {
+        if ($gpModuleAvailable) {
+            $dcPolicyGuid = (Get-GPO -Name "Default Domain Controllers Policy").Id
+
+            $policyReport = @{
+                Name = "Default Domain Controllers Policy"
+                Id = $dcPolicyGuid
+                KeySettings = @{
+                    AuditPolicyConfigured = $true
+                    UserRightsAssignments = @()
+                }
+                Method = "GroupPolicy Module"
+            }
+        } else {
+            # Use AD query as fallback
+            $domain = Get-ADDomain
+            $gpoContainer = "CN=Policies,CN=System," + $domain.DistinguishedName
+            $dcPolicy = Get-ADObject -Filter {displayName -eq "Default Domain Controllers Policy"} -SearchBase $gpoContainer -Properties displayName
+            
+            $policyReport = @{
+                Name = "Default Domain Controllers Policy"
+                DN = $dcPolicy.DistinguishedName
+                Note = "Install GroupPolicy module for detailed policy analysis"
+                Method = "AD Query (Limited)"
+            }
+        }
+
+        Write-Host "[+] Default Domain Controllers Policy analyzed" -ForegroundColor Green
+        return $policyReport
+    } catch {
+        Write-Host "[!] Error analyzing Default DC Policy: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-DCHealthDetails {
+    Write-Host "\`n[*] Collecting DC Health Details (Patches, Logs, Time Sync, AV)..." -ForegroundColor Green
+    try {
+        $dcHealthInfo = @{
+            DomainControllers = @()
+        }
+
+        $dcs = Get-ADDomainController -Filter *
+
+        foreach ($dc in $dcs) {
+            try {
+                Write-Host "[*] Checking DC: $($dc.Name)" -ForegroundColor Cyan
+
+                # Hotfixes and patches
+                $hotfixes = @()
+                try {
+                    $hotfixes = Get-HotFix -ComputerName $dc.HostName -ErrorAction SilentlyContinue | Select-Object -First 10 -Property HotFixID, Description, InstalledOn
+                } catch {}
+
+                # Time configuration
+                $timeConfig = $null
+                try {
+                    $w32tm = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                        w32tm /query /status /verbose
+                    } -ErrorAction SilentlyContinue
+                    $timeConfig = $w32tm
+                } catch {}
+
+                # Event logs - critical errors
+                $criticalEvents = @()
+                try {
+                    $events = Get-WinEvent -ComputerName $dc.HostName -FilterHashtable @{
+                        LogName = 'System', 'Application'
+                        Level = 1, 2
+                        StartTime = (Get-Date).AddDays(-7)
+                    } -MaxEvents 20 -ErrorAction SilentlyContinue
+                    
+                    $criticalEvents = $events | ForEach-Object {
+                        @{
+                            TimeCreated = $_.TimeCreated
+                            Level = $_.LevelDisplayName
+                            Message = $_.Message.Substring(0, [Math]::Min(200, $_.Message.Length))
+                            Source = $_.ProviderName
+                        }
+                    }
+                } catch {}
+
+                # BitLocker status
+                $bitlockerStatus = "Unknown"
+                try {
+                    $bitlocker = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                        Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue | Select-Object ProtectionStatus, EncryptionPercentage
+                    } -ErrorAction SilentlyContinue
+                    
+                    if ($bitlocker) {
+                        $bitlockerStatus = @{
+                            ProtectionStatus = $bitlocker.ProtectionStatus.ToString()
+                            EncryptionPercentage = $bitlocker.EncryptionPercentage
+                        }
+                    }
+                } catch {}
+
+                # Antivirus status
+                $avStatus = "Unknown"
+                try {
+                    $av = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                        Get-MpComputerStatus -ErrorAction SilentlyContinue | Select-Object AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated
+                    } -ErrorAction SilentlyContinue
+                    
+                    if ($av) {
+                        $avStatus = @{
+                            Enabled = $av.AntivirusEnabled
+                            RealTimeEnabled = $av.RealTimeProtectionEnabled
+                            SignatureLastUpdated = $av.AntivirusSignatureLastUpdated
+                        }
+                    }
+                } catch {}
+
+                $dcHealthInfo.DomainControllers += @{
+                    Name = $dc.Name
+                    HostName = $dc.HostName
+                    RecentHotfixes = $hotfixes
+                    TimeConfiguration = $timeConfig
+                    CriticalEvents = $criticalEvents
+                    BitLocker = $bitlockerStatus
+                    Antivirus = $avStatus
+                }
+
+                Write-Host "[+] Health data collected for $($dc.Name)" -ForegroundColor Green
+            } catch {
+                Write-Host "[!] Could not collect full health data from $($dc.Name): $_" -ForegroundColor Yellow
+            }
+        }
+
+        Write-Host "[+] DC health details collected from $($dcHealthInfo.DomainControllers.Count) DCs" -ForegroundColor Green
+        return $dcHealthInfo
+    } catch {
+        Write-Host "[!] Error collecting DC health details: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-OUStructure {
+    Write-Host "\`n[*] Analyzing OU Structure and Design..." -ForegroundColor Green
+    try {
+        $domain = Get-ADDomain
+        $ous = Get-ADOrganizationalUnit -Filter * -Properties Description, ProtectedFromAccidentalDeletion, gPLink, whenCreated, whenChanged
+
+        $ouInfo = @{
+            TotalOUs = $ous.Count
+            ProtectedCount = 0
+            UnprotectedCount = 0
+            OUs = @()
+        }
+
+        foreach ($ou in $ous) {
+            $isProtected = $ou.ProtectedFromAccidentalDeletion
+            if ($isProtected) {
+                $ouInfo.ProtectedCount++
+            } else {
+                $ouInfo.UnprotectedCount++
+            }
+
+            $linkedGPOs = @()
+            if ($ou.gPLink) {
+                $linkedGPOs = $ou.gPLink -split '\[' | Where-Object { $_ -match 'LDAP' } | ForEach-Object {
+                    $_.Split(';')[0].Replace('LDAP://CN=', '').Split(',')[0]
+                }
+            }
+
+            $ouInfo.OUs += @{
+                Name = $ou.Name
+                DistinguishedName = $ou.DistinguishedName
+                Description = $ou.Description
+                ProtectedFromDeletion = $isProtected
+                LinkedGPOs = $linkedGPOs
+                WhenCreated = $ou.whenCreated
+                WhenChanged = $ou.whenChanged
+            }
+        }
+
+        Write-Host "[+] OU structure analyzed: $($ouInfo.TotalOUs) OUs ($($ouInfo.ProtectedCount) protected)" -ForegroundColor Green
+        return $ouInfo
+    } catch {
+        Write-Host "[!] Error analyzing OU structure: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-TombstoneLifetime {
+    Write-Host "\`n[*] Checking Tombstone Lifetime..." -ForegroundColor Green
+    try {
+        $configNC = (Get-ADRootDSE).configurationNamingContext
+        $directoryService = Get-ADObject "CN=Directory Service,CN=Windows NT,CN=Services,$configNC" -Properties tombstoneLifetime
+
+        $tombstoneInfo = @{
+            TombstoneLifetime = $directoryService.tombstoneLifetime
+            RecommendedMinimum = 180
+            IsCompliant = $directoryService.tombstoneLifetime -ge 180
+            RiskLevel = if ($directoryService.tombstoneLifetime -lt 180) { "MEDIUM" } else { "LOW" }
+        }
+
+        Write-Host "[+] Tombstone Lifetime: $($tombstoneInfo.TombstoneLifetime) days" -ForegroundColor $(if ($tombstoneInfo.IsCompliant) { "Green" } else { "Yellow" })
+        return $tombstoneInfo
+    } catch {
+        Write-Host "[!] Error checking tombstone lifetime: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-DNSConfiguration {
+    Write-Host "\`n[*] Analyzing DNS Configuration and Security..." -ForegroundColor Green
+        try {
+            $dnsInfo = @{
+                Zones = @()
+            Forwarders = @()
+            GlobalSettings = @()
+            SecurityIssues = @()
+            ScavengingStatus = @()
+            Method = if($dnsModuleAvailable) { "DNSServer Module" } else { "Limited" }
+            }
+
+            $dcs = Get - ADDomainController - Filter * | Where - Object { $_.IsGlobalCatalog }
+
+            if ($dnsModuleAvailable) {
+                foreach($dc in $dcs) {
+                    try {
+                        Write - Host "[*] Analyzing DNS on $($dc.Name)..." - ForegroundColor Cyan
+                    
+                    # Get DNS Server Settings
+                        $dnsServer = Get - DnsServer - ComputerName $dc.HostName - ErrorAction SilentlyContinue
+
+                        if ($dnsServer) {
+                        # Global DNS Server Settings
+                            $globalSettings = @{
+                                DCName = $dc.Name
+                            Recursion = $dnsServer.ServerSetting.DisableRecursion
+                            RecursionTimeout = $dnsServer.ServerSetting.RecursionTimeout
+                            SecureResponses = $dnsServer.ServerSetting.SecureResponses
+                            BindSecondaries = $dnsServer.ServerSetting.BindSecondaries
+                            RoundRobin = $dnsServer.ServerSetting.RoundRobin
+                            LocalNetPriority = $dnsServer.ServerSetting.LocalNetPriority
+                            AddressAnswerLimit = $dnsServer.ServerSetting.AddressAnswerLimit
+                            AllowUpdate = $dnsServer.ServerSetting.AllowUpdate
+                            AutoCacheUpdate = $dnsServer.ServerSetting.AutoCacheUpdate
+                            BootMethod = $dnsServer.ServerSetting.BootMethod.ToString()
+                            DefaultAgingState = $dnsServer.ServerSetting.DefaultAgingState
+                            DefaultNoRefreshInterval = $dnsServer.ServerSetting.DefaultNoRefreshInterval
+                            DefaultRefreshInterval = $dnsServer.ServerSetting.DefaultRefreshInterval
+                            ScavengingInterval = $dnsServer.ServerSetting.ScavengingInterval
+                            EnableDnsSec = $dnsServer.ServerSetting.EnableDnsSec
+                            EnableEDnsProbes = $dnsServer.ServerSetting.EnableEDnsProbes
+                            EventLogLevel = $dnsServer.ServerSetting.EventLogLevel
+                            ListenAddresses = @($dnsServer.ServerSetting.ListenAddresses.IPAddressToString)
+                            }
+                        
+                        # Security Checks
+                            $securityIssues = @()
+                        
+                        # Check 1: Recursion enabled(potential DNS amplification attacks)
+                            if (-not $dnsServer.ServerSetting.DisableRecursion) {
+                                $securityIssues += "Recursion is ENABLED - Risk of DNS amplification attacks"
+                            }
+                        
+                        # Check 2: DNSSEC not enabled
+                            if (-not $dnsServer.ServerSetting.EnableDnsSec) {
+                                $securityIssues += "DNSSEC is DISABLED - Risk of cache poisoning"
+                            }
+                        
+                        # Check 3: Scavenging not configured
+                            if ($dnsServer.ServerSetting.ScavengingInterval -eq 0) {
+                                $securityIssues += "DNS Scavenging is DISABLED - Stale records accumulate"
+                            }
+                        
+                        # Check 4: Event logging too low
+                            if ($dnsServer.ServerSetting.EventLogLevel -lt 4) {
+                                $securityIssues += "Event logging level too low - Insufficient audit trail"
+                            }
+
+                            $globalSettings.SecurityIssues = $securityIssues
+                            $dnsInfo.GlobalSettings += $globalSettings
+                        
+                        # Get DNS zones with detailed security analysis
+                            $zones = Get-DnsServerZone -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+
+                            foreach($zone in $zones) {
+                                $zoneIssues = @()
+                            
+                            # Check zone transfer settings
+                                $zoneTransfer = "Unknown"
+                                $zoneTransferRisk = "UNKNOWN"
+
+                                try {
+                                    if ($zone.SecureSecondaries -eq "NoTransfer") {
+                                        $zoneTransfer = "Disabled"
+                                        $zoneTransferRisk = "LOW"
+                                    } elseif($zone.SecureSecondaries -eq "TransferAnyServer") {
+                                        $zoneTransfer = "Any Server (INSECURE)"
+                                        $zoneTransferRisk = "CRITICAL"
+                                        $zoneIssues += "Zone transfers allowed to ANY server - CRITICAL security risk"
+                                    } elseif($zone.SecureSecondaries -eq "TransferToZoneNameServer") {
+                                        $zoneTransfer = "Only to Name Servers"
+                                        $zoneTransferRisk = "LOW"
+                                    } else {
+                                        $zoneTransfer = "Restricted to specific servers"
+                                        $zoneTransferRisk = "LOW"
+                                    }
+                                } catch {
+                                    $zoneTransfer = "Error checking"
+                                }
+                            
+                            # Check dynamic updates
+                                $dynamicUpdateRisk = "LOW"
+                                if ($zone.DynamicUpdate -eq "NonsecureAndSecure") {
+                                    $dynamicUpdateRisk = "HIGH"
+                                    $zoneIssues += "Non-secure dynamic updates allowed - Risk of DNS poisoning"
+                                } elseif($zone.DynamicUpdate -eq "None" -and -not $zone.IsReverseLookupZone) {
+                                    $dynamicUpdateRisk = "MEDIUM"
+                                    $zoneIssues += "Dynamic updates disabled - May cause operational issues"
+                                }
+                            
+                            # Check DNSSEC
+                                $dnssecStatus = "Not Signed"
+                                $dnssecRisk = "HIGH"
+                                try {
+                                    if ($zone.IsSigned) {
+                                        $dnssecStatus = "Signed"
+                                        $dnssecRisk = "LOW"
+                                    } else {
+                                        $zoneIssues += "Zone not signed with DNSSEC - Vulnerable to spoofing"
+                                    }
+                                } catch { }
+                            
+                            # Check aging / scavenging
+                                $agingEnabled = $zone.Aging
+                                if (-not $agingEnabled - and - not $zone.IsReverseLookupZone - and - not $zone.IsAutoCreated) {
+                                    $zoneIssues += "Aging/Scavenging disabled - Stale records will accumulate"
+                                }
+                            
+                            # Get zone statistics if available
+                            $zoneStats = $null
+                                try {
+                                    $zoneStats = Get - DnsServerStatistics - ComputerName $dc.HostName - ZoneName $zone.ZoneName - ErrorAction SilentlyContinue
+                                } catch { }
+
+                                $dnsInfo.Zones += @{
+                                    DCName = $dc.Name
+                                ZoneName = $zone.ZoneName
+                                ZoneType = $zone.ZoneType.ToString()
+                                IsReverseLookupZone = $zone.IsReverseLookupZone
+                                DynamicUpdate = $zone.DynamicUpdate.ToString()
+                                DynamicUpdateRisk = $dynamicUpdateRisk
+                                SecureSecondaries = $zoneTransfer
+                                ZoneTransferRisk = $zoneTransferRisk
+                                IsDSIntegrated = $zone.IsDsIntegrated
+                                IsAutoCreated = $zone.IsAutoCreated
+                                IsPaused = $zone.IsPaused
+                                IsReadOnly = $zone.IsReadOnly
+                                IsShutdown = $zone.IsShutdown
+                                IsSigned = $zone.IsSigned
+                                DNSSECStatus = $dnssecStatus
+                                DNSSECRisk = $dnssecRisk
+                                AgingEnabled = $agingEnabled
+                                NotifyServers = @($zone.NotifyServers)
+                                MasterServers = @($zone.MasterServers.IPAddressToString)
+                                SecurityIssues = $zoneIssues
+                                ZoneFile = $zone.ZoneFile
+                                }
+                            }
+
+                        # Get forwarders and conditional forwarders
+                            if ($dnsServer.ServerSetting.Forwarders) {
+                                $forwarderInfo = @{
+                                    DCName = $dc.Name
+                                Forwarders = @($dnsServer.ServerSetting.Forwarders.IPAddressToString)
+                                ForwardingTimeout = $dnsServer.ServerSetting.ForwardingTimeout
+                                IsSlave = $dnsServer.ServerSetting.IsSlave
+                                }
+                            
+                            # Check if using public DNS(potential data leakage)
+                                $publicDNS = @("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "208.67.222.222", "208.67.220.220")
+                                $usesPublicDNS = $false
+                                foreach($fwd in $dnsServer.ServerSetting.Forwarders.IPAddressToString) {
+                                    if ($publicDNS - contains $fwd) {
+                                        $usesPublicDNS = $true
+                                        break
+                                    }
+                                }
+
+                                if ($usesPublicDNS) {
+                                    $forwarderInfo.SecurityWarning = "Using public DNS forwarders - Potential data leakage risk"
+                                }
+
+                                $dnsInfo.Forwarders += $forwarderInfo
+                            }
+                        
+                        # Get conditional forwarders
+                            try {
+                                $conditionalForwarders = Get-DnsServerZone -ComputerName $dc.HostName | Where-Object { $_.ZoneType -eq "Forwarder" }
+                                if ($conditionalForwarders) {
+                                    foreach($cf in $conditionalForwarders) {
+                                        $dnsInfo.Forwarders += @{
+                                            DCName = $dc.Name
+                                        Type = "Conditional"
+                                        ZoneName = $cf.ZoneName
+                                        MasterServers = @($cf.MasterServers.IPAddressToString)
+                                        }
+                                    }
+                                }
+                            } catch { }
+                        
+                        # Check DNS cache
+                            try {
+                                $cacheStats = Get - DnsServerStatistics - ComputerName $dc.HostName - ErrorAction SilentlyContinue
+                                if ($cacheStats) {
+                                    $dnsInfo.GlobalSettings[-1].CacheStats = @{
+                                        CacheHits = $cacheStats.CacheHits
+                                    CacheMisses = $cacheStats.CacheMisses
+                                    CacheFlushes = $cacheStats.CacheFlushes
+                                    }
+                                }
+                            } catch { }
+                        }
+                    } catch {
+                        Write - Host "[!] Could not query DNS on $($dc.Name): $_" - ForegroundColor Yellow
+                    }
+                }
+            } else {
+                $dnsInfo.Note = "Install DNSServer module for detailed DNS security analysis: Install-WindowsFeature RSAT-DNS-Server"
+            }
+
+            Write - Host "[+] DNS configuration collected: $($dnsInfo.Zones.Count) zones, $($dnsInfo.SecurityIssues.Count) security issues" - ForegroundColor Green
+            return $dnsInfo
+        } catch {
+            Write - Host "[!] Error analyzing DNS configuration: $_" - ForegroundColor Red
+            return $null
+        }
+    }
+
+
+    function Get-DHCPConfiguration {
+        Write - Host "\`n[*] Analyzing DHCP Configuration..." - ForegroundColor Green
+        try {
+            $dhcpInfo = @{
+                AuthorizedServers = @()
+            Scopes = @()
+            FailoverConfig = @()
+            }
+
+        # Get authorized DHCP servers
+            try {
+                $authorizedServers = Get - DhcpServerInDC - ErrorAction SilentlyContinue
+                foreach($server in $authorizedServers) {
+                    $dhcpInfo.AuthorizedServers += @{
+                        DNSName = $server.DNSName
+                    IPAddress = $server.IPAddress.ToString()
+                    }
+
+                # Get scopes from each server
+                    try {
+                        $scopes = Get - DhcpServerv4Scope - ComputerName $server.DNSName - ErrorAction SilentlyContinue
+                        foreach($scope in $scopes) {
+                            $scopeStats = Get - DhcpServerv4ScopeStatistics - ComputerName $server.DNSName - ScopeId $scope.ScopeId - ErrorAction SilentlyContinue
+                        
+                        # Get reservations
+                            $reservations = Get - DhcpServerv4Reservation - ComputerName $server.DNSName - ScopeId $scope.ScopeId - ErrorAction SilentlyContinue
+
+                            $dhcpInfo.Scopes += @{
+                                ServerName = $server.DNSName
+                            ScopeId = $scope.ScopeId.ToString()
+                            Name = $scope.Name
+                            SubnetMask = $scope.SubnetMask.ToString()
+                            StartRange = $scope.StartRange.ToString()
+                            EndRange = $scope.EndRange.ToString()
+                            LeaseDuration = $scope.LeaseDuration.ToString()
+                            State = $scope.State.ToString()
+                            PercentageInUse = if($scopeStats) { $scopeStats.PercentageInUse } else { 0 }
+                            AddressesInUse = if($scopeStats) { $scopeStats.AddressesInUse } else { 0 }
+                            AddressesFree = if($scopeStats) { $scopeStats.AddressesFree } else { 0 }
+                            ReservationCount = if($reservations) { $reservations.Count } else { 0 }
+                            }
+                        }
+
+                    # Get failover configuration
+                        $failovers = Get - DhcpServerv4Failover - ComputerName $server.DNSName - ErrorAction SilentlyContinue
+                        foreach($failover in $failovers) {
+                            $dhcpInfo.FailoverConfig += @{
+                                ServerName = $server.DNSName
+                            Name = $failover.Name
+                            PartnerServer = $failover.PartnerServer
+                            Mode = $failover.Mode.ToString()
+                            State = $failover.State.ToString()
+                            ScopeIds = @($failover.ScopeId)
+                            }
+                        }
+                    } catch {
+                        Write - Host "[!] Could not query scopes from $($server.DNSName)" - ForegroundColor Yellow
+                    }
+                }
+            } catch {
+                $dhcpInfo.Note = "DHCP cmdlets not available or no authorized servers found"
+            }
+
+            Write - Host "[+] DHCP configuration collected: $($dhcpInfo.AuthorizedServers.Count) servers, $($dhcpInfo.Scopes.Count) scopes" - ForegroundColor Green
+            return $dhcpInfo
+        } catch {
+            Write - Host "[!] Error analyzing DHCP configuration: $_" - ForegroundColor Red
+            return $null
+        }
+    }
+
+# =============================================================================
+# MAIN DATA COLLECTION
+# =============================================================================
+
+        Write - Host "\`n" + ("=" * 80) - ForegroundColor Cyan
+    Write - Host "Starting Data Collection" - ForegroundColor Cyan
+    Write - Host("=" * 80) - ForegroundColor Cyan
+
+    $collectedData = @{
+        AssessmentId = $AssessmentId
+    DomainName = $DomainName
+    CollectionDate = (Get - Date).ToUniversalTime()
+    CollectorHostname = $env: COMPUTERNAME
+    CollectorUsername = $env: USERNAME
+    }
+
+# Collect all data
+    $collectedData.DomainInfo = Get - DomainInformation
+    $collectedData.DomainControllers = Get - DomainControllerInfo
+    $collectedData.SiteTopology = Get - ADSiteTopology
+    $collectedData.Trusts = Get - TrustRelationships
+    $collectedData.Users = Get - AllADUsers
+    $collectedData.Computers = Get - AllADComputers
+    $collectedData.Groups = Get - AllADGroups
+    $collectedData.PasswordPolicies = Get - PasswordPolicies
+    $collectedData.GPOs = Get - GPOInventory
+    $collectedData.KerberosConfig = Get - KerberosConfiguration
+    $collectedData.LAPS = Get - LAPSStatus
+
+# Advanced Security Analysis
+    $collectedData.ReplicationStatus = Get - ReplicationStatus
+    $collectedData.DCSyncPermissions = Get - DCSyncPermissions
+    $collectedData.RC4EncryptionTypes = Get - RC4EncryptionTypes
+    $collectedData.OldPasswords = Get - OldPasswords
+    $collectedData.RecycleBinStatus = Get - RecycleBinStatus
+    $collectedData.AdminCountObjects = Get - AdminCountObjects
+
+# Additional Security Tests
+    $collectedData.SMBv1Status = Get - SMBv1Status
+    $collectedData.ProtectedUsers = Get - ProtectedUsersGroup
+    $collectedData.UnconstrainedDelegation = Get - UnconstrainedDelegation
+    $collectedData.AdminSDHolder = Get - AdminSDHolderProtection
+    $collectedData.NTLMSettings = Get - NTLMSettings
+    $collectedData.BackupStatus = Get - BackupStatus
+    $collectedData.GPOPermissions = Get - GPOPermissions
+    $collectedData.DNSScavenging = Get - DNSScavengingStatus
+    $collectedData.DCPolicy = Get - DefaultDomainControllerPolicy
+
+# CIS Best Practices & Enhanced Configuration Checks
+    $collectedData.DCHealth = Get - DCHealthDetails
+    $collectedData.OUStructure = Get - OUStructure
+    $collectedData.TombstoneLifetime = Get - TombstoneLifetime
+    $collectedData.DNSConfiguration = Get - DNSConfiguration
+    $collectedData.DHCPConfiguration = Get - DHCPConfiguration
+
+# =============================================================================
+# SEND DATA TO API
+# =============================================================================
+
+        Write - Host "\`n" + ("=" * 80) - ForegroundColor Cyan
+    Write - Host "Preparing to send data to Assessment Platform" - ForegroundColor Cyan
+    Write - Host("=" * 80) - ForegroundColor Cyan
+
+    try {
+        Write - Host "[*] Converting data to JSON..." - ForegroundColor Green
+        $jsonPayload = $collectedData | ConvertTo - Json - Depth 10 - Compress
+
+        Write - Host "[*] Payload size: $([math]::Round($jsonPayload.Length / 1MB, 2)) MB" - ForegroundColor Green
+
+    # Save data locally before sending
+        Write - Host "\`n[*] Saving data locally..." - ForegroundColor Green
+        $localPath = "C:\\AD-Assessments"
+    
+    # Create directory if it doesn't exist
+        if (-not(Test - Path $localPath)) {
+            try {
+                New - Item - Path $localPath - ItemType Directory - Force | Out - Null
+                Write - Host "[+] Created directory: $localPath" - ForegroundColor Green
+            } catch {
+                Write - Host "[!] WARNING: Could not create directory $localPath : $_" - ForegroundColor Yellow
+                $localPath = $PSScriptRoot  # Fallback to script directory
+            }
+        }
+    
+    # Save JSON file locally
+        $localFileName = "AD-Assessment-$DomainName-$AssessmentId-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+        $localFilePath = Join - Path $localPath $localFileName
+
+        try {
+            $jsonPayload | Out - File - FilePath $localFilePath - Encoding UTF8
+            Write - Host "[+] Data saved locally: $localFilePath" - ForegroundColor Green
+            Write - Host "[+] File size: $([math]::Round((Get-Item $localFilePath).Length / 1MB, 2)) MB" - ForegroundColor Green
+        } catch {
+            Write - Host "[!] WARNING: Could not save local file: $_" - ForegroundColor Yellow
+        }
+
+    # Skip API upload in offline mode
+        if ($OfflineMode) {
+            Write - Host "\`n[*] OFFLINE MODE: Skipping API upload" - ForegroundColor Yellow
+            Write - Host "[+] JSON file saved to: $localFilePath" - ForegroundColor Green
+            Write - Host "[*] Copy this file to a machine with internet and upload via web interface" - ForegroundColor Yellow
+        } else {
+            Write - Host "\`n[*] Sending data to API endpoint..." - ForegroundColor Green
+            $headers = @{
+                "Content-Type" = "application/json"
+            }
+
+            $finalPayload = @{
+                assessmentId = $AssessmentId
+            jsonData = $collectedData
+            domainName = $DomainName
+            } | ConvertTo - Json - Depth 10 - Compress
+
+            $response = Invoke - RestMethod - Uri $ApiEndpoint - Method POST - Body $finalPayload - Headers $headers - TimeoutSec 300
+
+            Write - Host "[+] SUCCESS! Data successfully sent to Assessment Platform" - ForegroundColor Green
+        }
+
+    } catch {
+        Write - Host "[!] ERROR: $_" - ForegroundColor Red
+        Write - Host "[!] Full error: $($_.Exception.Message)" - ForegroundColor Red
+
+        $backupFile = "AD-Assessment-$AssessmentId-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+        Write - Host "[*] Saving data to backup file: $backupFile" - ForegroundColor Yellow
+        $jsonPayload | Out - File - FilePath $backupFile - Encoding UTF8
+        Write - Host "[+] Data saved to: $backupFile" - ForegroundColor Yellow
+        Write - Host "[*] Please manually upload this file to the Assessment Platform" - ForegroundColor Yellow
+    }
+
+    Write - Host "\`n" + ("=" * 80) - ForegroundColor Cyan
+    Write - Host "Data Collection Complete" - ForegroundColor Cyan
+    Write - Host("=" * 80) - ForegroundColor Cyan
+    Write - Host ""
+`;
+
+        // Create blob and download
+        const blob = new Blob([script], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `AD - Assessment - ${domain} -${Date.now()}.ps1`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        toast.success("Script descargado correctamente");
+    };
+
+    return (
+        <div className="min-h-screen bg-gradient-subtle">
+            <Header />
+
+            <main className="container py-8">
+                <div className="mb-6">
+                    <Link to="/">
+                        <Button variant="ghost" size="sm">
+                            <ArrowLeft className="h-4 w-4 mr-2" />
+                            Volver al Dashboard
+                        </Button>
+                    </Link>
+                </div>
+
+                <div className="max-w-3xl mx-auto">
+                    <div className="text-center mb-8">
+                        <Shield className="h-16 w-16 text-primary mx-auto mb-4" />
+                        <h1 className="text-4xl font-bold mb-2">Nuevo Assessment</h1>
+                        <p className="text-muted-foreground text-lg">
+                            Genera el script PowerShell para recolectar información de seguridad
+                        </p>
+                    </div>
+
+                    <Card className="shadow-lg">
+                        <CardHeader>
+                            <CardTitle>Configuración del Assessment</CardTitle>
+                            <CardDescription>
+                                Ingresa el nombre del dominio para generar el script personalizado
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            <div className="space-y-2">
+                                <Label htmlFor="domain">Nombre del Dominio</Label>
+                                <Input
+                                    id="domain"
+                                    placeholder="ejemplo: contoso.local"
+                                    value={domain}
+                                    onChange={(e) => setDomain(e.target.value)}
+                                    className="text-lg"
+                                />
+                                <p className="text-sm text-muted-foreground">
+                                    Este será el dominio de Active Directory a evaluar
+                                </p>
+                            </div>
+
+                            {!scriptGenerated ? (
+                                <Button
+                                    onClick={generateScript}
+                                    className="w-full bg-gradient-primary"
+                                    size="lg"
+                                >
+                                    <Terminal className="h-5 w-5 mr-2" />
+                                    Generar Script PowerShell
+                                </Button>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="bg-muted p-4 rounded-lg border border-border">
+                                        <div className="flex items-start space-x-3">
+                                            <Terminal className="h-5 w-5 text-primary mt-0.5" />
+                                            <div className="flex-1">
+                                                <h3 className="font-semibold mb-1">Script Generado</h3>
+                                                <p className="text-sm text-muted-foreground mb-3">
+                                                    El script está listo para descargar. Ejecútalo en el controlador de dominio
+                                                    con privilegios de Domain Admin.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <Button
+                                        onClick={downloadScript}
+                                        className="w-full"
+                                        size="lg"
+                                        variant="default"
+                                    >
+                                        <Download className="h-5 w-5 mr-2" />
+                                        Descargar Script PowerShell
+                                    </Button>
+
+                                    <div className="bg-severity-info/10 border border-severity-info/30 rounded-lg p-4">
+                                        <h4 className="font-semibold mb-2 text-sm">Instrucciones:</h4>
+                                        <ol className="text-sm space-y-1 text-muted-foreground list-decimal list-inside">
+                                            <li>Descarga el script PowerShell</li>
+                                            <li>Cópialo al controlador de dominio</li>
+                                            <li>Ejecuta PowerShell como administrador</li>
+                                            <li>
+                                                <strong>Con Internet:</strong> <code className="bg-muted px-1 rounded">.\AD-Assessment-{domain}.ps1</code>
+                                            </li>
+                                            <li>
+                                                <strong>Sin Internet (DC aislado):</strong> <code className="bg-muted px-1 rounded">.\AD-Assessment-{domain}.ps1 -OfflineMode</code>
+                                            </li>
+                                            <li>Si usaste -OfflineMode: Copia el JSON generado a una PC con internet y súbelo manualmente desde el dashboard</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+            </main>
+        </div>
+    );
+};
+
+export default NewAssessment;
