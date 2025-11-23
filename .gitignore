@@ -33,6 +33,7 @@ dist-ssr
 # Large assessment files
 *.json
 
-# Environment files
+# Environment files (ONLY vps-deploy/.env contains secrets)
 .env
+.env.local
 vps-deploy/.env

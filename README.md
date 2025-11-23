@@ -83,27 +83,33 @@
 ### Prerequisites
 
 - Docker & Docker Compose
-- Node.js 18+ (for local development)
 - OpenAI API Key
+- ⚠️ **No Supabase required** - Self-hosted with PostgreSQL
 
-### Installation
+### VPS Deployment (Recommended)
 
 ```bash
-# Clone the repository
+# 1. Clone repository
 git clone https://github.com/gilberth/ad-security-assessment-ai.git
-cd ad-security-assessment-ai
+cd ad-security-assessment-ai/vps-deploy
 
-# Configure environment
-cd vps-deploy
+# 2. Configure ONLY backend environment
 cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
+nano .env  # Add your OPENAI_API_KEY
 
-# Deploy with Docker Compose
+# 3. Deploy (builds frontend + backend + database)
 docker compose up -d
 
-# Access the application
-# Frontend: http://localhost
-# Backend API: http://localhost:3000
+# 4. Access
+# http://your-vps-ip → Application (nginx serves frontend + proxies /api to backend)
+```
+
+**That's it!** No `.env` needed in root. Frontend is compiled with `/api` endpoint (nginx proxy).
+
+**Architecture**:
+```
+Internet → Nginx (port 80) ─┬→ Frontend (static files)
+                             └→ /api → Backend:3000 → PostgreSQL:5432
 ```
 
 ### Local Development
@@ -112,12 +118,13 @@ docker compose up -d
 # Install dependencies
 npm install
 
-# Start development server
+# Start dev server (uses backend API from src/utils/api.ts)
 npm run dev
 
-# Build for production
-npm run build
+# Access: http://localhost:5173
 ```
+
+**Note**: For local dev, the frontend will try to connect to backend at `http://localhost:3000`. Make sure backend is running separately or modify `src/utils/api.ts` temporarily.
 
 ## 📖 Usage
 
