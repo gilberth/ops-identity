@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Terminal, X, RefreshCw, Download } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 
 interface Log {
   timestamp: number;
@@ -53,11 +52,13 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('get-assessment-logs', {
-        body: { assessmentId }
-      });
-
-      if (error) throw error;
+      // Call backend API directly for self-hosted version
+      const vpsEndpoint = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+      const response = await fetch(`${vpsEndpoint}/api/assessments/${assessmentId}/logs`);
+      
+      if (!response.ok) throw new Error('Failed to fetch logs');
+      
+      const data = await response.json();
 
       if (data?.logs) {
         setLogs(data.logs);

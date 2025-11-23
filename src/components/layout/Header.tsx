@@ -1,28 +1,17 @@
 import { ShieldCheck, LogOut, Settings } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 
 const Header = () => {
   const navigate = useNavigate();
 
-  const handleLogout = async () => {
-    try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      navigate("/auth");
-      toast({
-        title: "Sesión cerrada",
-        description: "Has cerrado sesión correctamente.",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Error al cerrar sesión",
-        variant: "destructive",
-      });
-    }
+  const handleLogout = () => {
+    navigate("/");
+    toast({
+      title: "Sesión cerrada",
+      description: "Sistema self-hosted sin autenticación.",
+    });
   };
 
   return (

@@ -36,9 +36,8 @@ const NewAssessment = () => {
     };
 
     const downloadScript = () => {
-        const uploadEndpoint = import.meta.env.VITE_VPS_ENDPOINT
-            ? `${import.meta.env.VITE_VPS_ENDPOINT}/api/process-assessment`
-            : `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-data`;
+        const uploadEndpoint = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+        const apiUrl = `${uploadEndpoint}/api/process-assessment`;
 
         // PowerShell script template with ALL advanced security functions
         const script = `# =============================================================================
@@ -62,7 +61,7 @@ param(
 )
 
 # --- Configuration ---
-$ApiEndpoint = "${uploadEndpoint}"
+$ApiEndpoint = "${apiUrl}"
 $AssessmentId = "${assessmentId}"
 $DomainName = "${domain}"
 
