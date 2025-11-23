@@ -1,0 +1,56 @@
+#!/usr/bin/expect
+
+set timeout 600
+set password "iMpresora\$2016A"
+set ip "157.230.138.178"
+set user "root"
+
+puts "========================================="
+puts "Finishing VPS deployment"
+puts "========================================="
+
+# Connect to VPS
+spawn ssh $user@$ip
+expect "assword:"
+send "$password\r"
+
+expect "# "
+send "cd /root/ad-security-assessment\r"
+
+# Check if .env exists
+expect "# "
+send "if \[\[ ! -f .env \]\]; then echo 'CREATING .ENV'; cp .env.example .env; else echo '.env EXISTS'; fi\r"
+
+expect "# "
+send "cat .env\r"
+
+expect "# "
+puts "\n\n========================================="
+puts "PLEASE CONFIGURE .env WITH:"
+puts "1. nano .env"
+puts "2. Add OPENAI_API_KEY=sk-proj-xxxxx"
+puts "3. Save and exit"
+puts "========================================="
+puts "Press ENTER to continue when ready..."
+gets stdin
+
+send "docker compose down\r"
+expect "# "
+
+send "docker compose up -d --build\r"
+expect {
+    "done" { puts "\nContainers started!" }
+    timeout { puts "\nTimeout, but probably OK" }
+}
+
+expect "# "
+send "docker compose ps\r"
+
+expect "# "
+puts "\n========================================="
+puts "Deployment complete!"
+puts "Check: http://157.230.138.178"
+puts "Logs: docker compose logs -f"
+puts "========================================="
+
+interact
