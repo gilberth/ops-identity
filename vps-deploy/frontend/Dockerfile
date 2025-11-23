@@ -7,9 +7,7 @@ RUN npm install
 
 COPY . .
 
-# Copy production environment variables
-COPY .env.production .env
-
+# Vite automatically uses .env.production in production builds
 RUN npm run build
 
 FROM nginx:alpine

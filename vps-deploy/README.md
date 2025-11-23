@@ -65,23 +65,25 @@ docker compose exec db psql -U postgres -d active_scan_db
 ## 📁 Directory Structure
 
 ```
-vps-deploy/
-├── .env.example          # Template (copy to .env)
-├── docker-compose.yml    # Services definition
-├── init.sql              # Database schema
-├── backend/
-│   ├── Dockerfile
-│   └── (copied from ../vps-deploy/backend)
-└── frontend/
-    ├── Dockerfile
-    ├── nginx.conf        # Reverse proxy config
-    ├── .env.production   # Frontend build-time config (VITE_VPS_ENDPOINT=/api)
-    └── (copied from root ../src, ../public, etc)
+project-root/
+├── .env.production       # Frontend build config (VITE_VPS_ENDPOINT=/api)
+├── src/, public/         # Frontend source code
+└── vps-deploy/
+    ├── .env              # Backend runtime config (OPENAI_API_KEY) ← ONLY SECRET FILE
+    ├── .env.example      # Template
+    ├── docker-compose.yml
+    ├── init.sql
+    ├── backend/
+    │   └── Dockerfile
+    └── frontend/
+        ├── Dockerfile    # Builds from project root
+        └── nginx.conf    # Reverse proxy config
 ```
 
 ## ⚠️ Important Notes
 
-1. **NO `.env` in root directory** - Everything is configured here in `vps-deploy/.env`
-2. **Frontend has NO runtime config** - API endpoint is compiled at build time
-3. **Backend only needs `OPENAI_API_KEY`** - Database URL is set by docker-compose
-4. **All services are internal** except nginx (port 80)
+1. **Only ONE secret file**: `vps-deploy/.env` (with OPENAI_API_KEY)
+2. **`.env.production` in root**: Build-time config for frontend (not secret, just `/api` endpoint)
+3. **Frontend API endpoint compiled at build**: Vite replaces `VITE_VPS_ENDPOINT` during `npm run build`
+4. **Backend only needs `OPENAI_API_KEY`** - Database URL is set by docker-compose
+5. **All services are internal** except nginx (port 80)
