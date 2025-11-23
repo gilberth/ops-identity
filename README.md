@@ -104,9 +104,10 @@ docker compose up -d
 # http://your-vps-ip → Application (nginx serves frontend + proxies /api to backend)
 ```
 
-**That's it!** No `.env` needed in root. Frontend is compiled with `/api` endpoint (nginx proxy).
+**That's it!** Frontend automatically uses `.env.production` (already in repo) with `/api` endpoint.
 
 **Architecture**:
+
 ```
 Internet → Nginx (port 80) ─┬→ Frontend (static files)
                              └→ /api → Backend:3000 → PostgreSQL:5432
@@ -118,13 +119,16 @@ Internet → Nginx (port 80) ─┬→ Frontend (static files)
 # Install dependencies
 npm install
 
-# Start dev server (uses backend API from src/utils/api.ts)
+# Create .env for local development (optional)
+echo "VITE_VPS_ENDPOINT=http://localhost:3000" > .env
+
+# Start dev server
 npm run dev
 
 # Access: http://localhost:5173
 ```
 
-**Note**: For local dev, the frontend will try to connect to backend at `http://localhost:3000`. Make sure backend is running separately or modify `src/utils/api.ts` temporarily.
+**Note**: In dev mode, Vite loads `.env` (local) over `.env.production` (VPS). Backend must be running at `http://localhost:3000`.
 
 ## 📖 Usage
 
