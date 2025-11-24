@@ -10,6 +10,7 @@ import { AssessmentLogs } from "@/components/assessment/AssessmentLogs";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
 import { generateReport } from "@/lib/reportGenerator";
+import { generateRawDataDoc } from "@/lib/rawDataDocGenerator";
 
 const AssessmentDetail = () => {
   const { id } = useParams();
@@ -303,28 +304,27 @@ const AssessmentDetail = () => {
     try {
       setDownloading(true);
 
-      // Convert the raw data to JSON blob and download
-      const jsonString = JSON.stringify(rawData, null, 2);
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = window.URL.createObjectURL(blob);
+      toast({
+        title: "Generando anexo técnico",
+        description: "Por favor espera mientras se genera el documento Word...",
+      });
 
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `raw-data-${assessment?.domain || 'assessment'}-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      // Generate formatted Word document
+      generateRawDataDoc({
+        domain: assessment?.domain || 'Unknown',
+        rawData: rawData,
+        date: assessment?.created_at || new Date().toISOString(),
+      });
 
       toast({
-        title: "Datos descargados",
-        description: "Los datos raw se han descargado correctamente",
+        title: "Anexo generado",
+        description: "El documento Word se ha generado. Usa 'Guardar como PDF' o 'Guardar como Word' en el diálogo de impresión.",
       });
     } catch (error) {
       console.error('Error downloading raw data:', error);
       toast({
         title: "Error",
-        description: "Error al descargar los datos raw",
+        description: "Error al generar el anexo técnico",
         variant: "destructive",
       });
     } finally {
@@ -522,10 +522,10 @@ const AssessmentDetail = () => {
                       variant="secondary"
                       disabled={downloading}
                       size="lg"
-                      title="Descargar datos raw (JSON) como anexo técnico"
+                      title="Generar anexo técnico formateado en Word/PDF"
                     >
-                      <Download className="h-5 w-5 mr-2" />
-                      {downloading ? 'Descargando...' : 'Anexo Raw (JSON)'}
+                      <FileText className="h-5 w-5 mr-2" />
+                      {downloading ? 'Generando...' : 'Anexo Técnico'}
                     </Button>
                   )}
                 </>
@@ -536,10 +536,10 @@ const AssessmentDetail = () => {
                   variant="outline"
                   disabled={downloading}
                   size="lg"
-                  title="Descargar datos raw (JSON) como anexo técnico"
+                  title="Generar anexo técnico formateado en Word/PDF"
                 >
-                  <Download className="h-5 w-5 mr-2" />
-                  {downloading ? 'Descargando...' : 'Descargar Raw Data'}
+                  <FileText className="h-5 w-5 mr-2" />
+                  {downloading ? 'Generando...' : 'Anexo Técnico'}
                 </Button>
               )}
             </div>
@@ -594,7 +594,7 @@ const AssessmentDetail = () => {
                       className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900"
                     >
                       <Download className="h-4 w-4 mr-2" />
-                      {downloading ? 'Descargando...' : 'Descargar Anexo Raw (JSON)'}
+                      {downloading ? 'Generando...' : 'Descargar Anexo Técnico (Word)'}
                     </Button>
                   </div>
                 </div>
