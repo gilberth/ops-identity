@@ -9,9 +9,8 @@ import AnalysisProgress from "@/components/assessment/AnalysisProgress";
 import { AssessmentLogs } from "@/components/assessment/AssessmentLogs";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
-import { generateRawDataDoc } from "@/lib/rawDataDocGenerator";
+import { generateRawDataPdf } from "@/lib/rawDataPdfGenerator";
 import { generateReport } from "@/lib/reportGenerator";
-import { generateRawDataDoc } from "@/lib/rawDataDocGenerator";
 
 const AssessmentDetail = () => {
   const { id } = useParams();
@@ -307,23 +306,23 @@ const AssessmentDetail = () => {
 
       toast({
         title: "Generando anexo técnico",
-        description: "Por favor espera mientras se genera el documento Word...",
+        description: "Por favor espera mientras se genera el documento PDF...",
       });
 
-      // Generate formatted Word document
-      const blob = await generateRawDataDoc({
+      // Generate formatted PDF document
+      const blob = await generateRawDataPdf({
         domain: assessment?.domain || 'Unknown',
         rawData: rawData,
         date: assessment?.created_at || new Date().toISOString(),
       });
 
-      // Download the Word document
+      // Download the PDF document
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       const domainName = assessment?.domain || 'domain';
       const date = new Date(assessment?.created_at || Date.now()).toISOString().split('T')[0];
-      a.download = `anexo-tecnico-${domainName}-${date}.docx`;
+      a.download = `anexo-tecnico-${domainName}-${date}.pdf`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -331,7 +330,7 @@ const AssessmentDetail = () => {
 
       toast({
         title: "Anexo generado",
-        description: "El documento Word se ha descargado correctamente",
+        description: "El documento PDF se ha descargado correctamente",
       });
     } catch (error) {
       console.error('Error downloading raw data:', error);
@@ -535,7 +534,7 @@ const AssessmentDetail = () => {
                       variant="secondary"
                       disabled={downloading}
                       size="lg"
-                      title="Generar anexo técnico formateado en Word/PDF"
+                      title="Generar anexo técnico formateado en PDF"
                     >
                       <FileText className="h-5 w-5 mr-2" />
                       {downloading ? 'Generando...' : 'Anexo Técnico'}
@@ -549,10 +548,10 @@ const AssessmentDetail = () => {
                   variant="outline"
                   disabled={downloading}
                   size="lg"
-                  title="Descargar anexo técnico formateado en Word (DOCX)"
+                  title="Descargar anexo técnico formateado en PDF"
                 >
                   <FileText className="h-5 w-5 mr-2" />
-                  {downloading ? 'Generando...' : 'Anexo Técnico (Word)'}
+                  {downloading ? 'Generando...' : 'Anexo Técnico (PDF)'}
                 </Button>
               )}
             </div>
@@ -596,7 +595,7 @@ const AssessmentDetail = () => {
                       📎 Anexo Técnico Disponible
                     </h3>
                     <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                      Los datos raw están listos para descargar como anexo técnico formateado en Word (DOCX).
+                      Los datos raw están listos para descargar como anexo técnico formateado en PDF.
                       Este documento contiene tablas detalladas con toda la información extraída del Active Directory.
                     </p>
                     <Button
@@ -607,7 +606,7 @@ const AssessmentDetail = () => {
                       className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900"
                     >
                       <Download className="h-4 w-4 mr-2" />
-                      {downloading ? 'Generando...' : 'Descargar Anexo Técnico (Word)'}
+                      {downloading ? 'Generando...' : 'Descargar Anexo Técnico (PDF)'}
                     </Button>
                   </div>
                 </div>
