@@ -93,6 +93,27 @@ const Dashboard = () => {
     }
   };
 
+  const handleExportReports = () => {
+    toast({
+      title: "Próximamente",
+      description: "La funcionalidad de exportar reportes estará disponible pronto.",
+    });
+  };
+
+  const handleViewInsights = () => {
+    toast({
+      title: "Próximamente",
+      description: "El panel de insights detallados estará disponible pronto.",
+    });
+  };
+
+  const handleConfigureAlerts = () => {
+    toast({
+      title: "Próximamente",
+      description: "La configuración de alertas automáticas estará disponible pronto.",
+    });
+  };
+
   const totalAssessments = assessments?.length || 0;
   const completedAssessments = assessments?.filter(a => a.status === "completed").length || 0;
   const totalCritical = assessments?.reduce((sum, a) => sum + a.criticalFindings, 0) || 0;
@@ -198,7 +219,7 @@ const Dashboard = () => {
             <Card className="p-4 mt-6">
               <h3 className="font-semibold mb-3 text-sm text-muted-foreground">Acciones Rápidas</h3>
               <div className="flex flex-wrap gap-2">
-                <Button variant="default" size="sm">
+                <Button variant="default" size="sm" onClick={handleExportReports}>
                   <Download className="h-4 w-4 mr-2" />
                   Exportar Reportes
                 </Button>
@@ -208,11 +229,11 @@ const Dashboard = () => {
                     Nuevo Assessment
                   </Button>
                 </Link>
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" onClick={handleViewInsights}>
                   <BarChart3 className="h-4 w-4 mr-2" />
                   Ver Insights
                 </Button>
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" onClick={handleConfigureAlerts}>
                   <Settings className="h-4 w-4 mr-2" />
                   Configurar Alertas
                 </Button>
