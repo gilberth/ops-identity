@@ -93,10 +93,10 @@ const Dashboard = () => {
     }
   };
 
-  const totalAssessments = assessments.length;
-  const completedAssessments = assessments.filter(a => a.status === "completed").length;
-  const totalCritical = assessments.reduce((sum, a) => sum + a.criticalFindings, 0);
-  const totalHigh = assessments.reduce((sum, a) => sum + a.highFindings, 0);
+  const totalAssessments = assessments?.length || 0;
+  const completedAssessments = assessments?.filter(a => a.status === "completed").length || 0;
+  const totalCritical = assessments?.reduce((sum, a) => sum + a.criticalFindings, 0) || 0;
+  const totalHigh = assessments?.reduce((sum, a) => sum + a.highFindings, 0) || 0;
   const completionRate = totalAssessments > 0 ? Math.round((completedAssessments / totalAssessments) * 100) : 0;
 
   // Prepare chart data
@@ -130,7 +130,7 @@ const Dashboard = () => {
   });
 
   // Recent activity for timeline
-  const recentActivity = assessments.slice(0, 5).map(a => ({
+  const recentActivity = (assessments || []).slice(0, 5).map(a => ({
     id: a.id,
     domain: a.domain,
     date: a.date,
@@ -247,7 +247,7 @@ const Dashboard = () => {
             ) : (
               <>
                 <div className="grid grid-cols-1 gap-6">
-                  {assessments.map(assessment => (
+                  {(assessments || []).map(assessment => (
                     <AssessmentCard
                       key={assessment.id}
                       {...assessment}
