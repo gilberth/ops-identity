@@ -513,21 +513,34 @@ const AssessmentDetail = () => {
               {assessment.status === 'completed' && (
                 <>
                   <Button onClick={handleDownloadReport} size="lg">
-                    <Download className="h-5 w-5 mr-2" />
-                    Descargar Informe Word
+                    <FileText className="h-5 w-5 mr-2" />
+                    Informe Principal
                   </Button>
-                  {assessment.file_path && (
+                  {rawData && (
                     <Button
                       onClick={handleDownloadRawData}
-                      variant="outline"
+                      variant="secondary"
                       disabled={downloading}
                       size="lg"
+                      title="Descargar datos raw (JSON) como anexo técnico"
                     >
                       <Download className="h-5 w-5 mr-2" />
-                      {downloading ? 'Descargando...' : 'Descargar Datos Raw'}
+                      {downloading ? 'Descargando...' : 'Anexo Raw (JSON)'}
                     </Button>
                   )}
                 </>
+              )}
+              {assessment.status !== 'completed' && rawData && (
+                <Button
+                  onClick={handleDownloadRawData}
+                  variant="outline"
+                  disabled={downloading}
+                  size="lg"
+                  title="Descargar datos raw (JSON) como anexo técnico"
+                >
+                  <Download className="h-5 w-5 mr-2" />
+                  {downloading ? 'Descargando...' : 'Descargar Raw Data'}
+                </Button>
               )}
             </div>
           </div>
@@ -555,6 +568,38 @@ const AssessmentDetail = () => {
                 </p>
               </div>
             </div>
+          )}
+
+          {/* Raw Data Available indicator */}
+          {rawData && assessment.status === 'completed' && (
+            <Card className="mb-6 bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800">
+              <CardContent className="pt-6">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0">
+                    <FileText className="h-6 w-6 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold mb-1 text-green-900 dark:text-green-100">
+                      📎 Anexo Técnico Disponible
+                    </h3>
+                    <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                      Los datos raw (JSON completo) están listos para descargar como anexo técnico del informe principal.
+                      Este archivo contiene toda la información detallada extraída del Active Directory.
+                    </p>
+                    <Button
+                      onClick={handleDownloadRawData}
+                      variant="outline"
+                      disabled={downloading}
+                      size="sm"
+                      className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      {downloading ? 'Descargando...' : 'Descargar Anexo Raw (JSON)'}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           {/* Upload progress indicator */}
