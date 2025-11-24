@@ -18,7 +18,7 @@ const COLORS = {
 };
 
 export const SeverityChart = ({ data }: SeverityChartProps) => {
-  const chartData = data.map(item => ({
+  const chartData = (data || []).map(item => ({
     ...item,
     color: COLORS[item.name.toLowerCase() as keyof typeof COLORS] || '#6B7280'
   }));
@@ -51,7 +51,7 @@ export const SeverityChart = ({ data }: SeverityChartProps) => {
             fill="#8884d8"
             dataKey="value"
           >
-            {chartData.map((entry, index) => (
+            {(chartData || []).map((entry, index) => (
               <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Pie>

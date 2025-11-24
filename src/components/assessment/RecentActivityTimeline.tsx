@@ -58,7 +58,7 @@ export const RecentActivityTimeline = ({ assessments }: RecentActivityTimelinePr
 
   return (
     <div className="space-y-4">
-      {assessments.map((assessment, index) => (
+      {(assessments || []).map((assessment, index) => (
         <div
           key={assessment.id}
           className="flex items-start gap-4 p-4 rounded-lg border border-border hover:bg-accent/50 transition-colors"
