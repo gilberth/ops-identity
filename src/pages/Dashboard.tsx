@@ -25,28 +25,48 @@ const Dashboard = () => {
     try {
       const assessmentsData = await api.getAssessments();
 
+      // Ensure assessmentsData is an array
+      if (!Array.isArray(assessmentsData)) {
+        console.warn('Invalid assessments data received:', assessmentsData);
+        setAssessments([]);
+        return;
+      }
+
       // Load findings count for each assessment
       const assessmentsWithFindings = await Promise.all(
-        (assessmentsData || []).map(async (assessment) => {
-          const findings = await api.getFindings(assessment.id);
+        assessmentsData.map(async (assessment) => {
+          try {
+            const findings = await api.getFindings(assessment.id);
 
-          const criticalFindings = findings?.filter(f => f.severity === 'critical').length || 0;
-          const highFindings = findings?.filter(f => f.severity === 'high').length || 0;
+            const criticalFindings = findings?.filter(f => f.severity === 'critical').length || 0;
+            const highFindings = findings?.filter(f => f.severity === 'high').length || 0;
 
-          return {
-            id: assessment.id,
-            domain: assessment.domain,
-            date: assessment.created_at,
-            status: assessment.status,
-            criticalFindings,
-            highFindings,
-          };
+            return {
+              id: assessment.id,
+              domain: assessment.domain,
+              date: assessment.created_at,
+              status: assessment.status,
+              criticalFindings,
+              highFindings,
+            };
+          } catch (error) {
+            console.error(`Error loading findings for assessment ${assessment.id}:`, error);
+            return {
+              id: assessment.id,
+              domain: assessment.domain,
+              date: assessment.created_at,
+              status: assessment.status,
+              criticalFindings: 0,
+              highFindings: 0,
+            };
+          }
         })
       );
 
       setAssessments(assessmentsWithFindings);
     } catch (error) {
       console.error('Error loading assessments:', error);
+      setAssessments([]);
     } finally {
       setLoading(false);
     }
