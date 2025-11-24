@@ -1,6 +1,9 @@
 import pako from 'pako';
 
-const VPS_ENDPOINT = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+// Use empty string for production (relative URLs), localhost for development
+const VPS_ENDPOINT = import.meta.env.VITE_VPS_ENDPOINT !== undefined 
+    ? import.meta.env.VITE_VPS_ENDPOINT 
+    : 'http://localhost:3000';
 
 export const api = {
     async getAssessments() {
