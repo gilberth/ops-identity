@@ -9,6 +9,7 @@ import AnalysisProgress from "@/components/assessment/AnalysisProgress";
 import { AssessmentLogs } from "@/components/assessment/AssessmentLogs";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
+import { generateRawDataDoc } from "@/lib/rawDataDocGenerator";
 import { generateReport } from "@/lib/reportGenerator";
 import { generateRawDataDoc } from "@/lib/rawDataDocGenerator";
 
@@ -310,15 +311,27 @@ const AssessmentDetail = () => {
       });
 
       // Generate formatted Word document
-      generateRawDataDoc({
+      const blob = await generateRawDataDoc({
         domain: assessment?.domain || 'Unknown',
         rawData: rawData,
         date: assessment?.created_at || new Date().toISOString(),
       });
 
+      // Download the Word document
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const domainName = assessment?.domain || 'domain';
+      const date = new Date(assessment?.created_at || Date.now()).toISOString().split('T')[0];
+      a.download = `anexo-tecnico-${domainName}-${date}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
       toast({
         title: "Anexo generado",
-        description: "El documento Word se ha generado. Usa 'Guardar como PDF' o 'Guardar como Word' en el diálogo de impresión.",
+        description: "El documento Word se ha descargado correctamente",
       });
     } catch (error) {
       console.error('Error downloading raw data:', error);
@@ -536,10 +549,10 @@ const AssessmentDetail = () => {
                   variant="outline"
                   disabled={downloading}
                   size="lg"
-                  title="Generar anexo técnico formateado en Word/PDF"
+                  title="Descargar anexo técnico formateado en Word (DOCX)"
                 >
                   <FileText className="h-5 w-5 mr-2" />
-                  {downloading ? 'Generando...' : 'Anexo Técnico'}
+                  {downloading ? 'Generando...' : 'Anexo Técnico (Word)'}
                 </Button>
               )}
             </div>
@@ -583,8 +596,8 @@ const AssessmentDetail = () => {
                       📎 Anexo Técnico Disponible
                     </h3>
                     <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                      Los datos raw (JSON completo) están listos para descargar como anexo técnico del informe principal.
-                      Este archivo contiene toda la información detallada extraída del Active Directory.
+                      Los datos raw están listos para descargar como anexo técnico formateado en Word (DOCX).
+                      Este documento contiene tablas detalladas con toda la información extraída del Active Directory.
                     </p>
                     <Button
                       onClick={handleDownloadRawData}
