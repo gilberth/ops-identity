@@ -19,6 +19,7 @@ Rediseño completo del dashboard principal de Active Directory Security Assessme
 ## Componentes Nuevos
 
 ### 1. **StatsCard** - Tarjeta de Métricas
+
 - Display prominente de valores numéricos
 - Indicadores de tendencia con flechas (↑↓)
 - Iconos lucide-react para identificación visual
@@ -27,20 +28,22 @@ Rediseño completo del dashboard principal de Active Directory Security Assessme
 **Ubicación:** `src/components/assessment/StatsCard.tsx`
 
 **Props:**
+
 ```typescript
 interface StatsCardProps {
-  title: string;              // Título de la métrica
-  value: string | number;     // Valor principal
-  description?: string;       // Descripción adicional
-  icon: LucideIcon;          // Icono de lucide-react
+  title: string; // Título de la métrica
+  value: string | number; // Valor principal
+  description?: string; // Descripción adicional
+  icon: LucideIcon; // Icono de lucide-react
   trend?: {
-    value: number;           // Porcentaje de cambio
-    isPositive: boolean;     // true = verde↑, false = rojo↓
+    value: number; // Porcentaje de cambio
+    isPositive: boolean; // true = verde↑, false = rojo↓
   };
 }
 ```
 
 **Uso:**
+
 ```tsx
 <StatsCard
   title="Hallazgos Críticos"
@@ -52,6 +55,7 @@ interface StatsCardProps {
 ```
 
 ### 2. **SeverityChart** - Gráfica de Distribución por Severidad
+
 - Gráfica de pie (circular) usando recharts
 - Codificación de colores estándar de severidad:
   - **Critical:** `#ef4444` (rojo)
@@ -65,11 +69,12 @@ interface StatsCardProps {
 **Ubicación:** `src/components/assessment/SeverityChart.tsx`
 
 **Props:**
+
 ```typescript
 interface SeverityData {
-  name: string;   // "Critical", "High", "Medium", "Low"
-  value: number;  // Cantidad de hallazgos
-  color: string;  // Color hex del segmento
+  name: string; // "Critical", "High", "Medium", "Low"
+  value: number; // Cantidad de hallazgos
+  color: string; // Color hex del segmento
 }
 
 interface SeverityChartProps {
@@ -79,6 +84,7 @@ interface SeverityChartProps {
 ```
 
 ### 3. **CategoriesChart** - Gráfica de Hallazgos por Categoría
+
 - Gráfica de barras horizontales
 - Ordenamiento descendente por cantidad
 - Gradient azul en las barras
@@ -87,10 +93,11 @@ interface SeverityChartProps {
 **Ubicación:** `src/components/assessment/CategoriesChart.tsx`
 
 **Props:**
+
 ```typescript
 interface CategoryData {
-  category: string;  // Nombre de categoría (Kerberos, GPO, etc.)
-  findings: number;  // Cantidad de hallazgos
+  category: string; // Nombre de categoría (Kerberos, GPO, etc.)
+  findings: number; // Cantidad de hallazgos
 }
 
 interface CategoriesChartProps {
@@ -100,6 +107,7 @@ interface CategoriesChartProps {
 ```
 
 ### 4. **TrendChart** - Gráfica de Tendencias Temporales
+
 - Gráfica de líneas múltiples
 - 4 líneas para cada nivel de severidad
 - Muestra evolución en el tiempo
@@ -109,13 +117,14 @@ interface CategoriesChartProps {
 **Ubicación:** `src/components/assessment/TrendChart.tsx`
 
 **Props:**
+
 ```typescript
 interface TrendData {
-  date: string;      // Fecha en formato corto (Ej: "Nov 20")
-  critical: number;  // Hallazgos críticos en esa fecha
-  high: number;      // Hallazgos high
-  medium: number;    // Hallazgos medium
-  low: number;       // Hallazgos low
+  date: string; // Fecha en formato corto (Ej: "Nov 20")
+  critical: number; // Hallazgos críticos en esa fecha
+  high: number; // Hallazgos high
+  medium: number; // Hallazgos medium
+  low: number; // Hallazgos low
 }
 
 interface TrendChartProps {
@@ -125,6 +134,7 @@ interface TrendChartProps {
 ```
 
 ### 5. **RecentActivityTimeline** - Timeline de Actividad Reciente
+
 - Timeline vertical de assessments recientes
 - Iconos de estado:
   - ✓ **CheckCircle:** Completado (verde)
@@ -137,12 +147,13 @@ interface TrendChartProps {
 **Ubicación:** `src/components/assessment/RecentActivityTimeline.tsx`
 
 **Props:**
+
 ```typescript
 interface RecentActivity {
   id: string;
   domain: string;
   date: string;
-  status: 'completed' | 'in_progress' | 'failed';
+  status: "completed" | "in_progress" | "failed";
   critical: number;
   high: number;
 }
@@ -261,33 +272,39 @@ interface RecentActivityTimelineProps {
 ## Patrones de Diseño Aplicados
 
 ### 1. **Color Coding Consistente**
+
 - Severidad crítica: Rojo (`#ef4444`)
 - Severidad alta: Naranja (`#f97316`)
 - Severidad media: Amarillo (`#eab308`)
 - Severidad baja: Verde (`#22c55e`)
 
 ### 2. **Card-Based Layout**
+
 - Contenido agrupado en tarjetas (Cards)
 - Bordes sutiles con sombras
 - Hover effects para interactividad
 - Fácil escaneo visual
 
 ### 3. **Trend Indicators**
+
 - Flechas para cambios porcentuales
 - Verde para mejoras (↑ o ↓ según contexto)
 - Rojo para deterioros
 
 ### 4. **Responsive Grid System**
+
 - **Mobile (<768px):** 1 columna
 - **Tablet (768-1024px):** 2 columnas
 - **Desktop (>1024px):** 4 columnas para stats, 2-3 para contenido
 
 ### 5. **Loading States**
+
 - Skeletons animados durante carga
 - Previene layout shift
 - Mejora percepción de performance
 
 ### 6. **Empty States**
+
 - Mensaje amigable cuando no hay datos
 - Call-to-action prominente
 - Icono ilustrativo
@@ -324,7 +341,7 @@ interface RecentActivityTimelineProps {
 
 ```json
 {
-  "recharts": "^2.15.0",               // Biblioteca de gráficas React
+  "recharts": "^2.15.0", // Biblioteca de gráficas React
   "@radix-ui/react-progress": "^1.1.0" // Progress bars accesibles
 }
 ```
@@ -362,17 +379,20 @@ lg:col-span-2
 ### Comportamiento por Dispositivo
 
 **Móvil (< 768px):**
+
 - Stats cards apiladas (1 col)
 - Charts apilados verticalmente
 - Timeline debajo de assessments
 - Quick actions en columna
 
 **Tablet (768-1024px):**
+
 - Stats cards en 2 columnas
 - Charts apilados
 - Timeline al lado de assessments
 
 **Desktop (> 1024px):**
+
 - Stats cards en 4 columnas
 - Charts lado a lado (2 cols)
 - Timeline en sidebar derecho (1/3)
@@ -385,19 +405,19 @@ lg:col-span-2
 ```typescript
 // severityData - Calculado de datos reales
 const severityData = [
-  { name: 'Critical', value: totalCritical, color: '#ef4444' },
-  { name: 'High', value: totalHigh, color: '#f97316' },
-  { name: 'Medium', value: 0, color: '#eab308' },    // TODO: API
-  { name: 'Low', value: 0, color: '#22c55e' },       // TODO: API
+  { name: "Critical", value: totalCritical, color: "#ef4444" },
+  { name: "High", value: totalHigh, color: "#f97316" },
+  { name: "Medium", value: 0, color: "#eab308" }, // TODO: API
+  { name: "Low", value: 0, color: "#22c55e" }, // TODO: API
 ];
 
 // categoryData - Mock basado en distribución porcentual
 const categoryData = [
-  { category: 'Kerberos', findings: Math.floor(totalCritical * 0.3) },
-  { category: 'GPO', findings: Math.floor(totalCritical * 0.25) },
-  { category: 'Permissions', findings: Math.floor(totalCritical * 0.2) },
-  { category: 'Passwords', findings: Math.floor(totalCritical * 0.15) },
-  { category: 'Network', findings: Math.floor(totalCritical * 0.1) },
+  { category: "Kerberos", findings: Math.floor(totalCritical * 0.3) },
+  { category: "GPO", findings: Math.floor(totalCritical * 0.25) },
+  { category: "Permissions", findings: Math.floor(totalCritical * 0.2) },
+  { category: "Passwords", findings: Math.floor(totalCritical * 0.15) },
+  { category: "Network", findings: Math.floor(totalCritical * 0.1) },
 ];
 
 // trendData - Mock últimos 7 días con random
@@ -410,7 +430,7 @@ const trendData = Array.from({ length: 7 }, (_, i) => ({
 }));
 
 // recentActivity - Datos reales de assessments
-const recentActivity = assessments.slice(0, 5).map(a => ({
+const recentActivity = assessments.slice(0, 5).map((a) => ({
   id: a.id,
   domain: a.domain,
   date: a.date,
@@ -442,7 +462,7 @@ const categoryCounts = findings.reduce((acc, f) => {
 const trendData = await api.getTrends({
   startDate: last7Days,
   endDate: today,
-  groupBy: 'day'
+  groupBy: "day",
 });
 ```
 
@@ -451,18 +471,21 @@ const trendData = await api.getTrends({
 ### Workflow Seguro
 
 1. **Backup en VPS:**
+
    ```bash
    # Copiar versión actual a /root/ad-security-assessment/
    scp -r * root@157.230.138.178:/root/ad-security-assessment/
    ```
 
 2. **Backup en Git:**
+
    ```bash
    git checkout -b backup/pre-saas-redesign
    git push origin backup/pre-saas-redesign
    ```
 
 3. **Feature Branch:**
+
    ```bash
    git checkout main
    git checkout -b feature/saas-dashboard-redesign
@@ -471,12 +494,14 @@ const trendData = await api.getTrends({
    ```
 
 4. **Testing Local:**
+
    ```bash
    npm run build    # Verificar compilación
    npm run preview  # Probar en http://localhost:4173
    ```
 
 5. **Deploy a VPS:**
+
    ```bash
    expect vps-deploy/deploy_frontend_saas.exp
    ```
@@ -496,11 +521,13 @@ const trendData = await api.getTrends({
 **User:** root  
 **Directory:** /root/active-scan-insight/  
 **Services:**
+
 - Frontend: Nginx Alpine (port 80)
 - Backend: Node.js 18 (port 5000)
 - Database: PostgreSQL 14 (port 5432)
 
 **Docker Compose:**
+
 ```yaml
 services:
   frontend:
@@ -542,6 +569,7 @@ services:
 ## Métricas de Éxito
 
 ### Antes del Rediseño
+
 - Dashboard básico con 3 stats cards
 - Lista simple de assessments
 - Sin visualizaciones de datos
@@ -549,6 +577,7 @@ services:
 - Layout estático
 
 ### Después del Rediseño
+
 - Dashboard moderno con 4 stats cards + trends
 - 3 tipos de gráficas interactivas (pie, bar, line)
 - Timeline de actividad reciente
@@ -571,42 +600,49 @@ services:
 ### Mejoras Futuras (Roadmap)
 
 1. **Filtros Avanzados**
+
    - Date range picker para filtrar assessments
    - Dropdown de severidad (All, Critical, High, etc.)
    - Dropdown de estado (All, Completed, In Progress, Failed)
    - Search bar para buscar por dominio
 
 2. **Datos Reales**
+
    - Implementar endpoints backend para:
-     * `/api/assessments/:id/severity-distribution`
-     * `/api/assessments/:id/category-distribution`
-     * `/api/assessments/:id/trends?days=7`
+     - `/api/assessments/:id/severity-distribution`
+     - `/api/assessments/:id/category-distribution`
+     - `/api/assessments/:id/trends?days=7`
    - Reemplazar datos mock con llamadas API
 
 3. **Exportación de Reportes**
+
    - Funcionalidad "Exportar Reportes" en quick actions
    - Generar PDF con gráficas incluidas
    - Exportar CSV de datos
 
 4. **Insights y Analytics**
+
    - Página dedicada "Ver Insights"
    - Análisis de tendencias a largo plazo
    - Comparativas entre assessments
    - Recomendaciones automáticas
 
 5. **Configuración de Alertas**
+
    - Sistema de notificaciones
    - Alertas por email/webhook
    - Thresholds configurables
    - Integración con Slack/Teams
 
 6. **Optimización de Performance**
+
    - Code splitting para reducir bundle size
    - Lazy loading de componentes
    - Memoización de cálculos costosos
    - Caché de datos de gráficas
 
 7. **Tests Automatizados**
+
    - Unit tests para componentes
    - Integration tests para Dashboard
    - E2E tests con Playwright

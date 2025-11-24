@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download, FileText, Shield, CheckCircle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { generatePDF } from "@/lib/pdfGenerator";
 
 interface ExportReportsModalProps {
   open: boolean;
@@ -39,18 +40,20 @@ export function ExportReportsModal({ open, onOpenChange, assessments }: ExportRe
 
     setExporting(true);
     try {
-      // TODO: Llamar al endpoint de exportación de reportes
-      const exportData = {
-        reportType,
-        assessmentIds: selectedAssessments,
+      // Obtener los assessments seleccionados
+      const selectedAssessmentData = assessments.filter(a => 
+        selectedAssessments.includes(a.id)
+      );
+
+      // Generar y descargar el PDF
+      await generatePDF({
+        reportType: reportType as 'executive' | 'technical' | 'compliance',
+        assessments: selectedAssessmentData,
         options: {
           includeCharts,
           includeRecommendations,
         },
-      };
-
-      // Simular descarga por ahora
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      });
 
       toast({
         title: "Reporte exportado",
