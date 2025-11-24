@@ -12,10 +12,16 @@ import { TrendChart } from "@/components/assessment/TrendChart";
 import { StatsCard } from "@/components/assessment/StatsCard";
 import { RecentActivityTimeline } from "@/components/assessment/RecentActivityTimeline";
 import { Card } from "@/components/ui/card";
+import { ExportReportsModal } from "@/components/assessment/ExportReportsModal";
+import { InsightsModal } from "@/components/assessment/InsightsModal";
+import { AlertConfigModal } from "@/components/assessment/AlertConfigModal";
 
 const Dashboard = () => {
   const [assessments, setAssessments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [insightsModalOpen, setInsightsModalOpen] = useState(false);
+  const [alertsModalOpen, setAlertsModalOpen] = useState(false);
 
   useEffect(() => {
     loadAssessments();
@@ -94,24 +100,15 @@ const Dashboard = () => {
   };
 
   const handleExportReports = () => {
-    toast({
-      title: "Próximamente",
-      description: "La funcionalidad de exportar reportes estará disponible pronto.",
-    });
+    setExportModalOpen(true);
   };
 
   const handleViewInsights = () => {
-    toast({
-      title: "Próximamente",
-      description: "El panel de insights detallados estará disponible pronto.",
-    });
+    setInsightsModalOpen(true);
   };
 
   const handleConfigureAlerts = () => {
-    toast({
-      title: "Próximamente",
-      description: "La configuración de alertas automáticas estará disponible pronto.",
-    });
+    setAlertsModalOpen(true);
   };
 
   const totalAssessments = assessments?.length || 0;
@@ -304,6 +301,22 @@ const Dashboard = () => {
           )}
         </div>
       </main>
+
+      {/* Modals */}
+      <ExportReportsModal
+        open={exportModalOpen}
+        onOpenChange={setExportModalOpen}
+        assessments={assessments}
+      />
+      <InsightsModal
+        open={insightsModalOpen}
+        onOpenChange={setInsightsModalOpen}
+        assessments={assessments}
+      />
+      <AlertConfigModal
+        open={alertsModalOpen}
+        onOpenChange={setAlertsModalOpen}
+      />
     </div>
   );
 };
