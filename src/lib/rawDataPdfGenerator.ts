@@ -185,7 +185,7 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
 
   autoTable(doc, {
     startY: 45,
-    head: [['Nombre', 'SAM Account', 'Email', 'Estado', 'Último Logon', 'Pwd Último Cambio']],
+    head: [['Nombre', 'SAM Account', 'Email', 'Estado', 'Último Logon', 'Creado']],
     body: usersTableData,
     theme: 'grid',
     headStyles: {
@@ -193,15 +193,25 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
       textColor: 255,
       fontSize: 9,
       fontStyle: 'bold',
+      halign: 'left',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7,
       textColor: 50,
+      cellPadding: 2,
     },
     alternateRowStyles: {
       fillColor: [245, 247, 250],
     },
     margin: { left: margin, right: margin },
+    columnStyles: {
+      0: { cellWidth: 40, halign: 'left' },
+      1: { cellWidth: 30, halign: 'left' },
+      2: { cellWidth: 40, halign: 'left' },
+      3: { cellWidth: 20, halign: 'center' },
+      4: { cellWidth: 25, halign: 'center' },
+      5: { cellWidth: 25, halign: 'center' },
+    },
     didDrawPage: (data) => {
       if (data.pageNumber > currentPage) {
         currentPage = data.pageNumber;
@@ -254,21 +264,23 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
       textColor: 255,
       fontSize: 9,
       fontStyle: 'bold',
+      halign: 'left',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7,
       textColor: 50,
+      cellPadding: 2,
     },
     alternateRowStyles: {
       fillColor: [245, 247, 250],
     },
     margin: { left: margin, right: margin },
     columnStyles: {
-      0: { cellWidth: 50 },
-      1: { cellWidth: 70 },
+      0: { cellWidth: 45, halign: 'left' },
+      1: { cellWidth: 60, halign: 'left' },
       2: { cellWidth: 20, halign: 'center' },
-      3: { cellWidth: 25 },
-      4: { cellWidth: 25 },
+      3: { cellWidth: 30, halign: 'left' },
+      4: { cellWidth: 25, halign: 'left' },
     },
     didDrawPage: (data) => {
       if (data.pageNumber > currentPage) {
@@ -311,15 +323,24 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
       textColor: 255,
       fontSize: 9,
       fontStyle: 'bold',
+      halign: 'left',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7,
       textColor: 50,
+      cellPadding: 2,
     },
     alternateRowStyles: {
       fillColor: [245, 247, 250],
     },
     margin: { left: margin, right: margin },
+    columnStyles: {
+      0: { cellWidth: 35, halign: 'left' },
+      1: { cellWidth: 60, halign: 'left' },
+      2: { cellWidth: 25, halign: 'center' },
+      3: { cellWidth: 25, halign: 'center' },
+      4: { cellWidth: 25, halign: 'center' },
+    },
     didDrawPage: (data) => {
       if (data.pageNumber > currentPage) {
         currentPage = data.pageNumber;
@@ -356,11 +377,12 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     gpo.GpoStatus || gpo.Status || 'N/A',
     gpo.CreationTime ? new Date(gpo.CreationTime).toLocaleDateString('es-ES') : '-',
     gpo.ModificationTime ? new Date(gpo.ModificationTime).toLocaleDateString('es-ES') : '-',
+    '0', // Links column placeholder
   ]);
 
   autoTable(doc, {
     startY: 45,
-    head: [['Nombre', 'Estado', 'Creado', 'Modificado']],
+    head: [['Nombre', 'Estado', 'Creado', 'Modificado', 'Links']],
     body: gposTableData,
     theme: 'grid',
     headStyles: {
@@ -368,15 +390,24 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
       textColor: 255,
       fontSize: 9,
       fontStyle: 'bold',
+      halign: 'left',
     },
     bodyStyles: {
-      fontSize: 8,
+      fontSize: 7,
       textColor: 50,
+      cellPadding: 2,
     },
     alternateRowStyles: {
       fillColor: [245, 247, 250],
     },
     margin: { left: margin, right: margin },
+    columnStyles: {
+      0: { cellWidth: 70, halign: 'left' },
+      1: { cellWidth: 40, halign: 'left' },
+      2: { cellWidth: 25, halign: 'center' },
+      3: { cellWidth: 25, halign: 'center' },
+      4: { cellWidth: 15, halign: 'center' },
+    },
     didDrawPage: (data) => {
       if (data.pageNumber > currentPage) {
         currentPage = data.pageNumber;
@@ -403,11 +434,12 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
       dc.HostName || 'N/A',
       dc.IPAddress || dc.IPv4Address || 'N/A',
       dc.OperatingSystem || 'N/A',
+      '-', // Roles FSMO placeholder
     ]);
 
     autoTable(doc, {
       startY: 45,
-      head: [['Nombre', 'Hostname', 'IP Address', 'Sistema Operativo']],
+      head: [['Nombre', 'Hostname', 'IP Address', 'Sistema Operativo', 'Roles FSMO']],
       body: dcsTableData,
       theme: 'grid',
       headStyles: {
@@ -415,15 +447,24 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
         textColor: 255,
         fontSize: 9,
         fontStyle: 'bold',
+        halign: 'left',
       },
       bodyStyles: {
-        fontSize: 8,
+        fontSize: 7,
         textColor: 50,
+        cellPadding: 2,
       },
       alternateRowStyles: {
         fillColor: [245, 247, 250],
       },
       margin: { left: margin, right: margin },
+      columnStyles: {
+        0: { cellWidth: 30, halign: 'left' },
+        1: { cellWidth: 45, halign: 'left' },
+        2: { cellWidth: 30, halign: 'center' },
+        3: { cellWidth: 50, halign: 'left' },
+        4: { cellWidth: 20, halign: 'center' },
+      },
       didDrawPage: (data) => {
         if (data.pageNumber > currentPage) {
           currentPage = data.pageNumber;
