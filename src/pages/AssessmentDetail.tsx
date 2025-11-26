@@ -11,6 +11,9 @@ import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
 import { generateRawDataPdf } from "@/lib/rawDataPdfGenerator";
 import { generateReport } from "@/lib/reportGenerator";
+import { SecurityScorecard } from "@/components/assessment/SecurityScorecard";
+import { MaturityRadar } from "@/components/assessment/MaturityRadar";
+import { FindingCard } from "@/components/assessment/FindingCard";
 
 const AssessmentDetail = () => {
   const { id } = useParams();
@@ -96,7 +99,7 @@ const AssessmentDetail = () => {
     // Validate file type (accept .json and .zip)
     const isJson = file.name.endsWith('.json');
     const isZip = file.name.endsWith('.zip');
-    
+
     if (!isJson && !isZip) {
       toast({
         title: "Error",
@@ -115,7 +118,7 @@ const AssessmentDetail = () => {
       // For large files or ZIP files, use the new upload endpoint
       if (fileSizeMB > 50 || isZip) {
         console.log(`[UPLOAD] Using large file endpoint for ${file.name} (${fileSizeMB.toFixed(2)}MB)`);
-        
+
         toast({
           title: "Subiendo archivo",
           description: `${fileSizeMB.toFixed(1)}MB - Procesando ${isZip ? 'archivo comprimido' : 'archivo grande'}...`,
@@ -141,8 +144,8 @@ const AssessmentDetail = () => {
 
         toast({
           title: "Archivo procesado",
-          description: isZip 
-            ? "Archivo descomprimido y análisis iniciado" 
+          description: isZip
+            ? "Archivo descomprimido y análisis iniciado"
             : "Análisis iniciado correctamente",
         });
 
@@ -641,6 +644,14 @@ const AssessmentDetail = () => {
             </Card>
           )}
 
+          {/* New Visualizations Section */}
+          {assessment.status === 'completed' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <SecurityScorecard findings={findings} />
+              <MaturityRadar findings={findings} />
+            </div>
+          )}
+
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <Card>
@@ -716,25 +727,7 @@ const AssessmentDetail = () => {
           ) : findings.length > 0 ? (
             <div className="space-y-4">
               {findings.map((finding) => (
-                <Card key={finding.id} className="hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-3 mb-2">
-                          <SeverityBadge severity={finding.severity} />
-                          <CardTitle className="text-xl">{finding.title}</CardTitle>
-                        </div>
-                        <CardDescription>{finding.description}</CardDescription>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="bg-muted p-4 rounded-lg">
-                      <h4 className="font-semibold mb-2 text-sm">Recomendación:</h4>
-                      <p className="text-sm text-muted-foreground">{finding.recommendation}</p>
-                    </div>
-                  </CardContent>
-                </Card>
+                <FindingCard key={finding.id} finding={finding} />
               ))}
             </div>
           ) : null}
