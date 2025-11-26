@@ -32,31 +32,31 @@ interface ReportData {
   rawData: any;
 }
 
-// Modern 'Health Check' color palette
+// Modern color palette
 const COLORS = {
-  primary: "005A9C",      // Microsoft Blue (Professional/Corporate)
-  secondary: "0078D4",    // Lighter Blue
-  accent: "107C10",       // Office Green (Healthy)
-  critical: "D83B01",     // Office Orange/Red (Attention Needed) - Less alarming than pure red
-  high: "EA4300",         // Orange (Warning)
-  medium: "FFB900",       // Yellow/Amber (Deviation)
-  low: "0078D4",          // Blue (Info/Suggestion)
-  info: "505050",         // Dark Gray
-  lightBg: "F3F2F1",      // Light Gray Background (Microsoft UI style)
-  border: "E1DFDD",       // Border Gray
+  primary: "0F172A",      // Dark blue-gray
+  secondary: "3B82F6",    // Blue
+  accent: "10B981",       // Green
+  critical: "DC2626",     // Red
+  high: "EA580C",         // Orange
+  medium: "F59E0B",       // Amber
+  low: "3B82F6",          // Blue
+  info: "6B7280",         // Gray
+  lightBg: "F8FAFC",      // Light gray background
+  border: "E2E8F0",       // Border gray
 };
 
-const createTableRow = (cells: string[], isHeader = false, status?: string) => {
+const createTableRow = (cells: string[], isHeader = false, severity?: string) => {
   const headerColor = isHeader ? COLORS.primary : undefined;
-  const cellBg = isHeader ? COLORS.primary : (status ? getStatusBg(status) : undefined);
-
+  const cellBg = isHeader ? COLORS.primary : (severity ? getSeverityBg(severity) : undefined);
+  
   return new TableRow({
     children: cells.map(cell => new TableCell({
       children: [new Paragraph({
-        children: [new TextRun({
-          text: cell,
+        children: [new TextRun({ 
+          text: cell, 
           bold: isHeader,
-          color: isHeader ? "FFFFFF" : (status ? getStatusColor(status) : undefined),
+          color: isHeader ? "FFFFFF" : (severity ? getSeverityColor(severity) : undefined),
           size: isHeader ? 24 : 22,
         })],
         alignment: AlignmentType.LEFT,
@@ -79,23 +79,23 @@ const createTableRow = (cells: string[], isHeader = false, status?: string) => {
   });
 };
 
-const getStatusColor = (status: string): string => {
-  switch (status.toLowerCase()) {
+const getSeverityColor = (severity: string): string => {
+  switch (severity.toLowerCase()) {
     case 'critical': return COLORS.critical;
     case 'high': return COLORS.high;
-    case 'medium': return "#8A6D05"; // Darker yellow for text readability
+    case 'medium': return COLORS.medium;
     case 'low': return COLORS.low;
     default: return COLORS.info;
   }
 };
 
-const getStatusBg = (status: string): string => {
-  switch (status.toLowerCase()) {
-    case 'critical': return "FDE7E9"; // Very light red
-    case 'high': return "FFF4CE";     // Very light orange
-    case 'medium': return "FFF4CE";   // Light yellow
-    case 'low': return "DEECF9";      // Light blue
-    default: return "F3F2F1";
+const getSeverityBg = (severity: string): string => {
+  switch (severity.toLowerCase()) {
+    case 'critical': return "FEE2E2";
+    case 'high': return "FFEDD5";
+    case 'medium': return "FEF3C7";
+    case 'low': return "DBEAFE";
+    default: return "F3F4F6";
   }
 };
 
@@ -112,7 +112,7 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
       new TableRow({
         children: [
           new TableCell({
-            children: [new Paragraph({
+            children: [new Paragraph({ 
               children: [new TextRun({ text: title, bold: true, size: 24 })],
               spacing: { before: 100, after: 100 },
             })],
@@ -122,7 +122,7 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
             verticalAlign: VerticalAlign.CENTER,
           }),
           new TableCell({
-            children: [new Paragraph({
+            children: [new Paragraph({ 
               text: content,
               spacing: { before: 100, after: 100 },
             })],
@@ -138,13 +138,13 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
 
 export async function generateReport(data: ReportData): Promise<Blob> {
   const { assessment, findings, rawData } = data;
-
+  
   // Extract functional levels from wherever they are in the data structure
   const extractFunctionalLevels = (data: any) => {
     // Try to find these values in various possible locations
     let forestLevel = "Desconocido";
     let domainLevel = "Desconocido";
-
+    
     if (data?.ForestFunctionalLevel) {
       forestLevel = data.ForestFunctionalLevel;
     } else if (data?.DomainInfo?.ForestFunctionalLevel) {
@@ -154,7 +154,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
     } else if (data?.DomainInfo?.ForestMode) {
       forestLevel = data.DomainInfo.ForestMode;
     }
-
+    
     if (data?.DomainFunctionalLevel) {
       domainLevel = data.DomainFunctionalLevel;
     } else if (data?.DomainInfo?.DomainFunctionalLevel) {
@@ -164,12 +164,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
     } else if (data?.DomainInfo?.DomainMode) {
       domainLevel = data.DomainInfo.DomainMode;
     }
-
+    
     return { forestLevel, domainLevel };
   };
-
+  
   const { forestLevel, domainLevel } = extractFunctionalLevels(rawData);
-
+  
   const severityCounts = {
     critical: findings.filter(f => f.severity === 'critical').length,
     high: findings.filter(f => f.severity === 'high').length,
@@ -183,34 +183,16 @@ export async function generateReport(data: ReportData): Promise<Blob> {
   const mediumFindings = findings.filter(f => f.severity === 'medium');
   const lowFindings = findings.filter(f => f.severity === 'low');
 
-  const currentDate = new Date().toLocaleDateString('es-ES', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
+  const currentDate = new Date().toLocaleDateString('es-ES', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
   });
 
-  // Calculate Health Score (0-100)
-  // Start with 100. Deduct points based on severity.
-  // Critical: -20, High: -10, Medium: -5, Low: -1
-  let healthScore = 100;
-  healthScore -= (severityCounts.critical * 20);
-  healthScore -= (severityCounts.high * 10);
-  healthScore -= (severityCounts.medium * 5);
-  healthScore -= (severityCounts.low * 1);
-  if (healthScore < 0) healthScore = 0;
-
-  const overallHealth = healthScore >= 90 ? "Excelente" :
-    healthScore >= 75 ? "Bueno" :
-      healthScore >= 50 ? "Requiere Revisión" : "Requiere Atención";
-
-  const scoreColor = healthScore >= 90 ? COLORS.accent :
-    healthScore >= 75 ? COLORS.secondary :
-      healthScore >= 50 ? COLORS.medium : COLORS.critical;
-
   const totalTests = findings.length;
-  // const overallHealth = severityCounts.critical > 0 ? "Requiere Atención" :
-  //   severityCounts.high > 0 ? "Requiere Revisión" :
-  //     severityCounts.medium > 0 ? "Aceptable" : "Saludable";
+  const overallHealth = severityCounts.critical > 0 ? "Crítico" : 
+                       severityCounts.high > 0 ? "Grave" : 
+                       severityCounts.medium > 0 ? "Bueno" : "Excelente";
 
   const doc = new Document({
     sections: [{
@@ -227,7 +209,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
       children: [
         // PORTADA MODERNA
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: "Active Directory",
             size: 56,
             bold: true,
@@ -237,8 +219,8 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           spacing: { after: 200 },
         }),
         new Paragraph({
-          children: [new TextRun({
-            text: "Reporte de Estado y Configuración",
+          children: [new TextRun({ 
+            text: "Reporte de Evaluación de Riesgos",
             size: 48,
             color: COLORS.secondary,
           })],
@@ -246,7 +228,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           spacing: { after: 800 },
         }),
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: assessment.domain,
             size: 40,
             bold: true,
@@ -301,7 +283,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               children: [
                 new TableCell({
                   children: [new Paragraph({
-                    children: [new TextRun({ text: "📊 Estado de Salud", bold: true, size: 24 })],
+                    children: [new TextRun({ text: "📊 Estado", bold: true, size: 24 })],
                     alignment: AlignmentType.LEFT,
                   })],
                   shading: { fill: COLORS.lightBg },
@@ -315,19 +297,13 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 }),
                 new TableCell({
                   children: [new Paragraph({
-                    children: [
-                      new TextRun({
-                        text: `${healthScore}/100`,
-                        size: 36,
-                        bold: true,
-                        color: scoreColor
-                      }),
-                      new TextRun({
-                        text: ` (${overallHealth})`,
-                        size: 24,
-                        color: COLORS.info
-                      })
-                    ],
+                    children: [new TextRun({ 
+                      text: overallHealth, 
+                      size: 24,
+                      bold: true,
+                      color: severityCounts.critical > 0 ? COLORS.critical : 
+                             severityCounts.high > 0 ? COLORS.high : COLORS.accent
+                    })],
                     alignment: AlignmentType.RIGHT,
                   })],
                   shading: { fill: COLORS.lightBg },
@@ -344,7 +320,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ],
         }),
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: "🔒 CONFIDENTIAL",
             bold: true,
             color: COLORS.critical,
@@ -356,7 +332,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
         // AD FOREST AND DOMAIN SUMMARY
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: "🌳 AD Forest and Domain Summary",
             size: 36,
             bold: true,
@@ -397,35 +373,6 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ],
         }),
 
-        // DOMAIN CONTROLLER HEALTH (SEMAPHORE STYLE)
-        ...(rawData?.DomainControllers && rawData.DomainControllers.length > 0 ? [
-          new Paragraph({
-            text: "Estado de Controladores de Dominio",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Hostname", "IPv4", "OS", "Estado"], true),
-              ...rawData.DomainControllers.map((dc: any) => {
-                // Simulate health checks based on available data
-                // In a real scenario, we would check specific health flags
-                const isHealthy = true; // Default to true for layout demo
-                const statusText = isHealthy ? "✅ Operativo" : "⚠️ Revisar";
-                const statusColor = isHealthy ? "low" : "high"; // Blue for healthy (info), Orange for warning
-
-                return createTableRow([
-                  dc.HostName || dc.Name || "N/A",
-                  dc.IPv4Address || dc.IPAddress || "N/A",
-                  dc.OperatingSystem || "N/A",
-                  statusText
-                ], false, statusColor);
-              }),
-            ],
-          }),
-        ] : []),
-
         // ANÁLISIS DE OBJETOS DE DIRECTIVA DE GRUPO
         ...(rawData?.GPOs && rawData.GPOs.length > 0 ? [
           new Paragraph({
@@ -437,7 +384,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: `Se identificaron un total de ${rawData.GPOs.length} Objetos de Directiva de Grupo en el dominio. La siguiente sección proporciona información detallada sobre cada GPO, incluyendo su estado, enlaces, permisos y mejoras recomendadas.`,
             spacing: { after: 200 },
           }),
-
+          
           // Tabla de Resumen de GPO
           new Paragraph({
             text: "Resumen de GPOs",
@@ -453,7 +400,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 const status = gpo.GpoStatus || "AllSettingsEnabled";
                 const linksCount = gpo.Links?.length?.toString() || gpo.LinksCount?.toString() || "0";
                 let lastModified = "N/A";
-
+                
                 if (gpo.ModificationTime) {
                   try {
                     const date = new Date(gpo.ModificationTime);
@@ -468,7 +415,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     console.error('Error parsing date:', gpo.ModificationTime, e);
                   }
                 }
-
+                
                 return createTableRow([displayName, status, linksCount, lastModified]);
               }),
             ],
@@ -504,7 +451,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
           ...(() => {
             const recommendations = [];
-
+            
             // Verificar GPOs no enlazadas
             const unlinkedGPOs = rawData.GPOs.filter((gpo: any) => !gpo.Links || gpo.Links.length === 0);
             if (unlinkedGPOs.length > 0) {
@@ -513,7 +460,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   text: `1. GPOs No Enlazadas: ${unlinkedGPOs.length} GPO(s) no están enlazadas a ninguna OU. Considere eliminarlas o enlazarlas:`,
                   spacing: { before: 100, after: 50 },
                 }),
-                ...unlinkedGPOs.slice(0, 5).map((gpo: any) =>
+                ...unlinkedGPOs.slice(0, 5).map((gpo: any) => 
                   new Paragraph({
                     text: `   • ${gpo.DisplayName}`,
                     spacing: { after: 50 },
@@ -530,7 +477,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   text: `2. GPOs Deshabilitadas: ${disabledGPOs.length} GPO(s) tienen todas las configuraciones deshabilitadas. Revise si aún son necesarias:`,
                   spacing: { before: 100, after: 50 },
                 }),
-                ...disabledGPOs.slice(0, 5).map((gpo: any) =>
+                ...disabledGPOs.slice(0, 5).map((gpo: any) => 
                   new Paragraph({
                     text: `   • ${gpo.DisplayName}`,
                     spacing: { after: 50 },
@@ -557,7 +504,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             }
 
             // Verificar GPOs con problemas de permisos
-            const gposWithAuthUsers = rawData.GPOs.filter((gpo: any) =>
+            const gposWithAuthUsers = rawData.GPOs.filter((gpo: any) => 
               gpo.Permissions?.some((p: any) => p.Trustee === "Authenticated Users" && p.Permission !== "GpoApply")
             );
             if (gposWithAuthUsers.length > 0) {
@@ -566,7 +513,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   text: `4. Problemas de Permisos: ${gposWithAuthUsers.length} GPO(s) pueden tener acceso excesivamente permisivo. Revise permisos para:`,
                   spacing: { before: 100, after: 50 },
                 }),
-                ...gposWithAuthUsers.slice(0, 5).map((gpo: any) =>
+                ...gposWithAuthUsers.slice(0, 5).map((gpo: any) => 
                   new Paragraph({
                     text: `   • ${gpo.DisplayName}`,
                     spacing: { after: 50 },
@@ -603,7 +550,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: `Se analizó la configuración DNS en los controladores de dominio. Método utilizado: ${rawData.DNSConfiguration.Method || "Desconocido"}.`,
             spacing: { after: 200 },
           }),
-
+          
           // Tabla de Zonas DNS
           ...(rawData.DNSConfiguration.Zones && rawData.DNSConfiguration.Zones.length > 0 ? [
             new Paragraph({
@@ -634,8 +581,8 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               heading: HeadingLevel.HEADING_2,
               spacing: { before: 300, after: 100 },
             }),
-            ...rawData.DNSConfiguration.GlobalSettings.flatMap((setting: any) =>
-              (setting.SecurityIssues || []).map((issue: string) =>
+            ...rawData.DNSConfiguration.GlobalSettings.flatMap((setting: any) => 
+              (setting.SecurityIssues || []).map((issue: string) => 
                 new Paragraph({
                   text: `• [${setting.DCName}] ${issue}`,
                   spacing: { after: 50 },
@@ -657,7 +604,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: `Se analizó la infraestructura DHCP. Método utilizado: ${rawData.DHCPConfiguration.Method || "Desconocido"}.`,
             spacing: { after: 200 },
           }),
-
+          
           // Servidores Autorizados
           ...(rawData.DHCPConfiguration.AuthorizedServers && rawData.DHCPConfiguration.AuthorizedServers.length > 0 ? [
             new Paragraph({
@@ -731,7 +678,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
         // RESUMEN EJECUTIVO
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: "📋 Resumen Ejecutivo",
             size: 36,
             bold: true,
@@ -748,21 +695,21 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           },
         }),
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: `Este reporte detalla los problemas descubiertos durante la evaluación de salud y riesgo de ${assessment.domain}.`,
             size: 24,
           })],
           spacing: { after: 400 },
         }),
-
+        
         // Health Status Card
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
           borders: {
-            top: { style: BorderStyle.SINGLE, size: 3, color: scoreColor },
-            bottom: { style: BorderStyle.SINGLE, size: 3, color: scoreColor },
-            left: { style: BorderStyle.SINGLE, size: 3, color: scoreColor },
-            right: { style: BorderStyle.SINGLE, size: 3, color: scoreColor },
+            top: { style: BorderStyle.SINGLE, size: 3, color: COLORS.secondary },
+            bottom: { style: BorderStyle.SINGLE, size: 3, color: COLORS.secondary },
+            left: { style: BorderStyle.SINGLE, size: 3, color: COLORS.secondary },
+            right: { style: BorderStyle.SINGLE, size: 3, color: COLORS.secondary },
           },
           rows: [
             new TableRow({
@@ -770,33 +717,22 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 new TableCell({
                   children: [
                     new Paragraph({
-                      children: [new TextRun({
-                        text: "Puntuación de Salud del Dominio",
+                      children: [new TextRun({ 
+                        text: "Estado General de Salud",
                         bold: true,
                         size: 28,
                         color: COLORS.primary,
                       })],
-                      alignment: AlignmentType.CENTER,
                       spacing: { before: 200, after: 100 },
                     }),
                     new Paragraph({
-                      children: [new TextRun({
-                        text: `${healthScore}`,
-                        bold: true,
-                        size: 72,
-                        color: scoreColor
-                      })],
-                      alignment: AlignmentType.CENTER,
-                      spacing: { after: 100 },
-                    }),
-                    new Paragraph({
-                      children: [new TextRun({
+                      children: [new TextRun({ 
                         text: overallHealth,
                         bold: true,
-                        size: 32,
-                        color: COLORS.info
+                        size: 48,
+                        color: severityCounts.critical > 0 ? COLORS.critical : 
+                               severityCounts.high > 0 ? COLORS.high : COLORS.accent
                       })],
-                      alignment: AlignmentType.CENTER,
                       spacing: { after: 200 },
                     }),
                   ],
@@ -812,7 +748,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
         // Test Summary Table with modern design
         new Paragraph({
-          children: [new TextRun({
+          children: [new TextRun({ 
             text: "📊 Resultados de la Evaluación",
             size: 28,
             bold: true,
@@ -831,11 +767,11 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           },
           rows: [
             createTableRow(["Métrica", "Cantidad"], true),
-            createTableRow(["Pruebas de Configuración Ejecutadas", totalTests.toString()]),
-            createTableRow(["🔴 Configuraciones Críticas a Revisar", severityCounts.critical.toString()], false, 'critical'),
-            createTableRow(["🟠 Desviaciones de Alta Prioridad", severityCounts.high.toString()], false, 'high'),
-            createTableRow(["🟡 Desviaciones de Media Prioridad", severityCounts.medium.toString()], false, 'medium'),
-            createTableRow(["🔵 Sugerencias de Optimización", severityCounts.low.toString()], false, 'low'),
+            createTableRow(["Pruebas Completadas Exitosamente", totalTests.toString()]),
+            createTableRow(["🔴 Problemas Críticos Detectados", severityCounts.critical.toString()], false, 'critical'),
+            createTableRow(["🟠 Problemas de Severidad Alta", severityCounts.high.toString()], false, 'high'),
+            createTableRow(["🟡 Problemas de Severidad Media", severityCounts.medium.toString()], false, 'medium'),
+            createTableRow(["🔵 Problemas de Severidad Baja", severityCounts.low.toString()], false, 'low'),
           ],
         }),
 
@@ -852,11 +788,11 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
           rows: [
-            createTableRow(["Categoría", "Estado de Configuración"], true),
-            createTableRow(["Active Directory y Bosque", severityCounts.critical > 0 ? "Requiere Atención" : "Configuración Óptima"]),
-            createTableRow(["Políticas de Cuentas de Dominio", severityCounts.high > 0 ? "Requiere Revisión" : "Configuración Óptima"]),
-            createTableRow(["Controlador de Dominio", severityCounts.medium > 0 ? "Aceptable" : "Configuración Óptima"]),
-            createTableRow(["Seguridad y Cumplimiento", severityCounts.low > 0 ? "Sugerencias Disponibles" : "Configuración Óptima"]),
+            createTableRow(["Categoría", "Severidad de Riesgo"], true),
+            createTableRow(["Active Directory y Bosque", severityCounts.critical > 0 ? "Crítico" : "Sin Problemas Detectados"]),
+            createTableRow(["Políticas de Cuentas de Dominio", severityCounts.high > 0 ? "Grave" : "Sin Problemas Detectados"]),
+            createTableRow(["Controlador de Dominio", severityCounts.medium > 0 ? "Moderado" : "Sin Problemas Detectados"]),
+            createTableRow(["Seguridad y Cumplimiento", severityCounts.low > 0 ? "Bajo" : "Sin Problemas Detectados"]),
           ],
         }),
 
@@ -877,8 +813,8 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // CRITICAL ISSUES
         ...(criticalFindings.length > 0 ? [
           new Paragraph({
-            children: [new TextRun({
-              text: "🔴 Configuraciones Críticas",
+            children: [new TextRun({ 
+              text: "🔴 Problemas Críticos",
               size: 36,
               bold: true,
               color: COLORS.critical,
@@ -894,7 +830,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             },
           }),
           new Paragraph({
-            children: [new TextRun({
+            children: [new TextRun({ 
               text: "Los siguientes problemas críticos requieren atención y remediación inmediata.",
               size: 24,
               color: COLORS.critical,
@@ -903,7 +839,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
           ...criticalFindings.flatMap((finding, index) => [
             new Paragraph({
-              children: [new TextRun({
+              children: [new TextRun({ 
                 text: `${index + 1}. ${finding.title}`,
                 size: 28,
                 bold: true,
@@ -911,7 +847,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               })],
               spacing: { before: 400, after: 200 },
             }),
-
+            
             // Información técnica de referencia
             ...(finding.mitre_attack || finding.cis_control || finding.timeline ? [
               new Table({
@@ -931,43 +867,43 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               }),
               new Paragraph({ text: "", spacing: { after: 200 } }),
             ] : []),
-
+            
             createDetailTable("Descripción", finding.description, COLORS.critical),
             new Paragraph({ text: "", spacing: { after: 100 } }),
-
+            
             ...(finding.impact_business ? [
               createDetailTable("💼 Impacto en el Negocio", finding.impact_business, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.current_vs_recommended ? [
               createDetailTable("📏 Configuración Actual vs Recomendada", finding.current_vs_recommended, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             createDetailTable("Recomendación", finding.recommendation, COLORS.critical),
             new Paragraph({ text: "", spacing: { after: 100 } }),
-
+            
             ...(finding.remediation_commands ? [
               createDetailTable("⚡ Comandos de Remediación (PowerShell)", finding.remediation_commands, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.prerequisites ? [
               createDetailTable("✅ Prerrequisitos", finding.prerequisites, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.operational_impact ? [
               createDetailTable("⚙️ Impacto Operacional", finding.operational_impact, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.microsoft_docs ? [
               createDetailTable("📚 Documentación Técnica Microsoft", finding.microsoft_docs, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             new Paragraph({ text: "", spacing: { after: 300 } }),
           ]),
         ] : []),
@@ -975,8 +911,8 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // SERIOUS ISSUES (HIGH)
         ...(highFindings.length > 0 ? [
           new Paragraph({
-            children: [new TextRun({
-              text: "🟠 Desviaciones Importantes",
+            children: [new TextRun({ 
+              text: "🟠 Problemas de Severidad Alta",
               size: 36,
               bold: true,
               color: COLORS.high,
@@ -992,7 +928,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             },
           }),
           new Paragraph({
-            children: [new TextRun({
+            children: [new TextRun({ 
               text: "Estos problemas de alta severidad deben priorizarse para su remediación.",
               size: 24,
               color: COLORS.high,
@@ -1001,7 +937,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
           ...highFindings.flatMap((finding, index) => [
             new Paragraph({
-              children: [new TextRun({
+              children: [new TextRun({ 
                 text: `${index + 1}. ${finding.title}`,
                 size: 28,
                 bold: true,
@@ -1009,7 +945,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               })],
               spacing: { before: 400, after: 200 },
             }),
-
+            
             // Información técnica de referencia
             ...(finding.mitre_attack || finding.cis_control || finding.timeline ? [
               new Table({
@@ -1029,43 +965,43 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               }),
               new Paragraph({ text: "", spacing: { after: 200 } }),
             ] : []),
-
+            
             createDetailTable("Descripción", finding.description, COLORS.high),
             new Paragraph({ text: "", spacing: { after: 100 } }),
-
+            
             ...(finding.impact_business ? [
               createDetailTable("💼 Impacto en el Negocio", finding.impact_business, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.current_vs_recommended ? [
               createDetailTable("📏 Actual vs Recomendado", finding.current_vs_recommended, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             createDetailTable("Recomendación", finding.recommendation, COLORS.high),
             new Paragraph({ text: "", spacing: { after: 100 } }),
-
+            
             ...(finding.remediation_commands ? [
               createDetailTable("⚡ Comandos PowerShell", finding.remediation_commands, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.prerequisites ? [
               createDetailTable("✅ Prerrequisitos", finding.prerequisites, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.operational_impact ? [
               createDetailTable("⚙️ Impacto Operacional", finding.operational_impact, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.microsoft_docs ? [
               createDetailTable("📚 Docs Microsoft", finding.microsoft_docs, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             new Paragraph({ text: "", spacing: { after: 300 } }),
           ]),
         ] : []),
@@ -1073,7 +1009,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // MODERATE ISSUES (MEDIUM)
         ...(mediumFindings.length > 0 ? [
           new Paragraph({
-            children: [new TextRun({
+            children: [new TextRun({ 
               text: "🟡 Problemas de Severidad Media",
               size: 36,
               bold: true,
@@ -1090,7 +1026,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             },
           }),
           new Paragraph({
-            children: [new TextRun({
+            children: [new TextRun({ 
               text: "Estos problemas moderados deben abordarse como parte del mantenimiento regular de seguridad.",
               size: 24,
               color: COLORS.medium,
@@ -1103,7 +1039,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
           ...mediumFindings.flatMap((finding, index) => [
             new Paragraph({
-              children: [new TextRun({
+              children: [new TextRun({ 
                 text: `${index + 1}. ${finding.title}`,
                 size: 26,
                 bold: true,
@@ -1111,7 +1047,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               })],
               spacing: { before: 300, after: 200 },
             }),
-
+            
             // Información técnica de referencia
             ...(finding.mitre_attack || finding.cis_control || finding.timeline ? [
               new Table({
@@ -1131,28 +1067,28 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               }),
               new Paragraph({ text: "", spacing: { after: 150 } }),
             ] : []),
-
+            
             createDetailTable("Descripción", finding.description, COLORS.medium),
             new Paragraph({ text: "", spacing: { after: 100 } }),
-
+            
             ...(finding.current_vs_recommended ? [
               createDetailTable("📏 Actual vs Recomendado", finding.current_vs_recommended, COLORS.medium),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             createDetailTable("Recomendación", finding.recommendation, COLORS.medium),
             new Paragraph({ text: "", spacing: { after: 100 } }),
-
+            
             ...(finding.remediation_commands ? [
               createDetailTable("⚡ Comandos PowerShell", finding.remediation_commands, COLORS.medium),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             ...(finding.microsoft_docs ? [
               createDetailTable("📚 Documentación", finding.microsoft_docs, COLORS.medium),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
-
+            
             new Paragraph({ text: "", spacing: { after: 250 } }),
           ]),
         ] : []),

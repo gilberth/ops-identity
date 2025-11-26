@@ -74,14 +74,35 @@ if ($OfflineMode) {
     Write-Host "Mode: OFFLINE (Save JSON locally only)" -ForegroundColor Yellow
 } else {
     Write-Host "Mode: ONLINE (Send to API)" -ForegroundColor Green
+    Write-Host "Target: $ApiEndpoint" -ForegroundColor Gray
 }
 Write-Host "=" * 80 -ForegroundColor Cyan
 Write-Host ""
+
+# Connectivity Check
+if (-not $OfflineMode) {
+    Write-Host "[*] Testing connectivity to API..." -ForegroundColor Cyan
+    try {
+        $test = Invoke-WebRequest -Uri "$ApiEndpoint" -Method Options -TimeoutSec 5 -ErrorAction SilentlyContinue
+        Write-Host "[+] Connection successful" -ForegroundColor Green
+    } catch {
+        Write-Host "[!] WARNING: Could not connect to API endpoint ($ApiEndpoint)" -ForegroundColor Yellow
+        Write-Host "    The server might be unreachable from this machine." -ForegroundColor Yellow
+        Write-Host "    If this machine has restricted internet access, use Offline Mode:" -ForegroundColor Yellow
+        Write-Host "    Example: .\AD-Assessment.ps1 -OfflineMode" -ForegroundColor White
+        Write-Host ""
+        Write-Host "    Continuing in 5 seconds... (Press Ctrl+C to stop)" -ForegroundColor Gray
+        Start-Sleep -Seconds 5
+    }
+}
 
 # Configurar codificacion UTF-8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Continue"
+
+# Force TLS 1.2 (Crucial for older Windows Servers)
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # Check PowerShell version
 Write-Host "[*] Checking PowerShell version..." -ForegroundColor Green
@@ -551,9 +572,10 @@ function Get-ReplicationStatus {
     Write-Host "\`n[*] Analyzing AD Replication Status..." -ForegroundColor Green
     try {
         $replSummary = @()
+        $method = "AD Module"
 
         try {
-            $replData = Get-ADReplicationPartnerMetadata -Target $DomainName -ErrorAction SilentlyContinue
+            $replData = Get-ADReplicationPartnerMetadata -Target $DomainName -ErrorAction Stop
 
             foreach ($repl in $replData) {
                 $replSummary += @{
@@ -563,33 +585,58 @@ function Get-ReplicationStatus {
                     LastReplicationResult = $repl.LastReplicationResult
                     ConsecutiveReplicationFailures = $repl.ConsecutiveReplicationFailures
                     LastChangeUsn = $repl.LastChangeUsn
+                    Method = "AD Module"
                 }
             }
         } catch {
-            Write-Host "[*] Using fallback method: Querying each DC..." -ForegroundColor Yellow
-            $dcs = Get-ADDomainController -Filter * -Server $DomainName
-
-            foreach ($dc in $dcs) {
-                try {
-                    $replPartners = Get-ADReplicationPartnerMetadata -Target $dc.HostName -ErrorAction SilentlyContinue
-
-                    foreach ($partner in $replPartners) {
+            Write-Host "[*] AD Module replication check failed. Attempting Repadmin fallback..." -ForegroundColor Yellow
+            $method = "Repadmin"
+            
+            try {
+                # REPADMIN FALLBACK
+                $repadminOutput = Invoke-Expression "repadmin /showrepl * /csv" -ErrorAction Stop
+                if ($repadminOutput) {
+                    $csvData = $repadminOutput | ConvertFrom-Csv
+                    foreach ($row in $csvData) {
                         $replSummary += @{
-                            Server = $partner.Server
-                            Partner = $partner.Partner
-                            LastReplicationSuccess = $partner.LastReplicationSuccess
-                            LastReplicationResult = $partner.LastReplicationResult
-                            ConsecutiveReplicationFailures = $partner.ConsecutiveReplicationFailures
-                            LastChangeUsn = $partner.LastChangeUsn
+                            Server = $row.'Source DSA'
+                            Partner = $row.'Destination DSA'
+                            LastReplicationSuccess = $row.'Last Success'
+                            LastReplicationResult = $row.'Last Failure Status'
+                            ConsecutiveReplicationFailures = $row.'Number of Failures'
+                            LastChangeUsn = "N/A"
+                            Method = "Repadmin"
                         }
                     }
-                } catch {
-                    Write-Host "[!] Could not get replication data from $($dc.HostName)" -ForegroundColor Yellow
+                }
+            } catch {
+                Write-Host "[*] Repadmin failed. Querying each DC individually..." -ForegroundColor Yellow
+                $method = "Individual Query"
+                $dcs = Get-ADDomainController -Filter * -Server $DomainName
+
+                foreach ($dc in $dcs) {
+                    try {
+                        $replPartners = Get-ADReplicationPartnerMetadata -Target $dc.HostName -ErrorAction SilentlyContinue
+
+                        foreach ($partner in $replPartners) {
+                            $replSummary += @{
+                                Server = $partner.Server
+                                Partner = $partner.Partner
+                                LastReplicationSuccess = $partner.LastReplicationSuccess
+                                LastReplicationResult = $partner.LastReplicationResult
+                                ConsecutiveReplicationFailures = $partner.ConsecutiveReplicationFailures
+                                LastChangeUsn = $partner.LastChangeUsn
+                                Method = "Individual Query"
+                            }
+                        }
+                    } catch {
+                        Write-Host "[!] Could not get replication data from $($dc.HostName)" -ForegroundColor Yellow
+                    }
                 }
             }
         }
 
-        Write-Host "[+] Collected replication status from $($replSummary.Count) replication partners" -ForegroundColor Green
+        Write-Host "[+] Collected replication status from $($replSummary.Count) replication partners (Method: $method)" -ForegroundColor Green
         return $replSummary
     } catch {
         Write-Host "[!] Error collecting replication status: $_" -ForegroundColor Red
@@ -700,14 +747,40 @@ function Get-OldPasswords {
 function Get-RecycleBinStatus {
     Write-Host "\`n[*] Checking AD Recycle Bin Status..." -ForegroundColor Green
     try {
-        $recycleBin = Get-ADOptionalFeature -Filter {name -like "Recycle Bin Feature"} -Properties *
-
         $recycleBinInfo = @{
-            FeatureName = $recycleBin.Name
-            IsEnabled = ($recycleBin.EnabledScopes.Count -gt 0)
-            EnabledScopes = @($recycleBin.EnabledScopes)
-            FeatureGUID = $recycleBin.FeatureGUID.ToString()
-            RiskLevel = if ($recycleBin.EnabledScopes.Count -eq 0) { "HIGH" } else { "LOW" }
+            FeatureName = "Recycle Bin Feature"
+            IsEnabled = $false
+            EnabledScopes = @()
+            FeatureGUID = "766ddcd8-acd0-445e-f3b9-a7f9b6744f2a"
+            RiskLevel = "HIGH"
+            Method = "AD Module"
+        }
+
+        try {
+            $recycleBin = Get-ADOptionalFeature -Filter {name -like "Recycle Bin Feature"} -Properties * -ErrorAction Stop
+            
+            $recycleBinInfo.IsEnabled = ($recycleBin.EnabledScopes.Count -gt 0)
+            $recycleBinInfo.EnabledScopes = @($recycleBin.EnabledScopes)
+            $recycleBinInfo.FeatureGUID = $recycleBin.FeatureGUID.ToString()
+            $recycleBinInfo.RiskLevel = if ($recycleBin.EnabledScopes.Count -eq 0) { "HIGH" } else { "LOW" }
+        } catch {
+            Write-Host "[*] Get-ADOptionalFeature failed. Attempting fallback check..." -ForegroundColor Yellow
+            $recycleBinInfo.Method = "AD Attribute Check"
+            
+            # Fallback: Check msDS-EnabledFeature on the Partitions container
+            try {
+                $configNC = (Get-ADRootDSE).configurationNamingContext
+                $partitionsContainer = "CN=Partitions,$configNC"
+                $partitions = Get-ADObject -Identity $partitionsContainer -Properties "msDS-EnabledFeature"
+                
+                if ($partitions."msDS-EnabledFeature" -contains "CN=766ddcd8-acd0-445e-f3b9-a7f9b6744f2a,CN=Optional Features,CN=Directory Service,CN=Windows NT,CN=Services,$configNC") {
+                    $recycleBinInfo.IsEnabled = $true
+                    $recycleBinInfo.RiskLevel = "LOW"
+                    $recycleBinInfo.EnabledScopes = @("Domain (Inferred)")
+                }
+            } catch {
+                Write-Host "[!] Fallback check failed: $_" -ForegroundColor Red
+            }
         }
 
         Write-Host "[+] AD Recycle Bin status: $(if ($recycleBinInfo.IsEnabled) { 'ENABLED' } else { 'DISABLED - CRITICAL' })" -ForegroundColor $(if ($recycleBinInfo.IsEnabled) { "Green" } else { "Red" })
@@ -758,13 +831,43 @@ function Get-SMBv1Status {
         $dcs = Get-ADDomainController -Filter *
         foreach ($dc in $dcs) {
             try {
-                $smb = Get-WindowsFeature -Name FS-SMB1 -ComputerName $dc.HostName -ErrorAction SilentlyContinue
-                if ($smb -and $smb.Installed) {
+                $isSMBv1Enabled = $false
+                $checkMethod = "Unknown"
+
+                # Method 1: Check Windows Feature (ServerManager)
+                try {
+                    $smb = Get-WindowsFeature -Name FS-SMB1 -ComputerName $dc.HostName -ErrorAction Stop
+                    if ($smb -and $smb.Installed) {
+                        $isSMBv1Enabled = $true
+                        $checkMethod = "Windows Feature"
+                    }
+                } catch {
+                    # Method 2: Registry Check (Fallback)
+                    try {
+                        $regKey = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                            Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB1" -ErrorAction SilentlyContinue
+                        } -ErrorAction Stop
+                        
+                        if ($regKey) {
+                            if ($regKey.SMB1 -eq 1) {
+                                $isSMBv1Enabled = $true
+                            }
+                            $checkMethod = "Registry"
+                        } else {
+                            # If key doesn't exist, default depends on OS, but usually implies enabled on older, disabled on newer.
+                            # We'll assume disabled if not explicitly enabled in registry for newer OS, but let's check OS version if possible.
+                            # For safety, if we can't confirm it's disabled, we might flag it? No, let's stick to positive confirmation.
+                        }
+                    } catch {}
+                }
+
+                if ($isSMBv1Enabled) {
                     $smbv1Status.IsEnabled = $true
                     $smbv1Status.DomainControllers += @{
                         Name = $dc.Name
                         HostName = $dc.HostName
                         SMBv1Installed = $true
+                        Method = $checkMethod
                     }
                 }
             } catch {
@@ -1040,7 +1143,7 @@ function Get-DNSScavengingStatus {
             DomainControllers = @()
             ScavengingEnabled = 0
             ScavengingDisabled = 0
-            Method = if ($dnsModuleAvailable) { "DNSServer Module" } else { "Limited Check" }
+            Method = if ($dnsModuleAvailable) { "DNSServer Module" } else { "WMI/Limited" }
         }
 
         $dcs = Get-ADDomainController -Filter *
@@ -1048,31 +1151,50 @@ function Get-DNSScavengingStatus {
         foreach ($dc in $dcs) {
             if ($dc.IsGlobalCatalog) {
                 try {
+                    $scavengingEnabled = $false
+                    $scavengingInterval = 0
+                    $checkMethod = "Unknown"
+
                     if ($dnsModuleAvailable) {
                         $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue
-
                         if ($dnsServer) {
                             $scavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
-
-                            if ($scavengingEnabled) {
-                                $dnsSettings.ScavengingEnabled++
-                            } else {
-                                $dnsSettings.ScavengingDisabled++
-                            }
-
-                            $dnsSettings.DomainControllers += @{
-                                Name = $dc.Name
-                                HostName = $dc.HostName
-                                ScavengingEnabled = $scavengingEnabled
-                                ScavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
-                            }
+                            $scavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
+                            $checkMethod = "DNSServer Module"
                         }
-                    } else {
-                        # Without DNSServer module, just list the DCs
+                    } 
+                    
+                    # Fallback to WMI if module failed or not available
+                    if ($checkMethod -eq "Unknown") {
+                        try {
+                            $wmiServer = Get-WmiObject -Namespace root\MicrosoftDNS -Class MicrosoftDNS_Server -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                            if ($wmiServer) {
+                                $scavengingInterval = $wmiServer.ScavengingInterval
+                                $scavengingEnabled = $scavengingInterval -gt 0
+                                $checkMethod = "WMI"
+                            }
+                        } catch {}
+                    }
+
+                    if ($checkMethod -ne "Unknown") {
+                        if ($scavengingEnabled) {
+                            $dnsSettings.ScavengingEnabled++
+                        } else {
+                            $dnsSettings.ScavengingDisabled++
+                        }
+
                         $dnsSettings.DomainControllers += @{
                             Name = $dc.Name
                             HostName = $dc.HostName
-                            Note = "DNSServer module required for scavenging status"
+                            ScavengingEnabled = $scavengingEnabled
+                            ScavengingInterval = $scavengingInterval
+                            Method = $checkMethod
+                        }
+                    } else {
+                        $dnsSettings.DomainControllers += @{
+                            Name = $dc.Name
+                            HostName = $dc.HostName
+                            Note = "Could not determine scavenging status (Module/WMI failed)"
                         }
                     }
                 } catch {
@@ -1176,6 +1298,7 @@ function Get-DCHealthDetails {
                 # BitLocker status
                 $bitlockerStatus = "Unknown"
                 try {
+                    # Try modern cmdlet first
                     $bitlocker = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
                         Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue | Select-Object ProtectionStatus, EncryptionPercentage
                     } -ErrorAction SilentlyContinue
@@ -1184,6 +1307,21 @@ function Get-DCHealthDetails {
                         $bitlockerStatus = @{
                             ProtectionStatus = $bitlocker.ProtectionStatus.ToString()
                             EncryptionPercentage = $bitlocker.EncryptionPercentage
+                            Method = "BitLocker Module"
+                        }
+                    } else {
+                        # Fallback to manage-bde
+                        $manageBde = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                            manage-bde -status C:
+                        } -ErrorAction SilentlyContinue
+                        
+                        if ($manageBde) {
+                            $protectionStatus = if ($manageBde -match "Protection On") { "On" } else { "Off" }
+                            $bitlockerStatus = @{
+                                ProtectionStatus = $protectionStatus
+                                EncryptionPercentage = "Unknown (Legacy)"
+                                Method = "manage-bde"
+                            }
                         }
                     }
                 } catch {}
@@ -1191,6 +1329,7 @@ function Get-DCHealthDetails {
                 # Antivirus status
                 $avStatus = "Unknown"
                 try {
+                    # Try Defender module first
                     $av = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
                         Get-MpComputerStatus -ErrorAction SilentlyContinue | Select-Object AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated
                     } -ErrorAction SilentlyContinue
@@ -1200,6 +1339,22 @@ function Get-DCHealthDetails {
                             Enabled = $av.AntivirusEnabled
                             RealTimeEnabled = $av.RealTimeProtectionEnabled
                             SignatureLastUpdated = $av.AntivirusSignatureLastUpdated
+                            Method = "Defender Module"
+                        }
+                    } else {
+                        # Fallback to WMI SecurityCenter2 (Client) or Service Check (Server)
+                        $avService = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                            Get-Service -Name "WinDefend", "SepMasterService", "McAfeeFramework" -ErrorAction SilentlyContinue | Where-Object {$_.Status -eq "Running"}
+                        } -ErrorAction SilentlyContinue
+                        
+                        if ($avService) {
+                             $avStatus = @{
+                                Enabled = $true
+                                RealTimeEnabled = "Assumed (Service Running)"
+                                SignatureLastUpdated = "Unknown"
+                                ServiceName = $avService.Name
+                                Method = "Service Check"
+                            }
                         }
                     }
                 } catch {}
@@ -1251,7 +1406,7 @@ function Get-OUStructure {
 
             $linkedGPOs = @()
             if ($ou.gPLink) {
-                $linkedGPOs = $ou.gPLink -split '\[' | Where-Object { $_ -match 'LDAP' } | ForEach-Object {
+                $linkedGPOs = $ou.gPLink -split '\\[' | Where-Object { $_ -match 'LDAP' } | ForEach-Object {
                     $_.Split(';')[0].Replace('LDAP://CN=', '').Split(',')[0]
                 }
             }
@@ -1296,26 +1451,81 @@ function Get-TombstoneLifetime {
     }
 }
 
-function Get-DNSConfiguration {
-    Write-Host "\`n[*] Analyzing DNS Configuration and Security..." -ForegroundColor Green
+    function Get-DNSConfiguration {
+        Write-Host "\`n[*] Analyzing DNS Configuration and Security..." -ForegroundColor Green
         try {
             $dnsInfo = @{
                 Zones = @()
-            Forwarders = @()
-            GlobalSettings = @()
-            SecurityIssues = @()
-            ScavengingStatus = @()
-            Method = if($dnsModuleAvailable) { "DNSServer Module" } else { "Limited" }
+                Forwarders = @()
+                GlobalSettings = @()
+                SecurityIssues = @()
+                ScavengingStatus = @()
+                Method = if($dnsModuleAvailable) { "DNSServer Module" } else { "Limited" }
             }
 
             $dcs = Get-ADDomainController -Filter * | Where-Object { $_.IsGlobalCatalog }
+            
+            # Check if we need WMI fallback (if module not available)
+            $useWmi = -not $dnsModuleAvailable
+            if ($useWmi) {
+                Write-Host "[!] DNSServer module not found. Attempting WMI fallback..." -ForegroundColor Yellow
+                $dnsInfo.Method = "WMI (Legacy)"
+            }
 
-            if ($dnsModuleAvailable) {
-                foreach($dc in $dcs) {
-                    try {
-                        Write-Host "[*] Analyzing DNS on $($dc.Name)..." -ForegroundColor Cyan
+            foreach($dc in $dcs) {
+                try {
+                    Write-Host "[*] Analyzing DNS on $($dc.Name)..." -ForegroundColor Cyan
                     
-                    # Get DNS Server Settings
+                    if ($useWmi) {
+                        # WMI FALLBACK FOR LEGACY SYSTEMS (Server 2008 R2 / No RSAT)
+                        try {
+                            $wmiZones = Get-WmiObject -Namespace root\MicrosoftDNS -Class MicrosoftDNS_Zone -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                            
+                            if ($wmiZones) {
+                                foreach($zone in $wmiZones) {
+                                    # Map WMI properties to standard structure
+                                    $zoneType = switch($zone.ZoneType) {
+                                        0 { "Cache" }
+                                        1 { "Primary" }
+                                        2 { "Secondary" }
+                                        3 { "Stub" }
+                                        4 { "Forwarder" }
+                                        default { "Unknown" }
+                                    }
+                                    
+                                    $dnsInfo.Zones += @{
+                                        DCName = $dc.Name
+                                        ZoneName = $zone.Name
+                                        ZoneType = $zoneType
+                                        IsReverseLookupZone = $zone.Reverse
+                                        DynamicUpdate = if ($zone.AllowUpdate -eq 2) { "Secure" } elseif ($zone.AllowUpdate -eq 1) { "NonsecureAndSecure" } else { "None" }
+                                        IsDSIntegrated = $zone.DsIntegrated
+                                        IsAutoCreated = $zone.AutoCreated
+                                        IsPaused = $zone.Paused
+                                        IsShutdown = $zone.Shutdown
+                                        ZoneFile = $zone.DataFile
+                                        Method = "WMI"
+                                    }
+                                }
+                            }
+                            
+                            # Get Server Settings via WMI
+                            $wmiServer = Get-WmiObject -Namespace root\MicrosoftDNS -Class MicrosoftDNS_Server -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                            if ($wmiServer) {
+                                $dnsInfo.GlobalSettings += @{
+                                    DCName = $dc.Name
+                                    RecursionDisabled = $wmiServer.NoRecursion
+                                    RoundRobinEnabled = $wmiServer.RoundRobin
+                                    SecureResponses = $wmiServer.SecureResponses
+                                    Forwarders = @($wmiServer.Forwarders)
+                                }
+                            }
+                        } catch {
+                            Write-Host "[!] Could not query DNS via WMI on $($dc.Name): $_" -ForegroundColor Yellow
+                        }
+                    } else {
+                        # MODERN POWERSHELL (RSAT)
+                        # Get DNS Server Settings
                         $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue
 
                         if ($dnsServer) {
@@ -1509,12 +1719,10 @@ function Get-DNSConfiguration {
                                 }
                             } catch { }
                         }
-                    } catch {
-                        Write-Host "[!] Could not query DNS on $($dc.Name): $_" -ForegroundColor Yellow
                     }
+                } catch {
+                    Write-Host "[!] Could not query DNS on $($dc.Name): $_" -ForegroundColor Yellow
                 }
-            } else {
-                $dnsInfo.Note = "Install DNSServer module for detailed DNS security analysis: Install-WindowsFeature RSAT-DNS-Server"
             }
 
             Write-Host "[+] DNS configuration collected: $($dnsInfo.Zones.Count) zones, $($dnsInfo.SecurityIssues.Count) security issues" -ForegroundColor Green
@@ -1524,69 +1732,142 @@ function Get-DNSConfiguration {
             return $null
         }
     }
-
-
     function Get-DHCPConfiguration {
         Write-Host "\`n[*] Analyzing DHCP Configuration..." -ForegroundColor Green
         try {
             $dhcpInfo = @{
                 AuthorizedServers = @()
-            Scopes = @()
-            FailoverConfig = @()
+                Scopes = @()
+                FailoverConfig = @()
+                Method = if($dhcpModuleAvailable) { "DHCPServer Module" } else { "Limited" }
             }
 
-        # Get authorized DHCP servers
-            try {
-                $authorizedServers = Get-DhcpServerInDC -ErrorAction SilentlyContinue
-                foreach($server in $authorizedServers) {
-                    $dhcpInfo.AuthorizedServers += @{
-                        DNSName = $server.DNSName
-                    IPAddress = $server.IPAddress.ToString()
-                    }
+            # Check if we need Netsh fallback
+            $useNetsh = -not $dhcpModuleAvailable
+            if ($useNetsh) {
+                Write-Host "[!] DHCPServer module not found. Attempting Netsh fallback..." -ForegroundColor Yellow
+                $dhcpInfo.Method = "Netsh (Legacy)"
+            }
 
-                # Get scopes from each server
-                    try {
-                        $scopes = Get-DhcpServerv4Scope -ComputerName $server.DNSName -ErrorAction SilentlyContinue
-                        foreach($scope in $scopes) {
-                            $scopeStats = Get-DhcpServerv4ScopeStatistics -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
-                        
-                        # Get reservations
-                            $reservations = Get-DhcpServerv4Reservation -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
-
-                            $dhcpInfo.Scopes += @{
-                                ServerName = $server.DNSName
-                            ScopeId = $scope.ScopeId.ToString()
-                            Name = $scope.Name
-                            SubnetMask = $scope.SubnetMask.ToString()
-                            StartRange = $scope.StartRange.ToString()
-                            EndRange = $scope.EndRange.ToString()
-                            LeaseDuration = $scope.LeaseDuration.ToString()
-                            State = $scope.State.ToString()
-                            PercentageInUse = if($scopeStats) { $scopeStats.PercentageInUse } else { 0 }
-                            AddressesInUse = if($scopeStats) { $scopeStats.AddressesInUse } else { 0 }
-                            AddressesFree = if($scopeStats) { $scopeStats.AddressesFree } else { 0 }
-                            ReservationCount = if($reservations) { $reservations.Count } else { 0 }
+            if ($useNetsh) {
+                # NETSH FALLBACK FOR LEGACY SYSTEMS
+                try {
+                    # Get authorized servers from AD
+                    $config = Get-ADObject -Filter 'objectClass -eq "dHCPClass"' -SearchBase "CN=NetServices,CN=Services,CN=Configuration,$((Get-ADRootDSE).rootDomainNamingContext)" -Properties dhcpServers
+                    
+                    if ($config.dhcpServers) {
+                        foreach ($serverString in $config.dhcpServers) {
+                            # Parse server string (format: i.p.a.d.d.r.e.s.s$name)
+                            if ($serverString -match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})") {
+                                $ip = $matches[1]
+                                $dhcpInfo.AuthorizedServers += @{
+                                    IPAddress = $ip
+                                    Method = "AD Configuration"
+                                }
+                                
+                                # Try to get scopes via netsh from this server
+                                try {
+                                    $netshOutput = Invoke-Command -ComputerName $ip -ScriptBlock { netsh dhcp server show scope } -ErrorAction SilentlyContinue
+                                    
+                                    if ($netshOutput) {
+                                        foreach ($line in $netshOutput) {
+                                            if ($line -match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(.+)\s+(Active|Inactive)") {
+                                                $dhcpInfo.Scopes += @{
+                                                    ServerName = $ip
+                                                    ScopeId = $matches[1]
+                                                    SubnetMask = $matches[2]
+                                                    Name = $matches[3].Trim()
+                                                    State = $matches[4]
+                                                    Method = "Netsh"
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch {
+                                    Write-Host "[!] Could not query DHCP via netsh on $ip" -ForegroundColor Yellow
+                                }
                             }
                         }
-
-                    # Get failover configuration
-                        $failovers = Get-DhcpServerv4Failover -ComputerName $server.DNSName -ErrorAction SilentlyContinue
-                        foreach($failover in $failovers) {
-                            $dhcpInfo.FailoverConfig += @{
-                                ServerName = $server.DNSName
-                            Name = $failover.Name
-                            PartnerServer = $failover.PartnerServer
-                            Mode = $failover.Mode.ToString()
-                            State = $failover.State.ToString()
-                            ScopeIds = @($failover.ScopeId)
-                            }
-                        }
-                    } catch {
-                        Write-Host "[!] Could not query scopes from $($server.DNSName)" -ForegroundColor Yellow
                     }
+                } catch {
+                    Write-Host "[!] Error querying AD for DHCP servers: $_" -ForegroundColor Yellow
                 }
-            } catch {
-                $dhcpInfo.Note = "DHCP cmdlets not available or no authorized servers found"
+            } else {
+                # MODERN POWERSHELL (RSAT)
+                # Get authorized DHCP servers
+                try {
+                    $authorizedServers = Get-DhcpServerInDC -ErrorAction SilentlyContinue
+                    foreach($server in $authorizedServers) {
+                        $dhcpInfo.AuthorizedServers += @{
+                            DNSName = $server.DNSName
+                            IPAddress = $server.IPAddress.ToString()
+                        }
+
+                        # Get scopes from each server
+                        try {
+                            $scopes = Get-DhcpServerv4Scope -ComputerName $server.DNSName -ErrorAction SilentlyContinue
+                            foreach($scope in $scopes) {
+                                $scopeStats = Get-DhcpServerv4ScopeStatistics -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+                            
+                                # Get reservations
+                                $reservations = Get-DhcpServerv4Reservation -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+
+                                # Check for security issues
+                                $scopeIssues = @()
+                                
+                                # Check 1: DNS Dynamic Updates credentials
+                                try {
+                                    $dnsCreds = Get-DhcpServerv4DnsSetting -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+                                    if ($dnsCreds.DynamicUpdate -eq "Always") {
+                                        $scopeIssues += "Dynamic DNS updates set to ALWAYS - Potential security risk"
+                                    }
+                                } catch {}
+
+                                $dhcpInfo.Scopes += @{
+                                    ServerName = $server.DNSName
+                                    ScopeId = $scope.ScopeId.ToString()
+                                    Name = $scope.Name
+                                    SubnetMask = $scope.SubnetMask.ToString()
+                                    StartRange = $scope.StartRange.ToString()
+                                    EndRange = $scope.EndRange.ToString()
+                                    LeaseDuration = $scope.LeaseDuration.ToString()
+                                    State = $scope.State.ToString()
+                                    PercentageInUse = if($scopeStats) { $scopeStats.PercentageInUse } else { 0 }
+                                    AddressesInUse = if($scopeStats) { $scopeStats.AddressesInUse } else { 0 }
+                                    AddressesFree = if($scopeStats) { $scopeStats.AddressesFree } else { 0 }
+                                    ReservationCount = if($reservations) { $reservations.Count } else { 0 }
+                                    SecurityIssues = $scopeIssues
+                                }
+                            }
+
+                            # Get failover configuration
+                            $failovers = Get-DhcpServerv4Failover -ComputerName $server.DNSName -ErrorAction SilentlyContinue
+                            foreach($failover in $failovers) {
+                                $dhcpInfo.FailoverConfig += @{
+                                    ServerName = $server.DNSName
+                                    Name = $failover.Name
+                                    PartnerServer = $failover.PartnerServer
+                                    Mode = $failover.Mode.ToString()
+                                    State = $failover.State.ToString()
+                                    ScopeIds = @($failover.ScopeId)
+                                }
+                            }
+                            
+                            # Check Audit Logs
+                            try {
+                                $auditLog = Get-DhcpServerAuditLog -ComputerName $server.DNSName -ErrorAction SilentlyContinue
+                                if (-not $auditLog.Enable) {
+                                    $dhcpInfo.AuthorizedServers[-1].SecurityWarning = "DHCP Audit Logging is DISABLED"
+                                }
+                            } catch {}
+                            
+                        } catch {
+                            Write-Host "[!] Could not query scopes from $($server.DNSName)" -ForegroundColor Yellow
+                        }
+                    }
+                } catch {
+                    $dhcpInfo.Note = "DHCP cmdlets not available or no authorized servers found"
+                }
             }
 
             Write-Host "[+] DHCP configuration collected: $($dhcpInfo.AuthorizedServers.Count) servers, $($dhcpInfo.Scopes.Count) scopes" -ForegroundColor Green
@@ -1604,6 +1885,17 @@ function Get-DNSConfiguration {
         Write-Host "\`n" + ("=" * 80) -ForegroundColor Cyan
     Write-Host "Starting Data Collection" -ForegroundColor Cyan
     Write-Host("=" * 80) -ForegroundColor Cyan
+
+    # Check for available modules (Global Scope)
+    $dnsModuleAvailable = Get-Module -ListAvailable -Name DnsServer
+    $dhcpModuleAvailable = Get-Module -ListAvailable -Name DhcpServer
+    
+    if (-not $dnsModuleAvailable) {
+        Write-Host "[!] DnsServer module not found. Will use WMI fallback." -ForegroundColor Yellow
+    }
+    if (-not $dhcpModuleAvailable) {
+        Write-Host "[!] DhcpServer module not found. Will use Netsh fallback." -ForegroundColor Yellow
+    }
 
     $collectedData = @{
         AssessmentId = $AssessmentId

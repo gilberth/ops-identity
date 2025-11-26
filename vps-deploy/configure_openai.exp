@@ -1,0 +1,47 @@
+#!/usr/bin/expect
+
+set timeout 60
+set password "iMpresora\$2016A"
+set ip "157.230.138.178"
+set user "root"
+
+puts "\n==============================================="
+puts "Configuración de OpenAI API Key"
+puts "==============================================="
+puts "Por favor ingresa tu OpenAI API Key:"
+puts "(Ejemplo: sk-proj-xxxxxxxxxxxxx)"
+flush stdout
+gets stdin apikey
+
+if {$apikey == ""} {
+    puts "\nError: No se ingresó ninguna API key"
+    exit 1
+}
+
+puts "\nCreando archivo .env en el VPS..."
+
+# Create .env file with the API key
+spawn ssh $user@$ip "cat > /root/active-scan-insight/.env << 'ENVEOF'
+# AI Configuration
+OPENAI_API_KEY=$apikey
+
+# Database Configuration (uses defaults from docker-compose.yml)
+ENVEOF"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+puts "\nReiniciando servicios para aplicar cambios..."
+
+# Restart services to apply new environment variable
+spawn ssh $user@$ip "cd /root/active-scan-insight && docker compose down && docker compose up -d"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof
+
+puts "\n✅ OpenAI API Key configurada correctamente"
+puts "El backend ahora puede procesar análisis con IA\n"
