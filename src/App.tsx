@@ -10,26 +10,29 @@ import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
 import ProtectedRoute from "./components/ProtectedRoute";
+import { ThemeProvider } from "@/components/theme-provider";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/auth" element={<Auth />} />
-          <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/new-assessment" element={<ProtectedRoute><NewAssessment /></ProtectedRoute>} />
-          <Route path="/assessment/:id" element={<ProtectedRoute><AssessmentDetail /></ProtectedRoute>} />
-          <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
+    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/auth" element={<Auth />} />
+            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/new-assessment" element={<ProtectedRoute><NewAssessment /></ProtectedRoute>} />
+            <Route path="/assessment/:id" element={<ProtectedRoute><AssessmentDetail /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 
