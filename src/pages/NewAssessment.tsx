@@ -1452,7 +1452,7 @@ function Get-TombstoneLifetime {
 }
 
     function Get-TimeSyncConfiguration {
-        Write-Host "`n[*] Analyzing Time Synchronization(NTP)..." -ForegroundColor Green
+        Write-Host "\`n[*] Analyzing Time Synchronization(NTP)..." -ForegroundColor Green
         try {
             $timeInfo = @{
                 PDCEmulator = ""
