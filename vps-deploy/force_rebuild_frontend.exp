@@ -1,0 +1,13 @@
+#!/usr/bin/expect
+
+set timeout 600
+set password "iMpresora\$2016A"
+set ip "157.230.138.178"
+set user "root"
+
+spawn ssh $user@$ip "cd /root/active-scan-insight && docker compose build --no-cache frontend && docker compose up -d"
+expect {
+    "yes/no" { send "yes\r"; exp_continue }
+    "assword:" { send "$password\r" }
+}
+expect eof

@@ -127,30 +127,30 @@ async function analyzeCategory(assessmentId, category, data) {
 
       for (let i = 0; i < totalChunks; i += MAX_PARALLEL_CHUNKS) {
         const chunkPromises = [];
-        
+
         for (let j = 0; j < MAX_PARALLEL_CHUNKS && (i + j) < totalChunks; j++) {
           const chunkIndex = i + j;
           const start = chunkIndex * CHUNK_SIZE;
           const end = Math.min(start + CHUNK_SIZE, data.length);
           const chunk = data.slice(start, end);
-          
+
           console.log(`[${timestamp()}] [AI] Processing chunk ${chunkIndex + 1}/${totalChunks} (${start}-${end})`);
-          
+
           chunkPromises.push(
             (async () => {
               try {
                 await addLog(assessmentId, 'info', `Analizando chunk ${chunkIndex + 1}/${totalChunks} (${chunk.length.toLocaleString()} items)`, category);
-                
+
                 const prompt = buildPrompt(category, chunk);
                 console.log(`[${timestamp()}] [AI] Chunk ${chunkIndex + 1} prompt: ${prompt.length} chars`);
-                
+
                 const findings = await callAI(prompt, provider, model, apiKey);
                 console.log(`[${timestamp()}] [AI] Chunk ${chunkIndex + 1} returned ${findings.length} findings`);
-                
+
                 if (findings.length > 0) {
                   await addLog(assessmentId, 'info', `Chunk ${chunkIndex + 1}: ${findings.length} hallazgos encontrados`, category);
                 }
-                
+
                 return findings;
               } catch (error) {
                 console.error(`[${timestamp()}] [AI] Error in chunk ${chunkIndex + 1}:`, error);
@@ -160,33 +160,67 @@ async function analyzeCategory(assessmentId, category, data) {
             })()
           );
         }
-        
+
         // Wait for current batch of chunks
         const chunkResults = await Promise.all(chunkPromises);
         allFindings.push(...chunkResults.flat());
-        
+
         await addLog(assessmentId, 'info', `Progreso: ${Math.min(i + MAX_PARALLEL_CHUNKS, totalChunks)}/${totalChunks} chunks completados`, category);
       }
-      
-      // Deduplicate findings by title
-      const uniqueFindings = [];
-      const seenTitles = new Set();
+
+      // Merge findings by type_id to handle chunking
+      const mergedFindingsMap = new Map();
+
       for (const f of allFindings) {
-        if (!seenTitles.has(f.title)) {
-          seenTitles.add(f.title);
-          uniqueFindings.push(f);
+        // Determine key: type_id > cis_control > normalized_title
+        let key = f.type_id;
+        if (!key && f.cis_control) key = f.cis_control.split(' ')[0]; // Use "5.2.1" from "5.2.1 - Ensure..."
+        if (!key) key = f.title.replace(/^\d+\s+/, ''); // Remove leading number
+
+        if (!mergedFindingsMap.has(key)) {
+          mergedFindingsMap.set(key, { ...f });
+        } else {
+          const existing = mergedFindingsMap.get(key);
+
+          // Sum counts
+          const existingCount = existing.affected_count || existing.evidence?.count || 0;
+          const newCount = f.affected_count || f.evidence?.count || 0;
+          const totalCount = existingCount + newCount;
+
+          existing.affected_count = totalCount;
+          if (existing.evidence) existing.evidence.count = totalCount;
+
+          // Merge affected objects
+          const existingObjects = existing.evidence?.affected_objects || [];
+          const newObjects = f.evidence?.affected_objects || [];
+          // Deduplicate objects
+          const allObjects = [...new Set([...existingObjects, ...newObjects])];
+
+          if (existing.evidence) {
+            existing.evidence.affected_objects = allObjects;
+            // Update details if needed (append unique details)
+            if (f.evidence?.details && existing.evidence.details && !existing.evidence.details.includes(f.evidence.details)) {
+              existing.evidence.details += ` | ${f.evidence.details}`;
+            }
+          }
+
+          // Update title with new count
+          // Regex to replace the first number in the title with the new total
+          if (/^\d+/.test(existing.title)) {
+            existing.title = existing.title.replace(/^\d+/, totalCount.toString());
+          }
         }
       }
-      
-      allFindings = uniqueFindings;
-      console.log(`[${timestamp()}] [AI] ${category}: Total ${allFindings.length} unique findings after deduplication`);
-      
+
+      allFindings = Array.from(mergedFindingsMap.values());
+      console.log(`[${timestamp()}] [AI] ${category}: Merged into ${allFindings.length} unique findings`);
+
     } else {
       // Small dataset - process as single chunk
       console.log(`[${timestamp()}] [AI] ${category}: Small dataset (${data.length} items), processing in single chunk`);
       const prompt = buildPrompt(category, data);
       console.log(`[${timestamp()}] [AI] Analyzing ${category} with prompt length: ${prompt.length} chars`);
-      
+
       allFindings = await callAI(prompt, provider, model, apiKey);
     }
 
@@ -312,6 +346,12 @@ function buildPrompt(cat, d) {
    - Timeline: Implementar en 30 días tras testing
 
 **PARA CADA HALLAZGO, PROPORCIONA (EN ESPAÑOL):**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: PASSWORD_NEVER_EXPIRES, PRIVILEGED_USERS_EXCESS, INACTIVE_ACCOUNTS, KERBEROASTING_VULN
+  IMPORTANTE: Si encuentras un problema nuevo, genera un ID descriptivo (ej: WEAK_PASSWORD_POLICY).
+  Este ID es CRÍTICO para agrupar hallazgos similares en reportes grandes.
+  
 - **Título**: Número REAL de usuarios afectados + problema específico
   Ejemplo: "15 usuarios con contraseñas que nunca expiran detectados"
   
@@ -371,6 +411,9 @@ function buildPrompt(cat, d) {
    - Comando para detectar: Get-GPOReport -Name "GPO_NAME" -ReportType HTML
 
 **PARA CADA HALLAZGO, PROPORCIONA:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: GPO_WEAK_PASSWORD_POLICY, GPO_UNLINKED, GPO_PREFERENCE_PASSWORD.
 - **Título**: En ESPAÑOL, específico con número de GPOs afectadas
   Ejemplo: "2 GPOs con configuraciones de contraseña débiles detectadas"
   
@@ -408,6 +451,9 @@ function buildPrompt(cat, d) {
    - Sin redundancia geográfica
 
 **PARA CADA HALLAZGO, PROPORCIONA:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: OS_OBSOLETE, INACTIVE_COMPUTERS, UNCONSTRAINED_DELEGATION_COMPUTER.
 - **Título**: Número de equipos afectados y tipo de problema
 - **Descripción**: Riesgo específico y vectores de ataque
 - **Recomendación**: Plan de remediación:
@@ -478,6 +524,9 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
 - **JIT Access**: Implementar Privileged Identity Management (PIM) para acceso temporal
 
 **📋 FORMATO DE REPORTE - CADA FINDING DEBE INCLUIR:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: TIER0_GROUP_OVERPOPULATED, ADMIN_IN_PROTECTED_USERS_MISSING, INACTIVE_GROUP_MEMBERS.
 - **Título** (ESPAÑOL): "[NÚMERO] cuentas no autorizadas en grupo [NOMBRE]" o "Grupo [NOMBRE] sobrepoblado con [COUNT] miembros"
 - **Descripción** (3 párrafos obligatorios):
   * Párrafo 1 - ESTADO ACTUAL: Número exacto, nombres de grupos afectados, configuración actual vs baseline recomendado
@@ -537,6 +586,9 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
    - Riesgo: Pérdida de datos en backups antiguos
 
 **PARA CADA HALLAZGO, PROPORCIONA:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: REPLICATION_FAILURE, OS_OBSOLETE_DC, FSMO_PLACEMENT_ISSUE.
 - **Título**: Problema específico del DC
 - **Descripción**: Impacto en disponibilidad y seguridad
 - **Recomendación**: Pasos detallados de remediación:
@@ -589,6 +641,9 @@ DNS es crítico en AD - todos los servicios dependen de él (Kerberos, LDAP, rep
 - ScavengingEnabled = false
 
 **FORMATO DE REPORTE:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: DNS_NO_FORWARDERS, DNS_ZONE_TRANSFER_INSECURE, DNS_SCAVENGING_DISABLED.
 - **Título**: "DNS sin forwarders configurados" o "[N] zonas DNS con transferencias no seguras"
 - **Descripción**: Impacto en performance/seguridad, escenarios de ataque
 - **Recomendación**: Comandos PowerShell específicos para fix
@@ -633,6 +688,9 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
 - Si todo está vacío → INFO "DHCP no configurado o datos no disponibles"
 
 **FORMATO DE REPORTE:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: DHCP_ROGUE_SERVER, DHCP_AUDIT_DISABLED, DHCP_WEAK_SCOPE_CONFIG.
 - **Título**: "[N] servidores DHCP no autorizados detectados" o "Auditing de DHCP deshabilitado"
 - **Descripción**: Vector de ataque, impacto en red
 - **Recomendación**: Comandos para autorizar/remover servers, habilitar logging
@@ -715,6 +773,9 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
 - Delegación sin restricciones en cuentas no-DC → MEDIUM
 
 **FORMATO DE REPORTE (EJEMPLO PARA NTLM):**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: NTLM_INSECURE_LEVEL, SMBV1_ENABLED, LAPS_MISSING, RC4_ENCRYPTION_ENABLED.
 - **Título**: "[N] Domain Controllers con NTLM Authentication Level [X] inseguro - Vulnerable a Pass-the-Hash"
   
 - **Descripción** (4 párrafos):
@@ -877,6 +938,9 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
 - **Post-compromise**: Si hay sospecha de compromiso, rotación INMEDIATA dual en < 24 horas
 
 **PARA EL HALLAZGO DE KRBTGT, PROPORCIONA:**
+- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
+  Debe ser en MAYÚSCULAS y guiones bajos.
+  Ejemplos: KRBTGT_PASSWORD_AGE_EXCESSIVE, KERBEROS_RC4_ENABLED.
 - **Título**: "Cuenta KRBTGT sin renovar por [DÍAS] días ([AÑOS] años) - Riesgo de Golden Ticket" 
   Ejemplo: "Cuenta KRBTGT sin renovar por 3537 días (9.7 años) - Riesgo de Golden Ticket"
   
@@ -1037,7 +1101,7 @@ Antes de generar cada finding, verifica:
 async function callAI(prompt, provider, model, apiKey) {
   try {
     console.log(`[${timestamp()}] [${provider.toUpperCase()}] Making API call with model ${model}...`);
-    
+
     if (provider === 'openai') {
       return await callOpenAI(prompt, model, apiKey);
     } else if (provider === 'gemini') {
@@ -1056,13 +1120,13 @@ async function callAI(prompt, provider, model, apiKey) {
 async function callOpenAI(prompt, model, key) {
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${key}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: model,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: model,
         messages: [
           {
             role: 'system',
@@ -1090,6 +1154,7 @@ Cada finding DEBE incluir estos campos para personal de TI:
 {
   "findings": [
     {
+      "type_id": "STRING_ID_CONSTANTE (ej: PASSWORD_NEVER_EXPIRES)",
       "title": "Título específico con número de afectados",
       "severity": "critical|high|medium|low",
       "description": "Descripción técnica detallada",
@@ -1155,6 +1220,7 @@ timeline: "60d - Migración gradual por aplicación, testing en QA primero"`
                   items: {
                     type: 'object',
                     properties: {
+                      type_id: { type: 'string' },
                       severity: {
                         type: 'string',
                         enum: ['critical', 'high', 'medium', 'low']
@@ -1183,7 +1249,7 @@ timeline: "60d - Migración gradual por aplicación, testing en QA primero"`
                         required: ['affected_objects', 'count', 'details']
                       }
                     },
-                    required: ['severity', 'title', 'description', 'recommendation', 'evidence'],
+                    required: ['type_id', 'severity', 'title', 'description', 'recommendation', 'evidence'],
                     additionalProperties: false
                   }
                 }
@@ -1232,7 +1298,7 @@ PRINCIPIOS FUNDAMENTALES:
 4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
 5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
 
-FORMATO JSON REQUERIDO: Devuelve un objeto JSON con array "findings" que contenga objetos con: severity, title, description, recommendation, evidence (con affected_objects, count, details), y opcionalmente: mitre_attack, cis_control, impact_business, remediation_commands, prerequisites, operational_impact, microsoft_docs, current_vs_recommended, timeline, affected_count`;
+FORMATO JSON REQUERIDO: Devuelve un objeto JSON con array "findings" que contenga objetos con: type_id, severity, title, description, recommendation, evidence (con affected_objects, count, details), y opcionalmente: mitre_attack, cis_control, impact_business, remediation_commands, prerequisites, operational_impact, microsoft_docs, current_vs_recommended, timeline, affected_count`;
 
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: 'POST',
@@ -1297,6 +1363,7 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
 {
   "findings": [
     {
+      "type_id": "string",
       "title": "string",
       "severity": "critical|high|medium|low",
       "description": "string",
@@ -1349,9 +1416,9 @@ async function processAssessment(assessmentId, jsonData) {
     // 1. Store Raw Data (compressed)
     const jsonString = JSON.stringify(jsonData);
     const compressed = zlib.gzipSync(jsonString);
-    const compressionRatio = Math.round((1 - compressed.length/jsonString.length) * 100);
-    console.log(`[${timestamp()}] Compressed ${Math.round(jsonString.length/1024/1024)} MB to ${Math.round(compressed.length/1024/1024)} MB (${compressionRatio}% reduction)`);
-    
+    const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
+    console.log(`[${timestamp()}] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
+
     await pool.query(
       'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2)',
       [assessmentId, compressed]
@@ -1464,7 +1531,7 @@ app.get('/api/config/ai', async (req, res) => {
     const hasOpenAIKey = !!(await getConfig('openai_api_key') || process.env.OPENAI_API_KEY);
     const hasGeminiKey = !!await getConfig('gemini_api_key');
     const hasDeepSeekKey = !!await getConfig('deepseek_api_key');
-    
+
     res.json({
       provider,
       model,
@@ -1489,21 +1556,21 @@ app.get('/api/config/ai', async (req, res) => {
 app.post('/api/config/ai', async (req, res) => {
   try {
     const { provider, model, api_keys } = req.body;
-    
+
     if (provider) {
       await setConfig('ai_provider', provider);
     }
-    
+
     if (model) {
       await setConfig('ai_model', model);
     }
-    
+
     if (api_keys) {
       if (api_keys.openai) await setConfig('openai_api_key', api_keys.openai);
       if (api_keys.gemini) await setConfig('gemini_api_key', api_keys.gemini);
       if (api_keys.deepseek) await setConfig('deepseek_api_key', api_keys.deepseek);
     }
-    
+
     res.json({ success: true, message: 'AI configuration updated' });
   } catch (error) {
     console.error('Error updating AI config:', error);
@@ -1608,12 +1675,12 @@ app.get('/api/assessments/:id/data', async (req, res) => {
 
     // Decompress data in streaming mode to reduce memory usage
     const compressedData = result.rows[0].data;
-    
+
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Encoding', 'gzip');
-    
+
     // Send compressed data directly, let browser decompress
-    console.log(`[${timestamp()}] [API] Sending compressed raw data for assessment ${id} (${Math.round(compressedData.length/1024/1024)} MB)`);
+    console.log(`[${timestamp()}] [API] Sending compressed raw data for assessment ${id} (${Math.round(compressedData.length / 1024 / 1024)} MB)`);
     res.send(compressedData);
   } catch (error) {
     console.error(`[${timestamp()}] [API] Error fetching assessment data:`, error);
@@ -1675,9 +1742,9 @@ app.post('/api/assessments/:id/reset', async (req, res) => {
 });
 
 // POST /api/upload-large-file - Handle large file uploads (.json or .zip)
-const upload = multer({ 
+const upload = multer({
   dest: '/tmp/uploads/',
-  limits: { 
+  limits: {
     fileSize: 5 * 1024 * 1024 * 1024 // 5GB max file size
   }
 });
@@ -1701,13 +1768,13 @@ app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
       // Decompress ZIP file
       await addLog(assessmentId, 'info', 'Descomprimiendo archivo ZIP...');
       console.log(`[${timestamp()}] [UPLOAD] Decompressing ZIP file...`);
-      
+
       const zip = new AdmZip(filePath);
       const entries = zip.getEntries();
-      
+
       // Find the JSON file inside ZIP
       const jsonEntry = entries.find(e => e.entryName.endsWith('.json') && !e.isDirectory);
-      
+
       if (!jsonEntry) {
         await addLog(assessmentId, 'error', 'No se encontró archivo JSON dentro del ZIP');
         return res.status(400).json({ error: 'No JSON file found in ZIP' });
@@ -1715,27 +1782,27 @@ app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
 
       console.log(`[${timestamp()}] [UPLOAD] Found JSON entry: ${jsonEntry.entryName}`);
       let jsonContent = zip.readAsText(jsonEntry);
-      
+
       // Remove BOM (Byte Order Mark) if present
       if (jsonContent.charCodeAt(0) === 0xFEFF) {
         console.log(`[${timestamp()}] [UPLOAD] Removing BOM from JSON content`);
         jsonContent = jsonContent.substring(1);
       }
-      
+
       jsonData = JSON.parse(jsonContent);
-      
+
       await addLog(assessmentId, 'info', `Archivo descomprimido: ${jsonEntry.entryName}`);
     } else {
       // Read JSON directly
       console.log(`[${timestamp()}] [UPLOAD] Reading JSON file...`);
       let jsonContent = fs.readFileSync(filePath, 'utf8');
-      
+
       // Remove BOM (Byte Order Mark) if present
       if (jsonContent.charCodeAt(0) === 0xFEFF) {
         console.log(`[${timestamp()}] [UPLOAD] Removing BOM from JSON content`);
         jsonContent = jsonContent.substring(1);
       }
-      
+
       jsonData = JSON.parse(jsonContent);
     }
 
@@ -1745,8 +1812,8 @@ app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
     // Compress JSON before storing
     const jsonString = JSON.stringify(jsonData);
     const compressed = zlib.gzipSync(jsonString);
-    const compressionRatio = Math.round((1 - compressed.length/jsonString.length) * 100);
-    console.log(`[${timestamp()}] [UPLOAD] Compressed ${Math.round(jsonString.length/1024/1024)} MB to ${Math.round(compressed.length/1024/1024)} MB (${compressionRatio}% reduction)`);
+    const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
+    console.log(`[${timestamp()}] [UPLOAD] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
     console.log(`[${timestamp()}] [UPLOAD] Compressed data type: ${typeof compressed}, isBuffer: ${Buffer.isBuffer(compressed)}`);
     await addLog(assessmentId, 'info', `Comprimiendo datos (${compressionRatio}% reducción)...`);
 
@@ -1784,10 +1851,10 @@ app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
   } catch (error) {
     console.error(`[${timestamp()}] [UPLOAD] Error processing file:`, error);
     await addLog(assessmentId, 'error', `Error procesando archivo: ${error.message}`);
-    
-    res.status(500).json({ 
-      error: 'Error processing file', 
-      details: error.message 
+
+    res.status(500).json({
+      error: 'Error processing file',
+      details: error.message
     });
   } finally {
     // Clean up temporary file
@@ -1820,9 +1887,9 @@ async function processAssessmentData(assessmentId, jsonData) {
     for (const category of CATEGORIES) {
       try {
         await addLog(assessmentId, 'info', `Analizando categoría: ${category}`, category);
-        
+
         const categoryData = extractCategoryData(jsonData, category);
-        
+
         if (!categoryData || categoryData.length === 0) {
           await addLog(assessmentId, 'info', `Categoría ${category} sin datos, omitiendo`, category);
           completedCategories++;
@@ -1830,10 +1897,10 @@ async function processAssessmentData(assessmentId, jsonData) {
         }
 
         await addLog(assessmentId, 'info', `Procesando ${categoryData.length} elementos de ${category}`, category);
-        
+
         // Analyze with AI
         const findings = await analyzeCategory(assessmentId, category, categoryData);
-        
+
         if (findings && findings.length > 0) {
           await addLog(assessmentId, 'info', `${findings.length} hallazgos encontrados en ${category}`, category);
         } else {

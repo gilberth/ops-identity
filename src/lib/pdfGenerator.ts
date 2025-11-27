@@ -283,18 +283,18 @@ function generateExecutiveReport(
 
     ${options.includeRecommendations ? `
     <div class="section">
-      <h2>Recomendaciones Estratégicas</h2>
+      <h2>Próximos Pasos y Recomendaciones</h2>
       <div class="recommendation">
-        <strong>1. Prioridad Crítica: Implementar MFA</strong>
-        <p>Se detectaron múltiples cuentas administrativas sin autenticación multifactor. Implementar MFA puede reducir el riesgo en un 25%.</p>
+        <strong>1. Priorizar Hallazgos Críticos</strong>
+        <p>Se recomienda atender de inmediato los hallazgos clasificados como 'Críticos' y 'High'. Estos representan vectores de ataque activos que podrían comprometer el dominio.</p>
       </div>
       <div class="recommendation">
-        <strong>2. Actualizar Políticas de Kerberos</strong>
-        <p>Las configuraciones actuales son vulnerables a ataques Golden Ticket. Se recomienda actualización inmediata.</p>
+        <strong>2. Consultar Reporte Técnico Detallado</strong>
+        <p>Para ver la evidencia técnica, los objetos afectados y los scripts de remediación (PowerShell), por favor descargue el <strong>Reporte Técnico (DOCX)</strong> disponible en la página de detalle de cada assessment.</p>
       </div>
       <div class="recommendation">
-        <strong>3. Revisar Permisos de GPO</strong>
-        <p>Varios GPOs tienen permisos excesivos que pueden ser explotados. Requiere revisión en la próxima semana.</p>
+        <strong>3. Monitoreo Continuo</strong>
+        <p>El puntaje de riesgo actual es de <strong>${riskScore}/100</strong>. Se recomienda realizar evaluaciones periódicas para monitorear la mejora en la postura de seguridad tras aplicar las correcciones.</p>
       </div>
     </div>
     ` : ''}

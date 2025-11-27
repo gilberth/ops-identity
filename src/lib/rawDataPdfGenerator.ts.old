@@ -1,0 +1,501 @@
+// Generador de anexo técnico en formato PDF
+// Convierte datos raw JSON a PDF profesional usando jsPDF
+
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+interface RawDataPdfOptions {
+  domain: string;
+  rawData: any;
+  date: string;
+}
+
+// Helper para formatear fechas
+function formatDate(dateString: string | null | undefined): string {
+  if (!dateString) return '-';
+  
+  // Handle .NET Date format: /Date(1234567890000)/
+  const netDateMatch = dateString.match(/\/Date\((\d+)\)\//);
+  if (netDateMatch) {
+    const timestamp = parseInt(netDateMatch[1]);
+    const date = new Date(timestamp);
+    return date.toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  }
+  
+  // Handle ISO date string
+  try {
+    const date = new Date(dateString);
+    if (!isNaN(date.getTime())) {
+      return date.toLocaleDateString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+    }
+  } catch (e) {
+    // Ignore parse errors
+  }
+  
+  return dateString || '-';
+}
+
+export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Blob> {
+  const { domain, rawData, date } = options;
+  
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 15;
+  const contentWidth = pageWidth - (margin * 2);
+
+  const currentDate = new Date(date).toLocaleDateString('es-ES', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  // PORTADA
+  doc.setFontSize(24);
+  doc.setFont('helvetica', 'bold');
+  doc.text('ANEXO TÉCNICO', pageWidth / 2, 80, { align: 'center' });
+  
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Datos Completos de Active Directory', pageWidth / 2, 100, { align: 'center' });
+  
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(domain, pageWidth / 2, 120, { align: 'center' });
+  
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generado: ${currentDate}`, pageWidth / 2, 140, { align: 'center' });
+
+  // Nueva página para la tabla de contenidos
+  doc.addPage();
+  let yPos = margin + 10;
+  
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TABLA DE CONTENIDOS', margin, yPos);
+  yPos += 15;
+  
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  const tableOfContents = [
+    '1. Resumen Ejecutivo de Datos',
+    '2. Usuarios del Dominio',
+    '3. Grupos de Seguridad',
+    '4. Equipos del Dominio',
+    '5. Group Policy Objects (GPOs)',
+    '6. Organizational Units (OUs)',
+    '7. Datos Adicionales',
+    '   7.1. Contraseñas Antiguas',
+    '   7.2. Estado de Replicación',
+    '   7.3. Relaciones de Confianza',
+    '   7.4. Objetos AdminCount=1'
+  ];
+  
+  tableOfContents.forEach(item => {
+    doc.text(item, margin + 5, yPos);
+    yPos += 7;
+  });
+
+  // 1. RESUMEN EJECUTIVO
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('1. RESUMEN EJECUTIVO DE DATOS', margin, margin + 10);
+  
+  const summaryData = [
+    ['Dominio', domain],
+    ['Fecha de Recolección', currentDate],
+    ['Total de Usuarios', String(rawData.Users ? (rawData.Users.Data || rawData.Users).length : 0)],
+    ['Total de Grupos', String(rawData.Groups ? (rawData.Groups.Data || rawData.Groups).length : 0)],
+    ['Total de Equipos', String(rawData.Computers ? (rawData.Computers.Data || rawData.Computers).length : 0)],
+    ['Total de GPOs', String(rawData.GPOs ? (rawData.GPOs.Data || rawData.GPOs).length : 0)],
+    ['Total de OUs', String(rawData.OUs ? (rawData.OUs.Data || rawData.OUs).length : 0)],
+    ['Relaciones de Confianza', String(rawData.Trusts ? rawData.Trusts.length : 0)],
+    ['Contraseñas Antiguas', String(rawData.OldPasswords ? rawData.OldPasswords.length : 0)]
+  ];
+
+  autoTable(doc, {
+    startY: margin + 20,
+    head: [['Métrica', 'Valor']],
+    body: summaryData,
+    theme: 'grid',
+    headStyles: { fillColor: [59, 130, 246], textColor: 255, fontSize: 11, fontStyle: 'bold' },
+    styles: { fontSize: 10, cellPadding: 5 },
+    margin: { left: margin, right: margin }
+  });
+
+  // 2. USUARIOS
+  if (rawData.Users) {
+    const users = rawData.Users.Data || rawData.Users;
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`2. USUARIOS DEL DOMINIO (${users.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    if (users.length > 0) {
+      const userData = users.slice(0, 100).map((user: any) => [
+        user.Name || '-',
+        user.SamAccountName || '-',
+        user.EmailAddress || user.Mail || '-',
+        user.Enabled !== false ? 'Sí' : 'No',
+        user.LastLogonDate ? new Date(user.LastLogonDate).toLocaleDateString('es-ES') : '-'
+      ]);
+
+      autoTable(doc, {
+        startY: margin + 20,
+        head: [['Nombre', 'SAM Account', 'Email', 'Habilitado', 'Último Logon']],
+        body: userData,
+        theme: 'grid',
+        headStyles: { fillColor: [59, 130, 246], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: margin, right: margin },
+        columnStyles: {
+          0: { cellWidth: 35 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 45 },
+          3: { cellWidth: 25 },
+          4: { cellWidth: 30 }
+        }
+      });
+
+      if (users.length > 100) {
+        const finalY = (doc as any).lastAutoTable.finalY + 5;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`... y ${(users.length - 100).toLocaleString()} usuarios más`, margin, finalY);
+      }
+    }
+  }
+
+  // 3. GRUPOS
+  if (rawData.Groups) {
+    const groups = rawData.Groups.Data || rawData.Groups;
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`3. GRUPOS DE SEGURIDAD (${groups.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    if (groups.length > 0) {
+      const groupData = groups.slice(0, 100).map((group: any) => [
+        group.Name || '-',
+        group.GroupScope || '-',
+        group.GroupCategory || '-',
+        String(group.Members?.length || 0),
+        (group.Description || '-').substring(0, 50)
+      ]);
+
+      autoTable(doc, {
+        startY: margin + 20,
+        head: [['Nombre', 'Scope', 'Categoría', 'Miembros', 'Description']],
+        body: groupData,
+        theme: 'grid',
+        headStyles: { fillColor: [16, 185, 129], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: margin, right: margin },
+        columnStyles: {
+          0: { cellWidth: 40 },
+          1: { cellWidth: 25 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 20 },
+          4: { cellWidth: 55 }
+        }
+      });
+
+      if (groups.length > 100) {
+        const finalY = (doc as any).lastAutoTable.finalY + 5;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`... y ${(groups.length - 100).toLocaleString()} grupos más`, margin, finalY);
+      }
+    }
+  }
+
+  // 4. EQUIPOS
+  if (rawData.Computers) {
+    const computers = rawData.Computers.Data || rawData.Computers;
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`4. EQUIPOS DEL DOMINIO (${computers.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    if (computers.length > 0) {
+      const computerData = computers.slice(0, 100).map((comp: any) => [
+        comp.Name || '-',
+        comp.OperatingSystem || '-',
+        comp.Enabled !== false ? 'Sí' : 'No',
+        comp.LastLogonDate ? new Date(comp.LastLogonDate).toLocaleDateString('es-ES') : '-'
+      ]);
+
+      autoTable(doc, {
+        startY: margin + 20,
+        head: [['Nombre', 'Sistema Operativo', 'Habilitado', 'Último Logon']],
+        body: computerData,
+        theme: 'grid',
+        headStyles: { fillColor: [245, 158, 11], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: margin, right: margin },
+        columnStyles: {
+          0: { cellWidth: 40 },
+          1: { cellWidth: 60 },
+          2: { cellWidth: 25 },
+          3: { cellWidth: 30 }
+        }
+      });
+
+      if (computers.length > 100) {
+        const finalY = (doc as any).lastAutoTable.finalY + 5;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`... y ${(computers.length - 100).toLocaleString()} equipos más`, margin, finalY);
+      }
+    }
+  }
+
+  // 5. GPOs
+  if (rawData.GPOs) {
+    const gpos = rawData.GPOs.Data || rawData.GPOs;
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`5. GROUP POLICY OBJECTS (${gpos.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    if (gpos.length > 0) {
+      const gpoData = gpos.slice(0, 100).map((gpo: any) => [
+        gpo.DisplayName || '-',
+        gpo.GpoStatus || '-',
+        gpo.CreationTime ? new Date(gpo.CreationTime).toLocaleDateString('es-ES') : '-'
+      ]);
+
+      autoTable(doc, {
+        startY: margin + 20,
+        head: [['Nombre', 'Estado', 'Fecha Creación']],
+        body: gpoData,
+        theme: 'grid',
+        headStyles: { fillColor: [139, 92, 246], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: margin, right: margin },
+        columnStyles: {
+          0: { cellWidth: 80 },
+          1: { cellWidth: 40 },
+          2: { cellWidth: 35 }
+        }
+      });
+
+      if (gpos.length > 100) {
+        const finalY = (doc as any).lastAutoTable.finalY + 5;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`... y ${(gpos.length - 100).toLocaleString()} GPOs más`, margin, finalY);
+      }
+    }
+  }
+
+  // 6. OUs
+  if (rawData.OUs) {
+    const ous = rawData.OUs.Data || rawData.OUs;
+    doc.addPage();
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`6. ORGANIZATIONAL UNITS (${ous.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    if (ous.length > 0) {
+      const ouData = ous.slice(0, 100).map((ou: any) => [
+        ou.Name || '-',
+        (ou.DistinguishedName || '-').substring(0, 80)
+      ]);
+
+      autoTable(doc, {
+        startY: margin + 20,
+        head: [['Nombre', 'Distinguished Name']],
+        body: ouData,
+        theme: 'grid',
+        headStyles: { fillColor: [99, 102, 241], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: margin, right: margin },
+        columnStyles: {
+          0: { cellWidth: 40 },
+          1: { cellWidth: 115 }
+        }
+      });
+
+      if (ous.length > 100) {
+        const finalY = (doc as any).lastAutoTable.finalY + 5;
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'italic');
+        doc.text(`... y ${(ous.length - 100).toLocaleString()} OUs más`, margin, finalY);
+      }
+    }
+  }
+
+  // 7. DATOS ADICIONALES
+  doc.addPage();
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('7. DATOS ADICIONALES', margin, margin + 10);
+
+  // 7.1. Contraseñas Antiguas
+  if (rawData.OldPasswords && rawData.OldPasswords.length > 0) {
+    const oldPasswords = rawData.OldPasswords;
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`7.1. Contraseñas Antiguas (${oldPasswords.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    const passwordData = oldPasswords.slice(0, 100).map((pwd: any) => [
+      pwd.SamAccountName || '-',
+      String(pwd.PasswordAgeDays || 0),
+      pwd.RiskLevel || '-',
+      pwd.PasswordNeverExpires ? 'Sí' : 'No',
+      pwd.PasswordLastSet ? new Date(parseInt(pwd.PasswordLastSet.match(/\d+/)?.[0] || '0')).toLocaleDateString('es-ES') : '-'
+    ]);
+
+    autoTable(doc, {
+      startY: margin + 20,
+      head: [['Cuenta SAM', 'Días', 'Riesgo', 'Nunca Expira', 'Última Config.']],
+      body: passwordData,
+      theme: 'grid',
+      headStyles: { fillColor: [220, 38, 38], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 3 },
+      margin: { left: margin, right: margin },
+      columnStyles: {
+        0: { cellWidth: 50 },
+        1: { cellWidth: 20 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 30 },
+        4: { cellWidth: 30 }
+      }
+    });
+
+    if (oldPasswords.length > 100) {
+      const finalY = (doc as any).lastAutoTable.finalY + 5;
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'italic');
+      doc.text(`... y ${(oldPasswords.length - 100).toLocaleString()} contraseñas más`, margin, finalY);
+    }
+  }
+
+  // 7.2. Estado de Replicación
+  if (rawData.ReplicationStatus && rawData.ReplicationStatus.length > 0) {
+    const replication = rawData.ReplicationStatus;
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`7.2. Estado de Replicación (${replication.length} total)`, margin, margin + 10);
+    
+    const replicationData = replication.map((rep: any) => {
+      const partnerName = rep.Partner?.split(',')[0]?.replace('CN=NTDS Settings,CN=', '') || '-';
+      return [
+        rep.Server || '-',
+        partnerName,
+        rep.LastReplicationResult === 0 ? 'OK' : String(rep.LastReplicationResult),
+        rep.LastReplicationSuccess ? new Date(parseInt(rep.LastReplicationSuccess.match(/\d+/)?.[0] || '0')).toLocaleString('es-ES') : '-',
+        String(rep.ConsecutiveReplicationFailures || 0)
+      ];
+    });
+
+    autoTable(doc, {
+      startY: margin + 20,
+      head: [['Servidor', 'Partner', 'Resultado', 'Última Réplica', 'Fallos']],
+      body: replicationData,
+      theme: 'grid',
+      headStyles: { fillColor: [8, 145, 178], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 3 },
+      margin: { left: margin, right: margin },
+      columnStyles: {
+        0: { cellWidth: 35 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 45 },
+        4: { cellWidth: 20 }
+      }
+    });
+  }
+
+  // 7.3. Trusts
+  if (rawData.Trusts && rawData.Trusts.length > 0) {
+    const trusts = rawData.Trusts;
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`7.3. Relaciones de Confianza (${trusts.length} total)`, margin, margin + 10);
+    
+    const trustData = trusts.map((trust: any) => [
+      trust.Name || '-',
+      trust.Direction || '-',
+      trust.TrustType || '-',
+      trust.Source || '-',
+      trust.Target || '-',
+      trust.SIDFilteringQuarantined ? 'Sí' : 'No'
+    ]);
+
+    autoTable(doc, {
+      startY: margin + 20,
+      head: [['Nombre', 'Dirección', 'Tipo', 'Origen', 'Destino', 'SID Filter']],
+      body: trustData,
+      theme: 'grid',
+      headStyles: { fillColor: [124, 58, 237], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 3 },
+      margin: { left: margin, right: margin },
+      columnStyles: {
+        0: { cellWidth: 30 },
+        1: { cellWidth: 25 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 30 },
+        4: { cellWidth: 30 },
+        5: { cellWidth: 20 }
+      }
+    });
+  }
+
+  // 7.4. AdminCount Objects
+  if (rawData.AdminCountObjects && rawData.AdminCountObjects.length > 0) {
+    const adminCount = rawData.AdminCountObjects;
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`7.4. Objetos con AdminCount=1 (${adminCount.length.toLocaleString()} total)`, margin, margin + 10);
+    
+    const adminData = adminCount.slice(0, 100).map((obj: any) => [
+      obj.Name || '-',
+      obj.ObjectClass || '-',
+      obj.WhenCreated ? new Date(parseInt(obj.WhenCreated.match(/\d+/)?.[0] || '0')).toLocaleDateString('es-ES') : '-',
+      obj.WhenChanged ? new Date(parseInt(obj.WhenChanged.match(/\d+/)?.[0] || '0')).toLocaleDateString('es-ES') : '-'
+    ]);
+
+    autoTable(doc, {
+      startY: margin + 20,
+      head: [['Nombre', 'Tipo', 'Creado', 'Modificado']],
+      body: adminData,
+      theme: 'grid',
+      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 3 },
+      margin: { left: margin, right: margin },
+      columnStyles: {
+        0: { cellWidth: 60 },
+        1: { cellWidth: 40 },
+        2: { cellWidth: 30 },
+        3: { cellWidth: 30 }
+      }
+    });
+
+    if (adminCount.length > 100) {
+      const finalY = (doc as any).lastAutoTable.finalY + 5;
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'italic');
+      doc.text(`... y ${(adminCount.length - 100).toLocaleString()} objetos más`, margin, finalY);
+    }
+  }
+
+  // Generar el PDF como Blob
+  const pdfBlob = doc.output('blob');
+  return pdfBlob;
+}

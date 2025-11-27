@@ -2,6 +2,7 @@ import { ShieldCheck, LogOut, Settings } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
+import { ModeToggle } from "@/components/mode-toggle";
 
 const Header = () => {
   const navigate = useNavigate();
@@ -28,6 +29,7 @@ const Header = () => {
               Admin
             </Button>
           </Link>
+          <ModeToggle />
           <Button variant="ghost" size="sm" onClick={handleLogout}>
             <LogOut className="h-4 w-4 mr-2" />
             Cerrar Sesión

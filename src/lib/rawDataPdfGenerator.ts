@@ -7,64 +7,131 @@ export interface RawDataPdfOptions {
   date: string;
 }
 
+// Enterprise Color Palette
+const COLORS = {
+  primary: [30, 41, 59],      // Slate 800 (Dark Header)
+  secondary: [59, 130, 246],  // Blue 500 (Accents)
+  success: [16, 185, 129],    // Emerald 500
+  warning: [245, 158, 11],    // Amber 500
+  danger: [239, 68, 68],      // Red 500
+  text: [51, 65, 85],         // Slate 700
+  textLight: [100, 116, 139], // Slate 500
+  bgLight: [248, 250, 252],   // Slate 50
+  white: [255, 255, 255],
+  border: [226, 232, 240]     // Slate 200
+};
+
 export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Blob> {
   const { domain, rawData, date } = options;
-  
+
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
     format: 'a4',
   });
 
+  doc.setFont('helvetica');
+
   let currentPage = 1;
   const pageHeight = doc.internal.pageSize.height;
   const pageWidth = doc.internal.pageSize.width;
-  const margin = 20;
+  const margin = 15; // Slightly tighter margin for modern look
 
-  // Helper function to add footer
-  const addFooter = (pageNum: number) => {
-    doc.setFontSize(8);
-    doc.setTextColor(150);
-    doc.text(`Página ${pageNum}`, pageWidth - margin, pageHeight - 10, { align: 'right' });
+  // Helper: Draw Header on every page (except Cover)
+  const drawHeader = (title: string) => {
+    // Top colored bar
+    doc.setFillColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+    doc.rect(0, 0, pageWidth, 15, 'F');
+
+    // Title in header
+    doc.setFontSize(10);
+    doc.setTextColor(255, 255, 255);
+    doc.text(title.toUpperCase(), margin, 10);
+
+    // Domain on right
+    doc.text(domain, pageWidth - margin, 10, { align: 'right' });
   };
 
-  // PORTADA
-  doc.setFillColor(59, 130, 246); // Blue background
-  doc.rect(0, 0, pageWidth, 80, 'F');
-  
+  // Helper: Draw Footer
+  const addFooter = (pageNum: number) => {
+    const footerY = pageHeight - 10;
+
+    // Line separator
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.line(margin, footerY - 5, pageWidth - margin, footerY - 5);
+
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.textLight[0], COLORS.textLight[1], COLORS.textLight[2]);
+
+    // Left: Confidential
+    doc.text('CONFIDENCIAL - USO INTERNO', margin, footerY);
+
+    // Center: Date
+    const formattedDate = new Date(date).toLocaleDateString('es-ES');
+    doc.text(`Generado el ${formattedDate}`, pageWidth / 2, footerY, { align: 'center' });
+
+    // Right: Page Number
+    doc.text(`Página ${pageNum}`, pageWidth - margin, footerY, { align: 'right' });
+  };
+
+  // --- COVER PAGE ---
+  // Modern Split Layout
+
+  // Left Side (Dark)
+  doc.setFillColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.rect(0, 0, pageWidth * 0.4, pageHeight, 'F');
+
+  // Right Side (White) - implicitly white
+
+  // Content Left
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(28);
-  doc.text('ANEXO TÉCNICO', pageWidth / 2, 30, { align: 'center' });
-  
-  doc.setFontSize(16);
-  doc.text('Datos Raw del Active Directory', pageWidth / 2, 45, { align: 'center' });
-  
-  doc.setFontSize(20);
-  doc.text(domain, pageWidth / 2, 65, { align: 'center' });
+  doc.setFontSize(32);
+  doc.text('ANEXO', 20, 60);
+  doc.text('TÉCNICO', 20, 75);
 
-  doc.setTextColor(0);
   doc.setFontSize(12);
-  const formattedDate = new Date(date).toLocaleDateString('es-ES', { 
-    day: 'numeric', 
-    month: 'long', 
-    year: 'numeric' 
-  });
-  doc.text(`Fecha de extracción: ${formattedDate}`, pageWidth / 2, 100, { align: 'center' });
-  doc.text('Tipo de documento: Anexo Técnico', pageWidth / 2, 110, { align: 'center' });
-  doc.text('Formato: Datos Estructurados del AD', pageWidth / 2, 120, { align: 'center' });
+  doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+  doc.text('DATOS RAW DEL ACTIVE DIRECTORY', 20, 90);
 
-  addFooter(currentPage);
+  // Decorative Line
+  doc.setDrawColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+  doc.setLineWidth(1);
+  doc.line(20, 95, 60, 95);
 
-  // TABLA DE CONTENIDOS
+  // Content Right
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.setFontSize(24);
+  doc.text(domain, pageWidth * 0.45, 60);
+
+  doc.setFontSize(10);
+  doc.setTextColor(COLORS.textLight[0], COLORS.textLight[1], COLORS.textLight[2]);
+  doc.text('REPORTE DE INVENTARIO Y CONFIGURACIÓN', pageWidth * 0.45, 70);
+
+  // Bottom Info (Left side)
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(10);
+  doc.text('Generado por:', 20, pageHeight - 40);
+  doc.setFontSize(12);
+  doc.text('Active Scan Insight', 20, pageHeight - 33);
+
+  // Bottom Info (Right side)
+  doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]);
+  doc.setFontSize(10);
+  doc.text('Fecha de Extracción:', pageWidth * 0.45, pageHeight - 40);
+  doc.setFontSize(12);
+  doc.text(new Date(date).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }), pageWidth * 0.45, pageHeight - 33);
+
+  // No footer on cover
+
+  // --- TABLE OF CONTENTS ---
   doc.addPage();
   currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('Tabla de Contenidos', margin, 30);
-  
-  doc.setTextColor(0);
-  doc.setFontSize(12);
+  drawHeader('Tabla de Contenidos');
+
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.setFontSize(22);
+  doc.text('Índice del Reporte', margin, 40);
+
   const toc = [
     '1. Resumen Ejecutivo de Datos',
     '2. Usuarios del Dominio',
@@ -73,516 +140,467 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     '5. Group Policy Objects (GPOs)',
     '6. Controladores de Dominio',
     '7. Configuración de Dominio',
-    '8. Datos Adicionales'
+    '8. Unidades Organizativas (OUs)',
+    '9. Infraestructura DNS',
+    '10. Servicios DHCP',
+    '11. Datos Adicionales'
   ];
-  
-  let yPos = 50;
+
+  let yPos = 60;
   toc.forEach((item) => {
-    doc.text(`▸  ${item}`, margin + 5, yPos);
-    yPos += 10;
+    const parts = item.split('. ');
+    const number = parts[0];
+    const text = parts.slice(1).join('. ');
+
+    // Number circle
+    doc.setFillColor(COLORS.bgLight[0], COLORS.bgLight[1], COLORS.bgLight[2]);
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.circle(margin + 2, yPos - 1, 4, 'FD');
+
+    doc.setFontSize(9);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text(number, margin + 2, yPos, { align: 'center', baseline: 'middle' });
+
+    doc.setFontSize(11);
+    doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]);
+    doc.text(text, margin + 10, yPos);
+
+    // Dotted line
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.setLineDash([1, 1], 0);
+    doc.line(margin + 12 + doc.getTextWidth(text), yPos, pageWidth - margin - 10, yPos);
+    doc.setLineDash([], 0); // Reset
+
+    yPos += 12;
   });
 
   addFooter(currentPage);
 
-  // RESUMEN EJECUTIVO
+  // --- EXECUTIVE SUMMARY ---
   doc.addPage();
   currentPage++;
-  
+  drawHeader('Resumen Ejecutivo');
+
   doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('1. Resumen Ejecutivo de Datos', margin, 30);
-  
-  doc.setFontSize(14);
-  doc.setTextColor(0);
-  doc.text('Estadísticas Generales del Active Directory', margin, 45);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('1. Resumen Ejecutivo', margin, 35);
 
-  // Calcular estadísticas
-  const users = rawData.Users?.Data || rawData.Users || [];
-  const groups = rawData.Groups?.Data || rawData.Groups || [];
-  const computers = rawData.Computers?.Data || rawData.Computers || [];
-  const gpos = rawData.GPOs?.Data || rawData.GPOs || [];
-  const dcs = rawData.DomainControllers || [];
+  // Data Extraction
+  const ensureArray = (data: any): any[] => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (data.Data && Array.isArray(data.Data)) return data.Data;
+    return [];
+  };
 
-  const activeUsers = users.filter((u: any) => u.Enabled !== false).length;
-  const activeComputers = computers.filter((c: any) => c.Enabled !== false).length;
-  const adminUsers = users.filter((u: any) => u.AdminCount === 1 || u.AdminCount === true).length;
+  const users = ensureArray(rawData.Users);
+  const groups = ensureArray(rawData.Groups);
+  const computers = ensureArray(rawData.Computers);
+  const gpos = ensureArray(rawData.GPOs);
+  const dcs = ensureArray(rawData.DomainControllers);
+  const ous = ensureArray(rawData.OUs);
+  const dns = ensureArray(rawData.DNSConfiguration || rawData.DNS);
+  const dhcp = ensureArray(rawData.DHCPConfiguration || rawData.DHCP);
 
-  // Estadísticas en grid
+  const activeUsers = users.filter((u: any) => u?.Enabled !== false).length;
+  const activeComputers = computers.filter((c: any) => c?.Enabled !== false).length;
+  const adminUsers = users.filter((u: any) => u?.AdminCount === 1 || u?.AdminCount === true).length;
+
+  // KPI Cards Grid
   const stats = [
-    { label: 'TOTAL USUARIOS', value: users.length.toLocaleString('es-ES') },
-    { label: 'USUARIOS ACTIVOS', value: activeUsers.toLocaleString('es-ES') },
-    { label: 'GRUPOS DE SEGURIDAD', value: groups.length.toLocaleString('es-ES') },
-    { label: 'ADMINISTRADORES', value: adminUsers.toLocaleString('es-ES') },
-    { label: 'EQUIPOS TOTALES', value: computers.length.toLocaleString('es-ES') },
-    { label: 'EQUIPOS ACTIVOS', value: activeComputers.toLocaleString('es-ES') },
-    { label: 'GPOS', value: gpos.length.toLocaleString('es-ES') },
-    { label: 'DCS', value: dcs.length.toLocaleString('es-ES') },
+    { label: 'USUARIOS TOTALES', value: users.length, sub: `${activeUsers} Activos`, icon: 'U' },
+    { label: 'GRUPOS', value: groups.length, sub: 'Seguridad y Dist.', icon: 'G' },
+    { label: 'EQUIPOS', value: computers.length, sub: `${activeComputers} Activos`, icon: 'C' },
+    { label: 'ADMINISTRADORES', value: adminUsers, sub: 'Privilegiados', icon: 'A', highlight: true },
+    { label: 'GPOs', value: gpos.length, sub: 'Políticas', icon: 'P' },
+    { label: 'CONTROLADORES', value: dcs.length, sub: 'Domain Controllers', icon: 'D' },
+    { label: 'OUs', value: ous.length, sub: 'Estructura', icon: 'O' },
+    { label: 'DNS ZONES', value: dns.length, sub: 'Infraestructura', icon: 'Z' },
   ];
 
-  let statY = 60;
-  let statX = margin;
-  const boxWidth = 85;
-  const boxHeight = 25;
-  
-  stats.forEach((stat, index) => {
-    if (index % 2 === 0 && index > 0) {
-      statY += boxHeight + 5;
-      statX = margin;
-    } else if (index % 2 === 1) {
-      statX = pageWidth / 2 + 5;
+  let cardX = margin;
+  let cardY = 50;
+  const cardW = (pageWidth - (margin * 2) - 10) / 2; // 2 columns
+  const cardH = 25;
+
+  stats.forEach((stat, i) => {
+    if (i > 0 && i % 2 === 0) {
+      cardX = margin;
+      cardY += cardH + 5;
+    } else if (i % 2 === 1) {
+      cardX = margin + cardW + 10;
     }
 
-    // Box border
-    doc.setDrawColor(200);
-    doc.rect(statX, statY, boxWidth, boxHeight);
-    
-    // Label
-    doc.setFontSize(9);
-    doc.setTextColor(100);
-    doc.text(stat.label, statX + 5, statY + 8);
-    
-    // Value
-    doc.setFontSize(20);
-    doc.setTextColor(59, 130, 246);
-    doc.text(stat.value, statX + 5, statY + 20);
-  });
+    // Card Background
+    doc.setFillColor(COLORS.bgLight[0], COLORS.bgLight[1], COLORS.bgLight[2]);
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]);
+    doc.roundedRect(cardX, cardY, cardW, cardH, 2, 2, 'FD');
 
-  // Nota informativa
-  doc.setFontSize(10);
-  doc.setTextColor(100);
-  doc.setFillColor(240, 248, 255);
-  doc.rect(margin, statY + 35, pageWidth - 2 * margin, 15, 'F');
-  doc.text('ℹ  Nota: Este anexo contiene los datos raw extraídos directamente del Active Directory.', 
-    margin + 5, statY + 43);
-  doc.text('Los datos están organizados por categorías para facilitar su análisis técnico.', 
-    margin + 5, statY + 48);
+    // Accent Bar on Left
+    const barColor = stat.highlight ? COLORS.danger : COLORS.secondary;
+    doc.setFillColor(barColor[0], barColor[1], barColor[2]);
+    doc.rect(cardX, cardY, 2, cardH, 'F');
+
+    // Value (Big Number)
+    doc.setFontSize(18);
+    doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+    doc.text(stat.value.toLocaleString('es-ES'), cardX + 8, cardY + 10);
+
+    // Label
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.textLight[0], COLORS.textLight[1], COLORS.textLight[2]);
+    doc.text(stat.label, cardX + 8, cardY + 18);
+
+    // Subtext (Right aligned)
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]);
+    doc.text(stat.sub, cardX + cardW - 5, cardY + 14, { align: 'right' });
+  });
 
   addFooter(currentPage);
 
-  // USUARIOS DEL DOMINIO
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('2. Usuarios del Dominio', margin, 30);
-  
-  const maxUsers = 100;
-  const displayUsers = users.slice(0, maxUsers);
-  
-  doc.setFontSize(12);
-  doc.setTextColor(0);
-  doc.text(`Total de usuarios: ${users.length.toLocaleString('es-ES')} (mostrando primeros ${maxUsers})`, margin, 40);
-
-  const usersTableData = displayUsers.map((user: any) => [
-    user.Name || user.DisplayName || 'N/A',
-    user.SamAccountName || 'N/A',
-    user.EmailAddress || user.Mail || 'N/A',
-    user.Enabled !== false ? 'ACTIVO' : 'INACTIVO',
-    user.LastLogonDate ? new Date(user.LastLogonDate).toLocaleDateString('es-ES') : '-',
-    user.PasswordLastSet ? new Date(user.PasswordLastSet).toLocaleDateString('es-ES') : '-',
-  ]);
-
-  autoTable(doc, {
-    startY: 45,
-    head: [['Nombre', 'SAM Account', 'Email', 'Estado', 'Último Logon', 'Creado']],
-    body: usersTableData,
-    theme: 'grid',
+  // --- COMMON TABLE STYLES ---
+  const tableTheme = {
     headStyles: {
-      fillColor: [59, 130, 246],
+      fillColor: COLORS.primary as [number, number, number],
       textColor: 255,
-      fontSize: 9,
-      fontStyle: 'bold',
-      halign: 'left',
-    },
-    bodyStyles: {
-      fontSize: 7,
-      textColor: 50,
-      cellPadding: 2,
-    },
-    alternateRowStyles: {
-      fillColor: [245, 247, 250],
-    },
-    margin: { left: margin, right: margin },
-    columnStyles: {
-      0: { cellWidth: 40, halign: 'left' },
-      1: { cellWidth: 30, halign: 'left' },
-      2: { cellWidth: 40, halign: 'left' },
-      3: { cellWidth: 20, halign: 'center' },
-      4: { cellWidth: 25, halign: 'center' },
-      5: { cellWidth: 25, halign: 'center' },
-    },
-    didDrawPage: (data) => {
-      if (data.pageNumber > currentPage) {
-        currentPage = data.pageNumber;
-      }
-      addFooter(data.pageNumber + 2); // +2 por portada y TOC
-    },
-  });
-
-  // Nota de truncamiento usuarios
-  if (users.length > maxUsers) {
-    const finalY = (doc as any).lastAutoTable.finalY || 45;
-    doc.setFontSize(9);
-    doc.setTextColor(150);
-    doc.setFillColor(255, 243, 205);
-    doc.rect(margin, finalY + 5, pageWidth - 2 * margin, 10, 'F');
-    doc.text(`⚠  Nota: Solo se muestran los primeros ${maxUsers} usuarios de ${users.length.toLocaleString('es-ES')} totales por limitaciones de tamaño del documento.`,
-      margin + 5, finalY + 11);
-  }
-
-  // GRUPOS DE SEGURIDAD
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('3. Grupos de Seguridad', margin, 30);
-  
-  const maxGroups = 100;
-  const displayGroups = groups.slice(0, maxGroups);
-  
-  doc.setFontSize(12);
-  doc.setTextColor(0);
-  doc.text(`Total de grupos: ${groups.length.toLocaleString('es-ES')}`, margin, 40);
-
-  const groupsTableData = displayGroups.map((group: any) => [
-    group.Name || 'N/A',
-    group.Description || '-',
-    group.Members?.length?.toString() || '0',
-    group.GroupType || group.Type || 'Security',
-    group.GroupScope || group.Scope || 'Global',
-  ]);
-
-  autoTable(doc, {
-    startY: 45,
-    head: [['Nombre del Grupo', 'Descripción', 'Miembros', 'Tipo', 'Scope']],
-    body: groupsTableData,
-    theme: 'grid',
-    headStyles: {
-      fillColor: [16, 185, 129],
-      textColor: 255,
-      fontSize: 9,
-      fontStyle: 'bold',
-      halign: 'left',
-    },
-    bodyStyles: {
-      fontSize: 7,
-      textColor: 50,
-      cellPadding: 2,
-    },
-    alternateRowStyles: {
-      fillColor: [245, 247, 250],
-    },
-    margin: { left: margin, right: margin },
-    columnStyles: {
-      0: { cellWidth: 45, halign: 'left' },
-      1: { cellWidth: 60, halign: 'left' },
-      2: { cellWidth: 20, halign: 'center' },
-      3: { cellWidth: 30, halign: 'left' },
-      4: { cellWidth: 25, halign: 'left' },
-    },
-    didDrawPage: (data) => {
-      if (data.pageNumber > currentPage) {
-        currentPage = data.pageNumber;
-      }
-      addFooter(data.pageNumber + 2);
-    },
-  });
-
-  // EQUIPOS DEL DOMINIO
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('4. Equipos del Dominio', margin, 30);
-  
-  const maxComputers = 100;
-  const displayComputers = computers.slice(0, maxComputers);
-  
-  doc.setFontSize(12);
-  doc.setTextColor(0);
-  doc.text(`Total de equipos: ${computers.length.toLocaleString('es-ES')} (mostrando primeros ${maxComputers})`, margin, 40);
-
-  const computersTableData = displayComputers.map((computer: any) => [
-    computer.Name || 'N/A',
-    computer.OperatingSystem || 'N/A',
-    computer.OperatingSystemVersion || 'N/A',
-    computer.Enabled !== false ? 'ACTIVO' : 'INACTIVO',
-    computer.LastLogonDate ? new Date(computer.LastLogonDate).toLocaleDateString('es-ES') : '-',
-  ]);
-
-  autoTable(doc, {
-    startY: 45,
-    head: [['Nombre', 'Sistema Operativo', 'Versión', 'Estado', 'Último Logon']],
-    body: computersTableData,
-    theme: 'grid',
-    headStyles: {
-      fillColor: [245, 158, 11],
-      textColor: 255,
-      fontSize: 9,
-      fontStyle: 'bold',
-      halign: 'left',
-    },
-    bodyStyles: {
-      fontSize: 7,
-      textColor: 50,
-      cellPadding: 2,
-    },
-    alternateRowStyles: {
-      fillColor: [245, 247, 250],
-    },
-    margin: { left: margin, right: margin },
-    columnStyles: {
-      0: { cellWidth: 35, halign: 'left' },
-      1: { cellWidth: 60, halign: 'left' },
-      2: { cellWidth: 25, halign: 'center' },
-      3: { cellWidth: 25, halign: 'center' },
-      4: { cellWidth: 25, halign: 'center' },
-    },
-    didDrawPage: (data) => {
-      if (data.pageNumber > currentPage) {
-        currentPage = data.pageNumber;
-      }
-      addFooter(data.pageNumber + 2);
-    },
-  });
-
-  // Nota de truncamiento equipos
-  if (computers.length > maxComputers) {
-    const finalY = (doc as any).lastAutoTable.finalY || 45;
-    doc.setFontSize(9);
-    doc.setTextColor(150);
-    doc.setFillColor(255, 243, 205);
-    doc.rect(margin, finalY + 5, pageWidth - 2 * margin, 10, 'F');
-    doc.text(`⚠  Nota: Solo se muestran los primeros ${maxComputers} equipos de ${computers.length.toLocaleString('es-ES')} totales.`,
-      margin + 5, finalY + 11);
-  }
-
-  // GROUP POLICY OBJECTS
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('5. Group Policy Objects (GPOs)', margin, 30);
-  
-  doc.setFontSize(12);
-  doc.setTextColor(0);
-  doc.text(`Total de GPOs: ${gpos.length.toLocaleString('es-ES')}`, margin, 40);
-
-  const gposTableData = gpos.map((gpo: any) => [
-    gpo.DisplayName || gpo.Name || 'N/A',
-    gpo.GpoStatus || gpo.Status || 'N/A',
-    gpo.CreationTime ? new Date(gpo.CreationTime).toLocaleDateString('es-ES') : '-',
-    gpo.ModificationTime ? new Date(gpo.ModificationTime).toLocaleDateString('es-ES') : '-',
-    '0', // Links column placeholder
-  ]);
-
-  autoTable(doc, {
-    startY: 45,
-    head: [['Nombre', 'Estado', 'Creado', 'Modificado', 'Links']],
-    body: gposTableData,
-    theme: 'grid',
-    headStyles: {
-      fillColor: [139, 92, 246],
-      textColor: 255,
-      fontSize: 9,
-      fontStyle: 'bold',
-      halign: 'left',
-    },
-    bodyStyles: {
-      fontSize: 7,
-      textColor: 50,
-      cellPadding: 2,
-    },
-    alternateRowStyles: {
-      fillColor: [245, 247, 250],
-    },
-    margin: { left: margin, right: margin },
-    columnStyles: {
-      0: { cellWidth: 70, halign: 'left' },
-      1: { cellWidth: 40, halign: 'left' },
-      2: { cellWidth: 25, halign: 'center' },
-      3: { cellWidth: 25, halign: 'center' },
-      4: { cellWidth: 15, halign: 'center' },
-    },
-    didDrawPage: (data) => {
-      if (data.pageNumber > currentPage) {
-        currentPage = data.pageNumber;
-      }
-      addFooter(data.pageNumber + 2);
-    },
-  });
-
-  // CONTROLADORES DE DOMINIO
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('6. Controladores de Dominio', margin, 30);
-  
-  doc.setFontSize(12);
-  doc.setTextColor(0);
-  doc.text(`Total de DCs: ${dcs.length.toLocaleString('es-ES')}`, margin, 40);
-
-  if (dcs.length > 0) {
-    const dcsTableData = dcs.map((dc: any) => [
-      dc.Name || dc.HostName || 'N/A',
-      dc.HostName || 'N/A',
-      dc.IPAddress || dc.IPv4Address || 'N/A',
-      dc.OperatingSystem || 'N/A',
-      '-', // Roles FSMO placeholder
-    ]);
-
-    autoTable(doc, {
-      startY: 45,
-      head: [['Nombre', 'Hostname', 'IP Address', 'Sistema Operativo', 'Roles FSMO']],
-      body: dcsTableData,
-      theme: 'grid',
-      headStyles: {
-        fillColor: [239, 68, 68],
-        textColor: 255,
-        fontSize: 9,
-        fontStyle: 'bold',
-        halign: 'left',
-      },
-      bodyStyles: {
-        fontSize: 7,
-        textColor: 50,
-        cellPadding: 2,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 247, 250],
-      },
-      margin: { left: margin, right: margin },
-      columnStyles: {
-        0: { cellWidth: 30, halign: 'left' },
-        1: { cellWidth: 45, halign: 'left' },
-        2: { cellWidth: 30, halign: 'center' },
-        3: { cellWidth: 50, halign: 'left' },
-        4: { cellWidth: 20, halign: 'center' },
-      },
-      didDrawPage: (data) => {
-        if (data.pageNumber > currentPage) {
-          currentPage = data.pageNumber;
-        }
-        addFooter(data.pageNumber + 2);
-      },
-    });
-  } else {
-    doc.setFontSize(10);
-    doc.setTextColor(150);
-    doc.text('No hay controladores de dominio disponibles.', margin, 55);
-  }
-
-  // CONFIGURACIÓN DE DOMINIO
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('7. Configuración de Dominio', margin, 30);
-  
-  doc.setFontSize(14);
-  doc.setTextColor(0);
-  doc.text('Información del Dominio', margin, 45);
-
-  const domainInfo = rawData.DomainInfo || {};
-  const domainConfig = [
-    ['Nombre DNS:', domainInfo.DomainName || 'N/A'],
-    ['Nivel Funcional:', domainInfo.DomainMode || 'N/A'],
-    ['Distinguished Name:', domainInfo.DistinguishedName || 'N/A'],
-    ['NetBIOS Name:', domainInfo.NetBIOSName || 'N/A'],
-    ['PDC Emulator:', domainInfo.PDCEmulator || 'N/A'],
-    ['RID Master:', domainInfo.RIDMaster || 'N/A'],
-    ['Infrastructure Master:', domainInfo.InfrastructureMaster || 'N/A'],
-  ];
-
-  autoTable(doc, {
-    startY: 50,
-    body: domainConfig,
-    theme: 'plain',
-    styles: {
-      fontSize: 10,
+      fontSize: 8,
+      fontStyle: 'bold' as 'bold',
+      halign: 'left' as 'left',
       cellPadding: 3,
     },
-    columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 60 },
-      1: { textColor: 100 },
+    bodyStyles: {
+      fontSize: 8,
+      textColor: COLORS.text as [number, number, number],
+      cellPadding: 3,
+      lineColor: COLORS.border as [number, number, number],
+      lineWidth: 0.1,
+    },
+    alternateRowStyles: {
+      fillColor: COLORS.bgLight as [number, number, number],
     },
     margin: { left: margin, right: margin },
-  });
+  };
 
-  addFooter(currentPage);
+  // Helper for dates
+  const formatDate = (dateString: any) => {
+    if (!dateString) return '-';
+    try {
+      const d = new Date(dateString);
+      if (isNaN(d.getTime())) return '-';
+      return d.toLocaleDateString('es-ES');
+    } catch { return '-'; }
+  };
 
-  // DATOS ADICIONALES
+  // --- SECTIONS GENERATION ---
+
+  // 2. USUARIOS
   doc.addPage();
   currentPage++;
-  
-  doc.setFontSize(20);
-  doc.setTextColor(59, 130, 246);
-  doc.text('8. Datos Adicionales', margin, 30);
+  drawHeader('Usuarios del Dominio');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('2. Usuarios del Dominio', margin, 30);
 
-  let additionalY = 45;
+  autoTable(doc, {
+    startY: 40,
+    head: [['Nombre', 'SAM Account', 'Email', 'Estado', 'Último Logon', 'Password Set', 'Admin?', 'Nunca Expira?']],
+    body: users.slice(0, 500).map((u: any) => [
+      u.Name || u.DisplayName || 'N/A',
+      u.SamAccountName || 'N/A',
+      u.EmailAddress || u.Mail || '-',
+      u.Enabled !== false ? 'Activo' : 'Inactivo',
+      formatDate(u.LastLogonDate),
+      formatDate(u.PasswordLastSet),
+      u.AdminCount === 1 || u.AdminCount === true ? 'SÍ' : 'No',
+      u.PasswordNeverExpires === true ? 'SÍ' : 'No'
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Usuarios del Dominio');
+    }
+  });
+  if (users.length > 500) {
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.danger[0], COLORS.danger[1], COLORS.danger[2]);
+    doc.text(`* Se muestran los primeros 500 de ${users.length} usuarios. Para el listado completo, consulte el archivo JSON raw.`, margin, (doc as any).lastAutoTable.finalY + 10);
+  }
+
+  // 3. GRUPOS
+  doc.addPage();
+  currentPage++;
+  drawHeader('Grupos de Seguridad');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('3. Grupos de Seguridad', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Nombre', 'Descripción', 'Miembros', 'Tipo', 'Ámbito', 'Managed By']],
+    body: groups.slice(0, 500).map((g: any) => [
+      g.Name || 'N/A',
+      g.Description || '-',
+      g.Members?.length || 0,
+      g.GroupType || 'Security',
+      g.GroupScope || 'Global',
+      g.ManagedBy || '-'
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Grupos de Seguridad');
+    }
+  });
+  if (groups.length > 500) {
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.danger[0], COLORS.danger[1], COLORS.danger[2]);
+    doc.text(`* Se muestran los primeros 500 de ${groups.length} grupos.`, margin, (doc as any).lastAutoTable.finalY + 10);
+  }
+
+  // 4. EQUIPOS
+  doc.addPage();
+  currentPage++;
+  drawHeader('Equipos del Dominio');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('4. Equipos del Dominio', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Nombre', 'IPv4', 'OS', 'Versión', 'Estado', 'Último Logon']],
+    body: computers.slice(0, 500).map((c: any) => [
+      c.Name || 'N/A',
+      c.IPv4Address || '-',
+      c.OperatingSystem || '-',
+      c.OperatingSystemVersion || '-',
+      c.Enabled !== false ? 'Activo' : 'Inactivo',
+      formatDate(c.LastLogonDate)
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Equipos del Dominio');
+    }
+  });
+  if (computers.length > 500) {
+    doc.setFontSize(8);
+    doc.setTextColor(COLORS.danger[0], COLORS.danger[1], COLORS.danger[2]);
+    doc.text(`* Se muestran los primeros 500 de ${computers.length} equipos.`, margin, (doc as any).lastAutoTable.finalY + 10);
+  }
+
+  // 5. GPOs
+  doc.addPage();
+  currentPage++;
+  drawHeader('Group Policy Objects');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('5. Group Policy Objects (GPOs)', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Nombre', 'Estado', 'Creado', 'Modificado', 'Links', 'File Path']],
+    body: gpos.slice(0, 500).map((g: any) => [
+      g.DisplayName || g.Name || 'N/A',
+      g.GpoStatus || 'Enabled',
+      formatDate(g.CreationTime),
+      formatDate(g.ModificationTime),
+      'Ver Detalle', // Placeholder
+      (g.FileSysPath || '').split('}')[1] || '-' // Shorten path
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Group Policy Objects');
+    }
+  });
+
+  // 6. DCs
+  doc.addPage();
+  currentPage++;
+  drawHeader('Controladores de Dominio');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('6. Controladores de Dominio', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Hostname', 'IP Address', 'OS', 'Roles']],
+    body: dcs.map((dc: any) => [
+      dc.HostName || dc.Name || 'N/A',
+      dc.IPv4Address || dc.IPAddress || '-',
+      dc.OperatingSystem || '-',
+      '-'
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Controladores de Dominio');
+    }
+  });
+
+  // 7. DOMAIN CONFIG
+  doc.addPage();
+  currentPage++;
+  drawHeader('Configuración de Dominio');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('7. Configuración de Dominio', margin, 30);
+
+  const domainInfo = rawData.DomainInfo || {};
+  autoTable(doc, {
+    startY: 40,
+    body: [
+      ['Nombre DNS', domainInfo.DomainName || 'N/A'],
+      ['Nivel Funcional', domainInfo.DomainMode || 'N/A'],
+      ['Distinguished Name', domainInfo.DistinguishedName || 'N/A'],
+      ['NetBIOS', domainInfo.NetBIOSName || 'N/A'],
+      ['PDC Emulator', domainInfo.PDCEmulator || 'N/A'],
+      ['RID Master', domainInfo.RIDMaster || 'N/A'],
+      ['Infrastructure Master', domainInfo.InfrastructureMaster || 'N/A']
+    ],
+    theme: 'striped',
+    styles: { fontSize: 10, cellPadding: 4 },
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 60, textColor: COLORS.primary } },
+    margin: { left: margin, right: margin },
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Configuración de Dominio');
+    }
+  });
+
+  // 8. OUs
+  doc.addPage();
+  currentPage++;
+  drawHeader('Unidades Organizativas');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('8. Unidades Organizativas (OUs)', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Nombre', 'Distinguished Name', 'GPOs Vinculadas', 'Protected?']],
+    body: ous.slice(0, 500).map((o: any) => [
+      o.Name || 'N/A',
+      o.DistinguishedName || '-',
+      o.LinkedGPOs?.length || 0,
+      o.ProtectedFromAccidentalDeletion ? 'Sí' : 'No'
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Unidades Organizativas');
+    }
+  });
+
+  // 9. DNS
+  doc.addPage();
+  currentPage++;
+  drawHeader('Infraestructura DNS');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('9. Infraestructura DNS', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Zona', 'Tipo', 'Integrada AD', 'Transferencias', 'Masters']],
+    body: dns.slice(0, 500).map((z: any) => [
+      z.ZoneName || z.Name || 'N/A',
+      z.ZoneType || '-',
+      z.IsDsIntegrated ? 'Sí' : 'No',
+      z.SecureSecondaries || '-',
+      (z.MasterServers || []).join(', ') || '-'
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Infraestructura DNS');
+    }
+  });
+
+  // 10. DHCP
+  doc.addPage();
+  currentPage++;
+  drawHeader('Servicios DHCP');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('10. Servicios DHCP', margin, 30);
+
+  autoTable(doc, {
+    startY: 40,
+    head: [['Scope ID', 'Nombre', 'Estado', 'Rango', 'Lease', 'Subnet']],
+    body: dhcp.slice(0, 500).map((s: any) => [
+      s.ScopeId || 'N/A',
+      s.Name || '-',
+      s.State || '-',
+      `${s.StartRange || ''} - ${s.EndRange || ''}`,
+      s.LeaseDuration || '-',
+      s.SubnetMask || '-'
+    ]),
+    ...tableTheme,
+    didDrawPage: (data) => {
+      currentPage = doc.getNumberOfPages();
+      addFooter(currentPage);
+      drawHeader('Servicios DHCP');
+    }
+  });
+
+  // 11. DATOS ADICIONALES
+  doc.addPage();
+  currentPage++;
+  drawHeader('Datos Adicionales');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('11. Datos Adicionales', margin, 30);
+
+  let addY = 40;
   const additionalSections = [
-    { key: 'Trusts', label: 'Trusts' },
-    { key: 'ReplicationStatus', label: 'ReplicationStatus' },
-    { key: 'OldPasswords', label: 'OldPasswords' },
-    { key: 'AdminCountObjects', label: 'AdminCountObjects' },
+    { key: 'Trusts', label: 'Relaciones de Confianza (Trusts)' },
+    { key: 'ReplicationStatus', label: 'Estado de Replicación' },
+    { key: 'OldPasswords', label: 'Usuarios con Contraseñas Antiguas' },
+    { key: 'AdminCountObjects', label: 'Objetos AdminCount' },
   ];
 
-  additionalSections.forEach((section) => {
-    const data = rawData[section.key];
-    const count = Array.isArray(data) ? data.length : 'N/A';
-    
-    doc.setFontSize(14);
-    doc.setTextColor(0);
-    doc.text(section.label, margin, additionalY);
-    
-    doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(`Total de elementos: ${count}`, margin, additionalY + 7);
-    
-    if (!data || (Array.isArray(data) && data.length === 0)) {
-      doc.setTextColor(150);
-      doc.text('No hay datos disponibles.', margin, additionalY + 15);
-      additionalY += 25;
-    } else {
+  additionalSections.forEach((sec) => {
+    const data = rawData[sec.key];
+    const count = Array.isArray(data) ? data.length : 0;
+
+    doc.setFontSize(12);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text(`${sec.label} (${count})`, margin, addY);
+
+    addY += 10;
+
+    // Simple preview if data exists
+    if (count > 0 && Array.isArray(data)) {
+      const previewText = JSON.stringify(data.slice(0, 2), null, 2).substring(0, 300) + '...';
       doc.setFontSize(8);
-      doc.setTextColor(50);
-      const preview = JSON.stringify(Array.isArray(data) ? data.slice(0, 3) : data, null, 2);
-      const lines = doc.splitTextToSize(preview.substring(0, 500) + '...', pageWidth - 2 * margin);
-      doc.text(lines, margin, additionalY + 15);
-      additionalY += 15 + (lines.length * 3) + 10;
+      doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]);
+      const splitText = doc.splitTextToSize(previewText, pageWidth - (margin * 2));
+      doc.text(splitText, margin, addY);
+      addY += (splitText.length * 4) + 10;
+    } else {
+      doc.setFontSize(9);
+      doc.setTextColor(COLORS.textLight[0], COLORS.textLight[1], COLORS.textLight[2]);
+      doc.text('No hay datos disponibles o la lista está vacía.', margin, addY);
+      addY += 10;
     }
 
-    if (additionalY > pageHeight - 40) {
+    if (addY > pageHeight - 40) {
       doc.addPage();
       currentPage++;
-      addFooter(currentPage);
-      additionalY = 30;
+      drawHeader('Datos Adicionales');
+      addY = 30;
     }
   });
-
-  // PÁGINA FINAL
-  doc.addPage();
-  currentPage++;
-  
-  doc.setFillColor(59, 130, 246);
-  doc.rect(0, pageHeight - 60, pageWidth, 60, 'F');
-  
-  doc.setTextColor(255);
-  doc.setFontSize(14);
-  doc.text('Active Directory Security Assessment', pageWidth / 2, pageHeight - 45, { align: 'center' });
-  
-  doc.setFontSize(10);
-  doc.text(`Anexo Técnico - Datos Raw | Generado el ${formattedDate}`, pageWidth / 2, pageHeight - 35, { align: 'center' });
-  
-  doc.setFontSize(9);
-  doc.text('Documento Confidencial - Solo para uso interno', pageWidth / 2, pageHeight - 25, { align: 'center' });
 
   return doc.output('blob');
 }

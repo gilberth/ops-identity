@@ -41,7 +41,7 @@ export function ExportReportsModal({ open, onOpenChange, assessments }: ExportRe
     setExporting(true);
     try {
       // Obtener los assessments seleccionados
-      const selectedAssessmentData = assessments.filter(a => 
+      const selectedAssessmentData = assessments.filter(a =>
         selectedAssessments.includes(a.id)
       );
 
@@ -105,49 +105,31 @@ export function ExportReportsModal({ open, onOpenChange, assessments }: ExportRe
           <div className="space-y-3">
             <Label className="text-base font-semibold">Tipo de Reporte</Label>
             <RadioGroup value={reportType} onValueChange={setReportType}>
-              <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+              <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer bg-accent/50 border-primary/50">
                 <RadioGroupItem value="executive" id="executive" />
                 <Label htmlFor="executive" className="flex-1 cursor-pointer">
                   <div className="flex items-start gap-3">
                     <FileText className="h-5 w-5 text-blue-500 mt-0.5" />
                     <div>
-                      <div className="font-semibold">Reporte Ejecutivo</div>
+                      <div className="font-semibold">Reporte Ejecutivo (Resumen)</div>
                       <div className="text-sm text-muted-foreground">
-                        Resumen de alto nivel con métricas clave y recomendaciones estratégicas
+                        Resumen de alto nivel con métricas clave y puntuación de riesgo.
                       </div>
                     </div>
                   </div>
                 </Label>
               </div>
 
-              <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
-                <RadioGroupItem value="technical" id="technical" />
-                <Label htmlFor="technical" className="flex-1 cursor-pointer">
-                  <div className="flex items-start gap-3">
-                    <Shield className="h-5 w-5 text-purple-500 mt-0.5" />
-                    <div>
-                      <div className="font-semibold">Reporte Técnico</div>
-                      <div className="text-sm text-muted-foreground">
-                        Detalles técnicos completos con hallazgos, evidencia y pasos de remediación
-                      </div>
+              <div className="p-3 border rounded-lg bg-muted/50 opacity-70">
+                <div className="flex items-start gap-3">
+                  <Shield className="h-5 w-5 text-muted-foreground mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-muted-foreground">Reporte Técnico Completo</div>
+                    <div className="text-sm text-muted-foreground">
+                      Disponible individualmente en la página de detalle de cada assessment (formato DOCX).
                     </div>
                   </div>
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
-                <RadioGroupItem value="compliance" id="compliance" />
-                <Label htmlFor="compliance" className="flex-1 cursor-pointer">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
-                    <div>
-                      <div className="font-semibold">Reporte de Compliance</div>
-                      <div className="text-sm text-muted-foreground">
-                        Enfocado en cumplimiento normativo (NIST, ISO 27001, SOC 2)
-                      </div>
-                    </div>
-                  </div>
-                </Label>
+                </div>
               </div>
             </RadioGroup>
           </div>
@@ -179,7 +161,7 @@ export function ExportReportsModal({ open, onOpenChange, assessments }: ExportRe
                     <div className="flex-1">
                       <div className="font-medium">{assessment.domain}</div>
                       <div className="text-sm text-muted-foreground">
-                        {new Date(assessment.date).toLocaleDateString()} • 
+                        {new Date(assessment.date).toLocaleDateString()} •
                         {assessment.criticalFindings > 0 && ` ${assessment.criticalFindings} críticos`}
                         {assessment.highFindings > 0 && ` ${assessment.highFindings} high`}
                       </div>
