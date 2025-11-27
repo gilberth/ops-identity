@@ -26,7 +26,7 @@ app.use(express.text({ limit: '500mb' }));
 // Constants
 const CATEGORIES = [
   'Users', 'GPOs', 'Computers', 'OUs', 'Groups', 'Domains',
-  'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos'
+  'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos', 'Sites'
 ];
 
 const MAX_PROMPT = 8000;
@@ -585,6 +585,18 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
 8. **Tombstone Lifetime** (< 180 días)
    - Riesgo: Pérdida de datos en backups antiguos
 
+9. **🔴 Sincronización de Tiempo (NTP) Incorrecta**
+   - Analiza la sección `TimeSyncConfig` en los datos.
+   - **PDC Emulator**: Debe usar fuente externa (NTP) confiable (ej. pool.ntp.org).
+     - CRITICAL: Si Source es "Local CMOS Clock", "Free-running System Clock" o "VM IC Time Sync Provider" (en virtual sin config especial).
+   - **Otros DCs**: Deben sincronizar vía NT5DS (jerarquía de dominio).
+     - HIGH: Si Source es "Local CMOS Clock" o no es NT5DS.
+   - Riesgo: Fallos de Kerberos (si desvío > 5 min), problemas de replicación, logs inconsistentes.
+   - Comando verificar: w32tm /query /status /verbose
+   - Comando fix PDC: w32tm /config /manualpeerlist:"0.pool.ntp.org 1.pool.ntp.org" /syncfromflags:manual /reliable:YES /update
+   - Comando fix otros DCs: w32tm /config /syncfromflags:domhier /update
+   - Timeline: Remediar INMEDIATAMENTE (24 horas)
+
 **PARA CADA HALLAZGO, PROPORCIONA:**
 - **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
   Debe ser en MAYÚSCULAS y guiones bajos.
@@ -675,6 +687,18 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
    - Riesgo: Imposible rastrear actividad maliciosa en investigaciones forenses
    - Comando habilitar: Set-DhcpServerAuditLog -Enable $true
    - Timeline: Habilitar en 14 días
+
+4. **⚠️ MEDIUM: Falta de Redundancia (Failover)**
+   - Scopes sin configuración de Failover (Load Balance o Hot Standby).
+   - Riesgo: Pérdida de servicio DHCP y conectividad de red si cae el servidor.
+   - Comando verificar: Get-DhcpServerv4Failover
+   - Recomendación: Configurar DHCP Failover con un socio.
+
+5. **ℹ️ INFO/LOW: Tiempos de Lease Inadecuados**
+   - Lease < 8 horas (redes cableadas estables) o > 24 horas (WiFi invitados/dinámicos).
+   - Analizar `ScopeDetails` -> `LeaseDuration`.
+   - Riesgo: Agotamiento de IPs (lease muy largo) o tráfico excesivo (lease muy corto).
+   - Recomendación: Ajustar según tipo de red (8 días para desktops, 2-4 horas para WiFi).
 
 4. **ℹ️ INFO: DHCP no configurado**
    - Si Scopes = [] y AuthorizedServers = []
@@ -866,7 +890,7 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
   * affected_count: [número de DCs afectados]
   * details: "LMCompatibilityLevel actual: [valores por DC], Baseline recomendado: 5 (NTLMv2 only), Desvío: [análisis], DCs críticos afectados: [lista prioritaria]"`,
 
-    Kerberos: `Eres un especialista en protocolos de autenticación Kerberos y detección de vectores de ataque avanzados en Active Directory.
+      Kerberos: `Eres un especialista en protocolos de autenticación Kerberos y detección de vectores de ataque avanzados en Active Directory.
 
 **⚠️ VALIDACIÓN CRÍTICA PARA KERBEROS:**
 - SIEMPRE revisa KRBTGTPasswordAge - es el indicador más crítico
@@ -1016,14 +1040,46 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
   * affected_objects: ["krbtgt"]
   * affected_count: 1
   * details: "KRBTGTPasswordAge: [DÍAS] días ([AÑOS] años), KRBTGTPasswordLastSet: [FECHA_EXACTA], Última rotación: [FECHA_HUMANA], Desvío sobre baseline: [DÍAS-180] días, Compliance: CRÍTICO - Excede 180 días recomendados por Microsoft, CIS, NIST"`
+},
+
+Sites: `Eres un arquitecto de Active Directory especializado en topología de replicación y diseño de sitios.
+
+**⚠️ CONTEXTO DE ANÁLISIS:**
+La topología de sitios define cómo se replica el tráfico de AD y cómo los clientes encuentran los DCs más cercanos. Una mala configuración causa lentitud en logons, fallos de replicación y tráfico WAN innecesario.
+
+**🎯 BUSCA ESPECÍFICAMENTE:**
+
+1. **🔴 HIGH: Subredes no asociadas a Sitios**
+   - Subredes listadas en 'Subnets' que no tienen propiedad 'Site' o es null.
+   - Riesgo: Clientes en estas subredes pueden autenticarse contra DCs remotos (lento), GPOs pueden no aplicarse correctamente.
+   - Comando verificar: Get-ADReplicationSubnet -Filter * -Properties Site | Where-Object {$_.Site -eq $null}
+   - Comando fix: New-ADReplicationSubnet -Name "x.x.x.x/yy" -Site "NombreSitio"
+   - Timeline: Remediar en 7 días
+
+2. **⚠️ MEDIUM: Sitios sin Controladores de Dominio**
+   - Sitios definidos que no tienen servidores en la lista 'Servers'.
+   - Riesgo: Si hay clientes en ese sitio, cruzarán la WAN para autenticarse.
+   - Recomendación: Instalar DC (RODC si es sucursal insegura) o consolidar sitio.
+
+3. **⚠️ MEDIUM: Sitios con un solo DC**
+   - Falta de redundancia local.
+   - Riesgo: Si cae el único DC, clientes pierden servicio local o usan WAN.
+
+**FORMATO DE REPORTE:**
+- **type_id**: Identificador ÚNICO (ej: SUBNET_NO_SITE, SITE_NO_DC).
+- **Título**: "[N] subredes no asociadas a ningún sitio AD"
+- **Descripción**: Impacto en latencia de logon y tráfico WAN.
+- **Recomendación**: Comandos para asociar subredes.
+- **Evidencia**: Lista de subredes huérfanas.`;
   };
 
-  const instruction = categoryInstructions[cat] || `Analiza los siguientes datos de ${cat} para vulnerabilidades de seguridad.`;
+const instruction = categoryInstructions[cat] || `Analiza los siguientes datos de ${cat} para vulnerabilidades de seguridad.`;
 
-  return `${instruction}
+return `${instruction}
 
-**DATOS A ANALIZAR** (primeros 4000 caracteres):
+<assessment_data>
 ${str(d, 4000)}
+</assessment_data>
 
 **INSTRUCCIONES CRÍTICAS PARA TU RESPUESTA:**
 
@@ -1095,6 +1151,14 @@ Antes de generar cada finding, verifica:
 - Riesgo financiero potencial
 - Cumplimiento regulatorio afectado (GDPR, SOX, HIPAA si aplica)
 - SLA de disponibilidad en riesgo
+
+**🧠 ESTRATEGIA DE RAZONAMIENTO (CHAIN OF THOUGHT):**
+1. **Análisis de Datos:** Revisa paso a paso el bloque <assessment_data>. Identifica qué objetos existen y sus propiedades clave.
+2. **Verificación de Reglas:** Para cada regla de seguridad (ej. "PasswordNeverExpires"), comprueba si algún objeto en los datos la viola explícitamente.
+3. **Filtrado de Evidencia:** Descarta cualquier "posible problema" que no tenga evidencia directa (count > 0).
+4. **Generación de Respuesta:** Construye el JSON final solo con los hallazgos validados.
+
+Primero, piensa paso a paso sobre qué hallazgos tienen evidencia sólida en los datos. Luego, genera el JSON.
 `;
 }
 
