@@ -1461,55 +1461,55 @@ function Get-TombstoneLifetime {
             }
 
             # Identify PDC Emulator
-            $domain = Get - ADDomain
+            $domain = Get-ADDomain
             $pdc = $domain.PDCEmulator
             $timeInfo.PDCEmulator = $pdc
 
-            $dcs = Get - ADDomainController - Filter *
+            $dcs = Get-ADDomainController -Filter *
 
-                foreach($dc in $dcs) {
+            foreach($dc in $dcs) {
                 $dcTime = @{
                     Name = $dc.Name
                     HostName = $dc.HostName
-                    IsPDC = ($dc.HostName - eq $pdc) - or($dc.Name - eq $pdc)
-                Source = "Unknown"
-                Stratum = "Unknown"
-                Type = "Unknown"
-                LastSuccessfulSyncTime = "Unknown"
-                Skew = 0
-            }
-
-            try {
-                    # Use w32tm / query / status / verbose to get details
-                $w32tmStatus = Invoke - Command - ComputerName $dc.HostName - ScriptBlock {
-                    w32tm / query / status / verbose
-                } -ErrorAction SilentlyContinue
-
-                if ($w32tmStatus) {
-                        # Parse w32tm output
-                    if ($w32tmStatus - match "Source: (.*)") { $dcTime.Source = $matches[1].Trim() }
-                    if ($w32tmStatus - match "Stratum: (.*)") { $dcTime.Stratum = $matches[1].Trim() }
-                    if ($w32tmStatus - match "Last Successful Sync Time: (.*)") { $dcTime.LastSuccessfulSyncTime = $matches[1].Trim() }
-                        
-                        # Determine Sync Type(NTP vs NT5DS)
-                        # Usually indicated in Source or by registry, but Source is best indicator
-                    if ($dcTime.Source - match "VM IC Time Sync Provider") {
-                        $dcTime.Type = "Virtual Machine Host (Not Recommended for PDC)"
-                    } elseif($dcTime.Source - match "Local CMOS Clock") {
-                        $dcTime.Type = "Local CMOS Clock (Not Recommended)"
-                    } elseif($dcTime.Source - match "LOCL") {
-                        $dcTime.Type = "Local (Internal)"
-                    } elseif($dcTime.Source - match "Free-running System Clock") {
-                        $dcTime.Type = "Free-running (Critical Issue)"
-                    } else {
-                        $dcTime.Type = "NTP/External"
-                    }
+                    IsPDC = ($dc.HostName -eq $pdc) -or ($dc.Name -eq $pdc)
+                    Source = "Unknown"
+                    Stratum = "Unknown"
+                    Type = "Unknown"
+                    LastSuccessfulSyncTime = "Unknown"
+                    Skew = 0
                 }
 
-                    # Check registry for specific flags(Type)
+                try {
+                    # Use w32tm /query /status /verbose to get details
+                    $w32tmStatus = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                        w32tm /query /status /verbose
+                    } -ErrorAction SilentlyContinue
+
+                    if ($w32tmStatus) {
+                        # Parse w32tm output
+                        if ($w32tmStatus -match "Source: (.*)") { $dcTime.Source = $matches[1].Trim() }
+                        if ($w32tmStatus -match "Stratum: (.*)") { $dcTime.Stratum = $matches[1].Trim() }
+                        if ($w32tmStatus -match "Last Successful Sync Time: (.*)") { $dcTime.LastSuccessfulSyncTime = $matches[1].Trim() }
+                        
+                        # Determine Sync Type (NTP vs NT5DS)
+                        # Usually indicated in Source or by registry, but Source is best indicator
+                        if ($dcTime.Source -match "VM IC Time Sync Provider") {
+                            $dcTime.Type = "Virtual Machine Host (Not Recommended for PDC)"
+                        } elseif ($dcTime.Source -match "Local CMOS Clock") {
+                            $dcTime.Type = "Local CMOS Clock (Not Recommended)"
+                        } elseif ($dcTime.Source -match "LOCL") {
+                            $dcTime.Type = "Local (Internal)"
+                        } elseif ($dcTime.Source -match "Free-running System Clock") {
+                            $dcTime.Type = "Free-running (Critical Issue)"
+                        } else {
+                            $dcTime.Type = "NTP/External"
+                        }
+                    }
+
+                    # Check registry for specific flags (Type)
                     try {
-                        $regType = Invoke - Command - ComputerName $dc.HostName - ScriptBlock {
-                            Get - ItemPropertyValue - Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" - Name "Type" - ErrorAction SilentlyContinue
+                        $regType = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                            Get-ItemPropertyValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" -Name "Type" -ErrorAction SilentlyContinue
                         } -ErrorAction SilentlyContinue
 
                         if ($regType) {
@@ -1517,36 +1517,36 @@ function Get-TombstoneLifetime {
                         }
                     } catch { }
 
-            } catch {
-                $dcTime.Note = "Could not query w32tm on this host"
+                } catch {
+                    $dcTime.Note = "Could not query w32tm on this host"
+                }
+
+                $timeInfo.DomainControllers += $dcTime
             }
 
-            $timeInfo.DomainControllers += $dcTime
+            Write-Host "[+] Time sync configuration collected from $($timeInfo.DomainControllers.Count) DCs" -ForegroundColor Green
+            return $timeInfo
+        } catch {
+            Write-Host "[!] Error analyzing time sync: $_" -ForegroundColor Red
+            return $null
         }
-
-            Write - Host "[+] Time sync configuration collected from $($timeInfo.DomainControllers.Count) DCs" - ForegroundColor Green
-        return $timeInfo
-    } catch {
-        Write - Host "[!] Error analyzing time sync: $_" - ForegroundColor Red
-        return $null
     }
-}
 
 function Get-DNSConfiguration {
-    Write - Host "\`n[*] Analyzing DNS Configuration and Security..." - ForegroundColor Green
+    Write-Host "\`n[*] Analyzing DNS Configuration and Security..." -ForegroundColor Green
     try {
         $dnsInfo = @{
             Zones = @()
-                Forwarders = @()
-                GlobalSettings = @()
-                SecurityIssues = @()
-                ScavengingStatus = @()
-                Method = if($dnsModuleAvailable) { "DNSServer Module" } else { "Limited" }
+            Forwarders = @()
+            GlobalSettings = @()
+            SecurityIssues = @()
+            ScavengingStatus = @()
+            Method = if($dnsModuleAvailable) { "DNSServer Module" } else { "Limited" }
         }
 
-        $dcs = Get - ADDomainController - Filter * | Where - Object { $_.IsGlobalCatalog }
+        $dcs = Get-ADDomainController -Filter * | Where-Object { $_.IsGlobalCatalog }
             
-            # Check if we need WMI fallback(if module not available)
+        # Check if we need WMI fallback (if module not available)
         $useWmi = -not $dnsModuleAvailable
         if ($useWmi) {
             Write - Host "[!] DNSServer module not found. Attempting WMI fallback..." - ForegroundColor Yellow
@@ -2145,7 +2145,7 @@ Write - Host ""
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `AD - Assessment - ${ domain } -${ Date.now() }.ps1`;
+        a.download = `AD - Assessment - ${domain} -${Date.now()}.ps1`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
