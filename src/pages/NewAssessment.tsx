@@ -1451,87 +1451,168 @@ function Get-TombstoneLifetime {
     }
 }
 
-    function Get-DNSConfiguration {
-        Write-Host "\`n[*] Analyzing DNS Configuration and Security..." -ForegroundColor Green
+    function Get-TimeSyncConfiguration {
+        Write-Host "`n[*] Analyzing Time Synchronization(NTP)..." -ForegroundColor Green
         try {
-            $dnsInfo = @{
-                Zones = @()
+            $timeInfo = @{
+                PDCEmulator = ""
+                DomainControllers = @()
+                Status = "Unknown"
+            }
+
+            # Identify PDC Emulator
+            $domain = Get - ADDomain
+            $pdc = $domain.PDCEmulator
+            $timeInfo.PDCEmulator = $pdc
+
+            $dcs = Get - ADDomainController - Filter *
+
+                foreach($dc in $dcs) {
+                $dcTime = @{
+                    Name = $dc.Name
+                    HostName = $dc.HostName
+                    IsPDC = ($dc.HostName - eq $pdc) - or($dc.Name - eq $pdc)
+                Source = "Unknown"
+                Stratum = "Unknown"
+                Type = "Unknown"
+                LastSuccessfulSyncTime = "Unknown"
+                Skew = 0
+            }
+
+            try {
+                    # Use w32tm / query / status / verbose to get details
+                $w32tmStatus = Invoke - Command - ComputerName $dc.HostName - ScriptBlock {
+                    w32tm / query / status / verbose
+                } -ErrorAction SilentlyContinue
+
+                if ($w32tmStatus) {
+                        # Parse w32tm output
+                    if ($w32tmStatus - match "Source: (.*)") { $dcTime.Source = $matches[1].Trim() }
+                    if ($w32tmStatus - match "Stratum: (.*)") { $dcTime.Stratum = $matches[1].Trim() }
+                    if ($w32tmStatus - match "Last Successful Sync Time: (.*)") { $dcTime.LastSuccessfulSyncTime = $matches[1].Trim() }
+                        
+                        # Determine Sync Type(NTP vs NT5DS)
+                        # Usually indicated in Source or by registry, but Source is best indicator
+                    if ($dcTime.Source - match "VM IC Time Sync Provider") {
+                        $dcTime.Type = "Virtual Machine Host (Not Recommended for PDC)"
+                    } elseif($dcTime.Source - match "Local CMOS Clock") {
+                        $dcTime.Type = "Local CMOS Clock (Not Recommended)"
+                    } elseif($dcTime.Source - match "LOCL") {
+                        $dcTime.Type = "Local (Internal)"
+                    } elseif($dcTime.Source - match "Free-running System Clock") {
+                        $dcTime.Type = "Free-running (Critical Issue)"
+                    } else {
+                        $dcTime.Type = "NTP/External"
+                    }
+                }
+
+                    # Check registry for specific flags(Type)
+                    try {
+                        $regType = Invoke - Command - ComputerName $dc.HostName - ScriptBlock {
+                            Get - ItemPropertyValue - Path "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" - Name "Type" - ErrorAction SilentlyContinue
+                        } -ErrorAction SilentlyContinue
+
+                        if ($regType) {
+                            $dcTime.RegistryType = $regType # NT5DS, NTP, NoSync, AllSync
+                        }
+                    } catch { }
+
+            } catch {
+                $dcTime.Note = "Could not query w32tm on this host"
+            }
+
+            $timeInfo.DomainControllers += $dcTime
+        }
+
+            Write - Host "[+] Time sync configuration collected from $($timeInfo.DomainControllers.Count) DCs" - ForegroundColor Green
+        return $timeInfo
+    } catch {
+        Write - Host "[!] Error analyzing time sync: $_" - ForegroundColor Red
+        return $null
+    }
+}
+
+function Get-DNSConfiguration {
+    Write - Host "\`n[*] Analyzing DNS Configuration and Security..." - ForegroundColor Green
+    try {
+        $dnsInfo = @{
+            Zones = @()
                 Forwarders = @()
                 GlobalSettings = @()
                 SecurityIssues = @()
                 ScavengingStatus = @()
                 Method = if($dnsModuleAvailable) { "DNSServer Module" } else { "Limited" }
-            }
+        }
 
-            $dcs = Get-ADDomainController -Filter * | Where-Object { $_.IsGlobalCatalog }
+        $dcs = Get - ADDomainController - Filter * | Where - Object { $_.IsGlobalCatalog }
             
-            # Check if we need WMI fallback (if module not available)
-            $useWmi = -not $dnsModuleAvailable
-            if ($useWmi) {
-                Write-Host "[!] DNSServer module not found. Attempting WMI fallback..." -ForegroundColor Yellow
-                $dnsInfo.Method = "WMI (Legacy)"
-            }
+            # Check if we need WMI fallback(if module not available)
+        $useWmi = -not $dnsModuleAvailable
+        if ($useWmi) {
+            Write - Host "[!] DNSServer module not found. Attempting WMI fallback..." - ForegroundColor Yellow
+            $dnsInfo.Method = "WMI (Legacy)"
+        }
 
-            foreach($dc in $dcs) {
-                try {
-                    Write-Host "[*] Analyzing DNS on $($dc.Name)..." -ForegroundColor Cyan
-                    
-                    if ($useWmi) {
-                        # WMI FALLBACK FOR LEGACY SYSTEMS (Server 2008 R2 / No RSAT)
-                        try {
-                            $wmiZones = Get-WmiObject -Namespace root\MicrosoftDNS -Class MicrosoftDNS_Zone -ComputerName $dc.HostName -ErrorAction SilentlyContinue
-                            
-                            if ($wmiZones) {
-                                foreach($zone in $wmiZones) {
+        foreach($dc in $dcs) {
+            try {
+                Write - Host "[*] Analyzing DNS on $($dc.Name)..." - ForegroundColor Cyan
+
+                if ($useWmi) {
+                        # WMI FALLBACK FOR LEGACY SYSTEMS(Server 2008 R2 / No RSAT)
+                    try {
+                        $wmiZones = Get - WmiObject - Namespace root\MicrosoftDNS - Class MicrosoftDNS_Zone - ComputerName $dc.HostName - ErrorAction SilentlyContinue
+
+                        if ($wmiZones) {
+                            foreach($zone in $wmiZones) {
                                     # Map WMI properties to standard structure
-                                    $zoneType = switch($zone.ZoneType) {
+                                $zoneType = switch ($zone.ZoneType) {
                                         0 { "Cache" }
-                                        1 { "Primary" }
-                                        2 { "Secondary" }
-                                        3 { "Stub" }
-                                        4 { "Forwarder" }
+                                1 { "Primary" }
+                                2 { "Secondary" }
+                                3 { "Stub" }
+                                4 { "Forwarder" }
                                         default { "Unknown" }
-                                    }
-                                    
-                                    $dnsInfo.Zones += @{
-                                        DCName = $dc.Name
+                            }
+
+                            $dnsInfo.Zones += @{
+                                DCName = $dc.Name
                                         ZoneName = $zone.Name
                                         ZoneType = $zoneType
                                         IsReverseLookupZone = $zone.Reverse
-                                        DynamicUpdate = if ($zone.AllowUpdate -eq 2) { "Secure" } elseif ($zone.AllowUpdate -eq 1) { "NonsecureAndSecure" } else { "None" }
-                                        IsDSIntegrated = $zone.DsIntegrated
-                                        IsAutoCreated = $zone.AutoCreated
-                                        IsPaused = $zone.Paused
-                                        IsShutdown = $zone.Shutdown
-                                        ZoneFile = $zone.DataFile
-                                        Method = "WMI"
-                                    }
-                                }
+                                        DynamicUpdate = if($zone.AllowUpdate - eq 2) { "Secure" } elseif($zone.AllowUpdate - eq 1) { "NonsecureAndSecure" } else { "None" }
+                            IsDSIntegrated = $zone.DsIntegrated
+                            IsAutoCreated = $zone.AutoCreated
+                            IsPaused = $zone.Paused
+                            IsShutdown = $zone.Shutdown
+                            ZoneFile = $zone.DataFile
+                            Method = "WMI"
+                        }
+                    }
                             }
                             
                             # Get Server Settings via WMI
-                            $wmiServer = Get-WmiObject -Namespace root\MicrosoftDNS -Class MicrosoftDNS_Server -ComputerName $dc.HostName -ErrorAction SilentlyContinue
-                            if ($wmiServer) {
-                                $dnsInfo.GlobalSettings += @{
-                                    DCName = $dc.Name
+                $wmiServer = Get - WmiObject - Namespace root\MicrosoftDNS - Class MicrosoftDNS_Server - ComputerName $dc.HostName - ErrorAction SilentlyContinue
+                if ($wmiServer) {
+                    $dnsInfo.GlobalSettings += @{
+                        DCName = $dc.Name
                                     RecursionDisabled = $wmiServer.NoRecursion
                                     RoundRobinEnabled = $wmiServer.RoundRobin
                                     SecureResponses = $wmiServer.SecureResponses
                                     Forwarders = @($wmiServer.Forwarders)
-                                }
-                            }
-                        } catch {
-                            Write-Host "[!] Could not query DNS via WMI on $($dc.Name): $_" -ForegroundColor Yellow
-                        }
-                    } else {
-                        # MODERN POWERSHELL (RSAT)
+                    }
+                }
+            } catch {
+                Write - Host "[!] Could not query DNS via WMI on $($dc.Name): $_" - ForegroundColor Yellow
+            }
+        } else {
+                        # MODERN POWERSHELL(RSAT)
                         # Get DNS Server Settings
-                        $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+            $dnsServer = Get - DnsServer - ComputerName $dc.HostName - ErrorAction SilentlyContinue
 
-                        if ($dnsServer) {
+            if ($dnsServer) {
                         # Global DNS Server Settings
-                            $globalSettings = @{
-                                DCName = $dc.Name
+                $globalSettings = @{
+                    DCName = $dc.Name
                             Recursion = $dnsServer.ServerSetting.DisableRecursion
                             RecursionTimeout = $dnsServer.ServerSetting.RecursionTimeout
                             SecureResponses = $dnsServer.ServerSetting.SecureResponses
@@ -1550,99 +1631,99 @@ function Get-TombstoneLifetime {
                             EnableEDnsProbes = $dnsServer.ServerSetting.EnableEDnsProbes
                             EventLogLevel = $dnsServer.ServerSetting.EventLogLevel
                             ListenAddresses = @($dnsServer.ServerSetting.ListenAddresses.IPAddressToString)
-                            }
+                }
                         
                         # Security Checks
-                            $securityIssues = @()
+                $securityIssues = @()
                         
                         # Check 1: Recursion enabled(potential DNS amplification attacks)
-                            if (-not $dnsServer.ServerSetting.DisableRecursion) {
-                                $securityIssues += "Recursion is ENABLED - Risk of DNS amplification attacks"
-                            }
+                if (-not $dnsServer.ServerSetting.DisableRecursion) {
+                    $securityIssues += "Recursion is ENABLED - Risk of DNS amplification attacks"
+                }
                         
                         # Check 2: DNSSEC not enabled
-                            if (-not $dnsServer.ServerSetting.EnableDnsSec) {
-                                $securityIssues += "DNSSEC is DISABLED - Risk of cache poisoning"
-                            }
+                if (-not $dnsServer.ServerSetting.EnableDnsSec) {
+                    $securityIssues += "DNSSEC is DISABLED - Risk of cache poisoning"
+                }
                         
                         # Check 3: Scavenging not configured
-                            if ($dnsServer.ServerSetting.ScavengingInterval -eq 0) {
-                                $securityIssues += "DNS Scavenging is DISABLED - Stale records accumulate"
-                            }
+                if ($dnsServer.ServerSetting.ScavengingInterval - eq 0) {
+                    $securityIssues += "DNS Scavenging is DISABLED - Stale records accumulate"
+                }
                         
                         # Check 4: Event logging too low
-                            if ($dnsServer.ServerSetting.EventLogLevel -lt 4) {
-                                $securityIssues += "Event logging level too low - Insufficient audit trail"
-                            }
+                if ($dnsServer.ServerSetting.EventLogLevel - lt 4) {
+                    $securityIssues += "Event logging level too low - Insufficient audit trail"
+                }
 
-                            $globalSettings.SecurityIssues = $securityIssues
-                            $dnsInfo.GlobalSettings += $globalSettings
+                $globalSettings.SecurityIssues = $securityIssues
+                $dnsInfo.GlobalSettings += $globalSettings
                         
                         # Get DNS zones with detailed security analysis
-                            $zones = Get-DnsServerZone -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                $zones = Get - DnsServerZone - ComputerName $dc.HostName - ErrorAction SilentlyContinue
 
-                            foreach($zone in $zones) {
-                                $zoneIssues = @()
+                foreach($zone in $zones) {
+                    $zoneIssues = @()
                             
                             # Check zone transfer settings
-                                $zoneTransfer = "Unknown"
-                                $zoneTransferRisk = "UNKNOWN"
+                    $zoneTransfer = "Unknown"
+                    $zoneTransferRisk = "UNKNOWN"
 
-                                try {
-                                    if ($zone.SecureSecondaries -eq "NoTransfer") {
-                                        $zoneTransfer = "Disabled"
-                                        $zoneTransferRisk = "LOW"
-                                    } elseif($zone.SecureSecondaries -eq "TransferAnyServer") {
-                                        $zoneTransfer = "Any Server (INSECURE)"
-                                        $zoneTransferRisk = "CRITICAL"
-                                        $zoneIssues += "Zone transfers allowed to ANY server - CRITICAL security risk"
-                                    } elseif($zone.SecureSecondaries -eq "TransferToZoneNameServer") {
-                                        $zoneTransfer = "Only to Name Servers"
-                                        $zoneTransferRisk = "LOW"
-                                    } else {
-                                        $zoneTransfer = "Restricted to specific servers"
-                                        $zoneTransferRisk = "LOW"
-                                    }
-                                } catch {
-                                    $zoneTransfer = "Error checking"
-                                }
+                    try {
+                        if ($zone.SecureSecondaries - eq "NoTransfer") {
+                            $zoneTransfer = "Disabled"
+                            $zoneTransferRisk = "LOW"
+                        } elseif($zone.SecureSecondaries - eq "TransferAnyServer") {
+                            $zoneTransfer = "Any Server (INSECURE)"
+                            $zoneTransferRisk = "CRITICAL"
+                            $zoneIssues += "Zone transfers allowed to ANY server - CRITICAL security risk"
+                        } elseif($zone.SecureSecondaries - eq "TransferToZoneNameServer") {
+                            $zoneTransfer = "Only to Name Servers"
+                            $zoneTransferRisk = "LOW"
+                        } else {
+                            $zoneTransfer = "Restricted to specific servers"
+                            $zoneTransferRisk = "LOW"
+                        }
+                    } catch {
+                        $zoneTransfer = "Error checking"
+                    }
                             
                             # Check dynamic updates
-                                $dynamicUpdateRisk = "LOW"
-                                if ($zone.DynamicUpdate -eq "NonsecureAndSecure") {
-                                    $dynamicUpdateRisk = "HIGH"
-                                    $zoneIssues += "Non-secure dynamic updates allowed - Risk of DNS poisoning"
-                                } elseif($zone.DynamicUpdate -eq "None" -and -not $zone.IsReverseLookupZone) {
-                                    $dynamicUpdateRisk = "MEDIUM"
-                                    $zoneIssues += "Dynamic updates disabled - May cause operational issues"
-                                }
+                    $dynamicUpdateRisk = "LOW"
+                    if ($zone.DynamicUpdate - eq "NonsecureAndSecure") {
+                        $dynamicUpdateRisk = "HIGH"
+                        $zoneIssues += "Non-secure dynamic updates allowed - Risk of DNS poisoning"
+                    } elseif($zone.DynamicUpdate - eq "None" - and - not $zone.IsReverseLookupZone) {
+                        $dynamicUpdateRisk = "MEDIUM"
+                        $zoneIssues += "Dynamic updates disabled - May cause operational issues"
+                    }
                             
                             # Check DNSSEC
-                                $dnssecStatus = "Not Signed"
-                                $dnssecRisk = "HIGH"
-                                try {
-                                    if ($zone.IsSigned) {
-                                        $dnssecStatus = "Signed"
-                                        $dnssecRisk = "LOW"
-                                    } else {
-                                        $zoneIssues += "Zone not signed with DNSSEC - Vulnerable to spoofing"
-                                    }
-                                } catch { }
+                    $dnssecStatus = "Not Signed"
+                    $dnssecRisk = "HIGH"
+                    try {
+                        if ($zone.IsSigned) {
+                            $dnssecStatus = "Signed"
+                            $dnssecRisk = "LOW"
+                        } else {
+                            $zoneIssues += "Zone not signed with DNSSEC - Vulnerable to spoofing"
+                        }
+                    } catch { }
                             
                             # Check aging / scavenging
-                                $agingEnabled = $zone.Aging
-                                if (-not $agingEnabled -and -not $zone.IsReverseLookupZone -and -not $zone.IsAutoCreated) {
-                                    $zoneIssues += "Aging/Scavenging disabled - Stale records will accumulate"
-                                }
+                    $agingEnabled = $zone.Aging
+                    if (-not $agingEnabled - and - not $zone.IsReverseLookupZone - and - not $zone.IsAutoCreated) {
+                        $zoneIssues += "Aging/Scavenging disabled - Stale records will accumulate"
+                    }
                             
                             # Get zone statistics if available
                             $zoneStats = $null
-                                try {
-                                    $zoneStats = Get-DnsServerStatistics -ComputerName $dc.HostName -ZoneName $zone.ZoneName -ErrorAction SilentlyContinue
-                                } catch { }
+                    try {
+                        $zoneStats = Get - DnsServerStatistics - ComputerName $dc.HostName - ZoneName $zone.ZoneName - ErrorAction SilentlyContinue
+                    } catch { }
 
-                                $dnsInfo.Zones += @{
-                                    DCName = $dc.Name
+                    $dnsInfo.Zones += @{
+                        DCName = $dc.Name
                                 ZoneName = $zone.ZoneName
                                 ZoneType = $zone.ZoneType.ToString()
                                 IsReverseLookupZone = $zone.IsReverseLookupZone
@@ -1663,168 +1744,168 @@ function Get-TombstoneLifetime {
                                 MasterServers = @($zone.MasterServers.IPAddressToString)
                                 SecurityIssues = $zoneIssues
                                 ZoneFile = $zone.ZoneFile
-                                }
-                            }
+                    }
+                }
 
                         # Get forwarders and conditional forwarders
-                            if ($dnsServer.ServerSetting.Forwarders) {
-                                $forwarderInfo = @{
-                                    DCName = $dc.Name
+                if ($dnsServer.ServerSetting.Forwarders) {
+                    $forwarderInfo = @{
+                        DCName = $dc.Name
                                 Forwarders = @($dnsServer.ServerSetting.Forwarders.IPAddressToString)
                                 ForwardingTimeout = $dnsServer.ServerSetting.ForwardingTimeout
                                 IsSlave = $dnsServer.ServerSetting.IsSlave
-                                }
+                    }
                             
                             # Check if using public DNS(potential data leakage)
-                                $publicDNS = @("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "208.67.222.222", "208.67.220.220")
-                                $usesPublicDNS = $false
-                                foreach($fwd in $dnsServer.ServerSetting.Forwarders.IPAddressToString) {
-                                    if ($publicDNS -contains $fwd) {
-                                        $usesPublicDNS = $true
-                                        break
-                                    }
-                                }
+                    $publicDNS = @("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "208.67.222.222", "208.67.220.220")
+                    $usesPublicDNS = $false
+                    foreach($fwd in $dnsServer.ServerSetting.Forwarders.IPAddressToString) {
+                        if ($publicDNS - contains $fwd) {
+                            $usesPublicDNS = $true
+                            break
+                        }
+                    }
 
-                                if ($usesPublicDNS) {
-                                    $forwarderInfo.SecurityWarning = "Using public DNS forwarders - Potential data leakage risk"
-                                }
+                    if ($usesPublicDNS) {
+                        $forwarderInfo.SecurityWarning = "Using public DNS forwarders - Potential data leakage risk"
+                    }
 
-                                $dnsInfo.Forwarders += $forwarderInfo
-                            }
+                    $dnsInfo.Forwarders += $forwarderInfo
+                }
                         
                         # Get conditional forwarders
-                            try {
-                                $conditionalForwarders = Get-DnsServerZone -ComputerName $dc.HostName | Where-Object { $_.ZoneType -eq "Forwarder" }
-                                if ($conditionalForwarders) {
-                                    foreach($cf in $conditionalForwarders) {
-                                        $dnsInfo.Forwarders += @{
-                                            DCName = $dc.Name
+                try {
+                    $conditionalForwarders = Get - DnsServerZone - ComputerName $dc.HostName | Where - Object { $_.ZoneType - eq "Forwarder" }
+                    if ($conditionalForwarders) {
+                        foreach($cf in $conditionalForwarders) {
+                            $dnsInfo.Forwarders += @{
+                                DCName = $dc.Name
                                         Type = "Conditional"
                                         ZoneName = $cf.ZoneName
                                         MasterServers = @($cf.MasterServers.IPAddressToString)
-                                        }
-                                    }
-                                }
-                            } catch { }
-                        
-                        # Check DNS cache
-                            try {
-                                $cacheStats = Get-DnsServerStatistics -ComputerName $dc.HostName -ErrorAction SilentlyContinue
-                                if ($cacheStats) {
-                                    $dnsInfo.GlobalSettings[-1].CacheStats = @{
-                                        CacheHits = $cacheStats.CacheHits
-                                    CacheMisses = $cacheStats.CacheMisses
-                                    CacheFlushes = $cacheStats.CacheFlushes
-                                    }
-                                }
-                            } catch { }
+                            }
                         }
                     }
-                } catch {
-                    Write-Host "[!] Could not query DNS on $($dc.Name): $_" -ForegroundColor Yellow
-                }
+                } catch { }
+                        
+                        # Check DNS cache
+                try {
+                    $cacheStats = Get - DnsServerStatistics - ComputerName $dc.HostName - ErrorAction SilentlyContinue
+                    if ($cacheStats) {
+                        $dnsInfo.GlobalSettings[-1].CacheStats = @{
+                            CacheHits = $cacheStats.CacheHits
+                                    CacheMisses = $cacheStats.CacheMisses
+                                    CacheFlushes = $cacheStats.CacheFlushes
+                        }
+                    }
+                } catch { }
             }
-
-            Write-Host "[+] DNS configuration collected: $($dnsInfo.Zones.Count) zones, $($dnsInfo.SecurityIssues.Count) security issues" -ForegroundColor Green
-            return $dnsInfo
-        } catch {
-            Write-Host "[!] Error analyzing DNS configuration: $_" -ForegroundColor Red
-            return $null
         }
+    } catch {
+        Write - Host "[!] Could not query DNS on $($dc.Name): $_" - ForegroundColor Yellow
     }
-    function Get-DHCPConfiguration {
-        Write-Host "\`n[*] Analyzing DHCP Configuration..." -ForegroundColor Green
-        try {
-            $dhcpInfo = @{
-                AuthorizedServers = @()
+}
+
+Write - Host "[+] DNS configuration collected: $($dnsInfo.Zones.Count) zones, $($dnsInfo.SecurityIssues.Count) security issues" - ForegroundColor Green
+return $dnsInfo
+        } catch {
+    Write - Host "[!] Error analyzing DNS configuration: $_" - ForegroundColor Red
+    return $null
+}
+    }
+function Get-DHCPConfiguration {
+    Write - Host "\`n[*] Analyzing DHCP Configuration..." - ForegroundColor Green
+    try {
+        $dhcpInfo = @{
+            AuthorizedServers = @()
                 Scopes = @()
                 FailoverConfig = @()
                 Method = if($dhcpModuleAvailable) { "DHCPServer Module" } else { "Limited" }
-            }
+        }
 
             # Check if we need Netsh fallback
-            $useNetsh = -not $dhcpModuleAvailable
-            if ($useNetsh) {
-                Write-Host "[!] DHCPServer module not found. Attempting Netsh fallback..." -ForegroundColor Yellow
-                $dhcpInfo.Method = "Netsh (Legacy)"
-            }
+        $useNetsh = -not $dhcpModuleAvailable
+        if ($useNetsh) {
+            Write - Host "[!] DHCPServer module not found. Attempting Netsh fallback..." - ForegroundColor Yellow
+            $dhcpInfo.Method = "Netsh (Legacy)"
+        }
 
-            if ($useNetsh) {
+        if ($useNetsh) {
                 # NETSH FALLBACK FOR LEGACY SYSTEMS
-                try {
+            try {
                     # Get authorized servers from AD
-                    $config = Get-ADObject -Filter 'objectClass -eq "dHCPClass"' -SearchBase "CN=NetServices,CN=Services,CN=Configuration,$((Get-ADRootDSE).rootDomainNamingContext)" -Properties dhcpServers
-                    
-                    if ($config.dhcpServers) {
-                        foreach ($serverString in $config.dhcpServers) {
-                            # Parse server string (format: i.p.a.d.d.r.e.s.s$name)
-                            if ($serverString -match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})") {
-                                $ip = $matches[1]
-                                $dhcpInfo.AuthorizedServers += @{
-                                    IPAddress = $ip
+                $config = Get - ADObject - Filter 'objectClass -eq "dHCPClass"' - SearchBase "CN=NetServices,CN=Services,CN=Configuration,$((Get-ADRootDSE).rootDomainNamingContext)" - Properties dhcpServers
+
+                if ($config.dhcpServers) {
+                    foreach($serverString in $config.dhcpServers) {
+                            # Parse server string(format: i.p.a.d.d.r.e.s.s$name)
+                        if ($serverString - match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})") {
+                            $ip = $matches[1]
+                            $dhcpInfo.AuthorizedServers += @{
+                                IPAddress = $ip
                                     Method = "AD Configuration"
-                                }
+                            }
                                 
                                 # Try to get scopes via netsh from this server
-                                try {
-                                    $netshOutput = Invoke-Command -ComputerName $ip -ScriptBlock { netsh dhcp server show scope } -ErrorAction SilentlyContinue
-                                    
-                                    if ($netshOutput) {
-                                        foreach ($line in $netshOutput) {
-                                            if ($line -match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(.+)\s+(Active|Inactive)") {
-                                                $dhcpInfo.Scopes += @{
-                                                    ServerName = $ip
+                            try {
+                                $netshOutput = Invoke - Command - ComputerName $ip - ScriptBlock { netsh dhcp server show scope } -ErrorAction SilentlyContinue
+
+                                if ($netshOutput) {
+                                    foreach($line in $netshOutput) {
+                                        if ($line - match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(.+)\s+(Active|Inactive)") {
+                                            $dhcpInfo.Scopes += @{
+                                                ServerName = $ip
                                                     ScopeId = $matches[1]
                                                     SubnetMask = $matches[2]
                                                     Name = $matches[3].Trim()
                                                     State = $matches[4]
                                                     Method = "Netsh"
-                                                }
                                             }
                                         }
                                     }
-                                } catch {
-                                    Write-Host "[!] Could not query DHCP via netsh on $ip" -ForegroundColor Yellow
                                 }
+                            } catch {
+                                Write - Host "[!] Could not query DHCP via netsh on $ip" - ForegroundColor Yellow
                             }
                         }
                     }
-                } catch {
-                    Write-Host "[!] Error querying AD for DHCP servers: $_" -ForegroundColor Yellow
                 }
-            } else {
-                # MODERN POWERSHELL (RSAT)
+            } catch {
+                Write - Host "[!] Error querying AD for DHCP servers: $_" - ForegroundColor Yellow
+            }
+        } else {
+                # MODERN POWERSHELL(RSAT)
                 # Get authorized DHCP servers
-                try {
-                    $authorizedServers = Get-DhcpServerInDC -ErrorAction SilentlyContinue
-                    foreach($server in $authorizedServers) {
-                        $dhcpInfo.AuthorizedServers += @{
-                            DNSName = $server.DNSName
+            try {
+                $authorizedServers = Get - DhcpServerInDC - ErrorAction SilentlyContinue
+                foreach($server in $authorizedServers) {
+                    $dhcpInfo.AuthorizedServers += @{
+                        DNSName = $server.DNSName
                             IPAddress = $server.IPAddress.ToString()
-                        }
+                    }
 
                         # Get scopes from each server
-                        try {
-                            $scopes = Get-DhcpServerv4Scope -ComputerName $server.DNSName -ErrorAction SilentlyContinue
-                            foreach($scope in $scopes) {
-                                $scopeStats = Get-DhcpServerv4ScopeStatistics -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+                    try {
+                        $scopes = Get - DhcpServerv4Scope - ComputerName $server.DNSName - ErrorAction SilentlyContinue
+                        foreach($scope in $scopes) {
+                            $scopeStats = Get - DhcpServerv4ScopeStatistics - ComputerName $server.DNSName - ScopeId $scope.ScopeId - ErrorAction SilentlyContinue
                             
                                 # Get reservations
-                                $reservations = Get-DhcpServerv4Reservation -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
+                            $reservations = Get - DhcpServerv4Reservation - ComputerName $server.DNSName - ScopeId $scope.ScopeId - ErrorAction SilentlyContinue
 
                                 # Check for security issues
                                 $scopeIssues = @()
                                 
                                 # Check 1: DNS Dynamic Updates credentials
-                                try {
-                                    $dnsCreds = Get-DhcpServerv4DnsSetting -ComputerName $server.DNSName -ScopeId $scope.ScopeId -ErrorAction SilentlyContinue
-                                    if ($dnsCreds.DynamicUpdate -eq "Always") {
-                                        $scopeIssues += "Dynamic DNS updates set to ALWAYS - Potential security risk"
-                                    }
-                                } catch {}
+                            try {
+                                $dnsCreds = Get - DhcpServerv4DnsSetting - ComputerName $server.DNSName - ScopeId $scope.ScopeId - ErrorAction SilentlyContinue
+                                if ($dnsCreds.DynamicUpdate - eq "Always") {
+                                    $scopeIssues += "Dynamic DNS updates set to ALWAYS - Potential security risk"
+                                }
+                            } catch { }
 
-                                $dhcpInfo.Scopes += @{
-                                    ServerName = $server.DNSName
+                            $dhcpInfo.Scopes += @{
+                                ServerName = $server.DNSName
                                     ScopeId = $scope.ScopeId.ToString()
                                     Name = $scope.Name
                                     SubnetMask = $scope.SubnetMask.ToString()
@@ -1837,225 +1918,226 @@ function Get-TombstoneLifetime {
                                     AddressesFree = if($scopeStats) { $scopeStats.AddressesFree } else { 0 }
                                     ReservationCount = if($reservations) { $reservations.Count } else { 0 }
                                     SecurityIssues = $scopeIssues
-                                }
                             }
+                        }
 
                             # Get failover configuration
-                            $failovers = Get-DhcpServerv4Failover -ComputerName $server.DNSName -ErrorAction SilentlyContinue
-                            foreach($failover in $failovers) {
-                                $dhcpInfo.FailoverConfig += @{
-                                    ServerName = $server.DNSName
+                        $failovers = Get - DhcpServerv4Failover - ComputerName $server.DNSName - ErrorAction SilentlyContinue
+                        foreach($failover in $failovers) {
+                            $dhcpInfo.FailoverConfig += @{
+                                ServerName = $server.DNSName
                                     Name = $failover.Name
                                     PartnerServer = $failover.PartnerServer
                                     Mode = $failover.Mode.ToString()
                                     State = $failover.State.ToString()
                                     ScopeIds = @($failover.ScopeId)
-                                }
                             }
+                        }
                             
                             # Check Audit Logs
-                            try {
-                                $auditLog = Get-DhcpServerAuditLog -ComputerName $server.DNSName -ErrorAction SilentlyContinue
-                                if (-not $auditLog.Enable) {
-                                    $dhcpInfo.AuthorizedServers[-1].SecurityWarning = "DHCP Audit Logging is DISABLED"
-                                }
-                            } catch {}
-                            
-                        } catch {
-                            Write-Host "[!] Could not query scopes from $($server.DNSName)" -ForegroundColor Yellow
-                        }
-                    }
-                } catch {
-                    $dhcpInfo.Note = "DHCP cmdlets not available or no authorized servers found"
-                }
-            }
+                        try {
+                            $auditLog = Get - DhcpServerAuditLog - ComputerName $server.DNSName - ErrorAction SilentlyContinue
+                            if (-not $auditLog.Enable) {
+                                $dhcpInfo.AuthorizedServers[-1].SecurityWarning = "DHCP Audit Logging is DISABLED"
+                            }
+                        } catch { }
 
-            Write-Host "[+] DHCP configuration collected: $($dhcpInfo.AuthorizedServers.Count) servers, $($dhcpInfo.Scopes.Count) scopes" -ForegroundColor Green
-            return $dhcpInfo
-        } catch {
-            Write-Host "[!] Error analyzing DHCP configuration: $_" -ForegroundColor Red
-            return $null
+                    } catch {
+                        Write - Host "[!] Could not query scopes from $($server.DNSName)" - ForegroundColor Yellow
+                    }
+                }
+            } catch {
+                $dhcpInfo.Note = "DHCP cmdlets not available or no authorized servers found"
+            }
         }
+
+        Write - Host "[+] DHCP configuration collected: $($dhcpInfo.AuthorizedServers.Count) servers, $($dhcpInfo.Scopes.Count) scopes" - ForegroundColor Green
+        return $dhcpInfo
+    } catch {
+        Write - Host "[!] Error analyzing DHCP configuration: $_" - ForegroundColor Red
+        return $null
     }
+}
 
 # =============================================================================
 # MAIN DATA COLLECTION
 # =============================================================================
 
-        Write-Host "\`n" + ("=" * 80) -ForegroundColor Cyan
-    Write-Host "Starting Data Collection" -ForegroundColor Cyan
-    Write-Host("=" * 80) -ForegroundColor Cyan
+    Write - Host "\`n" + ("=" * 80) - ForegroundColor Cyan
+Write - Host "Starting Data Collection" - ForegroundColor Cyan
+Write - Host("=" * 80) - ForegroundColor Cyan
 
-    # Check for available modules (Global Scope)
-    $dnsModuleAvailable = Get-Module -ListAvailable -Name DnsServer
-    $dhcpModuleAvailable = Get-Module -ListAvailable -Name DhcpServer
-    
-    if (-not $dnsModuleAvailable) {
-        Write-Host "[!] DnsServer module not found. Will use WMI fallback." -ForegroundColor Yellow
-    }
-    if (-not $dhcpModuleAvailable) {
-        Write-Host "[!] DhcpServer module not found. Will use Netsh fallback." -ForegroundColor Yellow
-    }
+    # Check for available modules(Global Scope)
+    $dnsModuleAvailable = Get - Module - ListAvailable - Name DnsServer
+$dhcpModuleAvailable = Get - Module - ListAvailable - Name DhcpServer
 
-    $collectedData = @{
-        AssessmentId = $AssessmentId
+if (-not $dnsModuleAvailable) {
+    Write - Host "[!] DnsServer module not found. Will use WMI fallback." - ForegroundColor Yellow
+}
+if (-not $dhcpModuleAvailable) {
+    Write - Host "[!] DhcpServer module not found. Will use Netsh fallback." - ForegroundColor Yellow
+}
+
+$collectedData = @{
+    AssessmentId = $AssessmentId
     DomainName = $DomainName
-    CollectionDate = (Get-Date).ToUniversalTime()
-    CollectorHostname = $env:COMPUTERNAME
-    CollectorUsername = $env:USERNAME
-    }
+    CollectionDate = (Get - Date).ToUniversalTime()
+    CollectorHostname = $env: COMPUTERNAME
+    CollectorUsername = $env: USERNAME
+}
 
 # Collect all data
-    $collectedData.DomainInfo = Get-DomainInformation
-    $collectedData.DomainControllers = Get-DomainControllerInfo
-    $collectedData.SiteTopology = Get-ADSiteTopology
-    $collectedData.Trusts = Get-TrustRelationships
-    $collectedData.Users = Get-AllADUsers
-    $collectedData.Computers = Get-AllADComputers
-    $collectedData.Groups = Get-AllADGroups
-    $collectedData.PasswordPolicies = Get-PasswordPolicies
-    $collectedData.GPOs = Get-GPOInventory
-    $collectedData.KerberosConfig = Get-KerberosConfiguration
-    $collectedData.LAPS = Get-LAPSStatus
+$collectedData.DomainInfo = Get - DomainInformation
+$collectedData.DomainControllers = Get - DomainControllerInfo
+$collectedData.SiteTopology = Get - ADSiteTopology
+$collectedData.Trusts = Get - TrustRelationships
+$collectedData.Users = Get - AllADUsers
+$collectedData.Computers = Get - AllADComputers
+$collectedData.Groups = Get - AllADGroups
+$collectedData.PasswordPolicies = Get - PasswordPolicies
+$collectedData.GPOs = Get - GPOInventory
+$collectedData.KerberosConfig = Get - KerberosConfiguration
+$collectedData.LAPS = Get - LAPSStatus
 
 # Advanced Security Analysis
-    $collectedData.ReplicationStatus = Get-ReplicationStatus
-    $collectedData.DCSyncPermissions = Get-DCSyncPermissions
-    $collectedData.RC4EncryptionTypes = Get-RC4EncryptionTypes
-    $collectedData.OldPasswords = Get-OldPasswords
-    $collectedData.RecycleBinStatus = Get-RecycleBinStatus
-    $collectedData.AdminCountObjects = Get-AdminCountObjects
+$collectedData.ReplicationStatus = Get - ReplicationStatus
+$collectedData.DCSyncPermissions = Get - DCSyncPermissions
+$collectedData.RC4EncryptionTypes = Get - RC4EncryptionTypes
+$collectedData.OldPasswords = Get - OldPasswords
+$collectedData.RecycleBinStatus = Get - RecycleBinStatus
+$collectedData.AdminCountObjects = Get - AdminCountObjects
 
 # Additional Security Tests
-    $collectedData.SMBv1Status = Get-SMBv1Status
-    $collectedData.ProtectedUsers = Get-ProtectedUsersGroup
-    $collectedData.UnconstrainedDelegation = Get-UnconstrainedDelegation
-    $collectedData.AdminSDHolder = Get-AdminSDHolderProtection
-    $collectedData.NTLMSettings = Get-NTLMSettings
-    $collectedData.BackupStatus = Get-BackupStatus
-    $collectedData.GPOPermissions = Get-GPOPermissions
-    $collectedData.DNSScavenging = Get-DNSScavengingStatus
-    $collectedData.DCPolicy = Get-DefaultDomainControllerPolicy
+$collectedData.SMBv1Status = Get - SMBv1Status
+$collectedData.ProtectedUsers = Get - ProtectedUsersGroup
+$collectedData.UnconstrainedDelegation = Get - UnconstrainedDelegation
+$collectedData.AdminSDHolder = Get - AdminSDHolderProtection
+$collectedData.NTLMSettings = Get - NTLMSettings
+$collectedData.BackupStatus = Get - BackupStatus
+$collectedData.GPOPermissions = Get - GPOPermissions
+$collectedData.DNSScavenging = Get - DNSScavengingStatus
+$collectedData.DCPolicy = Get - DefaultDomainControllerPolicy
 
 # CIS Best Practices & Enhanced Configuration Checks
-    $collectedData.DCHealth = Get-DCHealthDetails
-    $collectedData.OUStructure = Get-OUStructure
-    $collectedData.TombstoneLifetime = Get-TombstoneLifetime
-    $collectedData.DNSConfiguration = Get-DNSConfiguration
-    $collectedData.DHCPConfiguration = Get-DHCPConfiguration
+$collectedData.DCHealth = Get - DCHealthDetails
+$collectedData.OUStructure = Get - OUStructure
+$collectedData.TombstoneLifetime = Get - TombstoneLifetime
+$collectedData.DNSConfiguration = Get - DNSConfiguration
+$collectedData.DHCPConfiguration = Get - DHCPConfiguration
+$collectedData.TimeSyncConfig = Get - TimeSyncConfiguration
 
 # =============================================================================
 # SEND DATA TO API
 # =============================================================================
 
-        Write-Host "\`n" + ("=" * 80) -ForegroundColor Cyan
-    Write-Host "Preparing to send data to Assessment Platform" -ForegroundColor Cyan
-    Write-Host("=" * 80) -ForegroundColor Cyan
+    Write - Host "\`n" + ("=" * 80) - ForegroundColor Cyan
+Write - Host "Preparing to send data to Assessment Platform" - ForegroundColor Cyan
+Write - Host("=" * 80) - ForegroundColor Cyan
 
-    try {
-        Write-Host "[*] Converting data to JSON..." -ForegroundColor Green
-        $jsonPayload = $collectedData | ConvertTo-Json -Depth 10 -Compress
+try {
+    Write - Host "[*] Converting data to JSON..." - ForegroundColor Green
+    $jsonPayload = $collectedData | ConvertTo - Json - Depth 10 - Compress
 
-        Write-Host "[*] Payload size: $([math]::Round($jsonPayload.Length / 1MB, 2)) MB" -ForegroundColor Green
+    Write - Host "[*] Payload size: $([math]::Round($jsonPayload.Length / 1MB, 2)) MB" - ForegroundColor Green
 
     # Save data locally before sending
-        Write-Host "\`n[*] Saving data locally..." -ForegroundColor Green
-        $localPath = "C:\\AD-Assessments"
+    Write - Host "\`n[*] Saving data locally..." - ForegroundColor Green
+    $localPath = "C:\\AD-Assessments"
     
     # Create directory if it doesn't exist
-        if (-not(Test-Path $localPath)) {
-            try {
-                New-Item -Path $localPath -ItemType Directory -Force | Out-Null
-                Write-Host "[+] Created directory: $localPath" -ForegroundColor Green
-            } catch {
-                Write-Host "[!] WARNING: Could not create directory $localPath : $_" -ForegroundColor Yellow
-                $localPath = $PSScriptRoot  # Fallback to script directory
-            }
+    if (-not(Test - Path $localPath)) {
+        try {
+            New - Item - Path $localPath - ItemType Directory - Force | Out - Null
+            Write - Host "[+] Created directory: $localPath" - ForegroundColor Green
+        } catch {
+            Write - Host "[!] WARNING: Could not create directory $localPath : $_" - ForegroundColor Yellow
+            $localPath = $PSScriptRoot  # Fallback to script directory
         }
+    }
     
     # Save JSON file locally
-        $localFileName = "AD-Assessment-$DomainName-$AssessmentId-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
-        $localFilePath = Join-Path $localPath $localFileName
+    $localFileName = "AD-Assessment-$DomainName-$AssessmentId-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+    $localFilePath = Join - Path $localPath $localFileName
 
-        try {
-            # Save without BOM (Byte Order Mark) to avoid JSON parsing errors
-            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-            [System.IO.File]::WriteAllText($localFilePath, $jsonPayload, $utf8NoBom)
-            
-            Write-Host "[+] Data saved locally: $localFilePath" -ForegroundColor Green
-            Write-Host "[+] File size: $([math]::Round((Get-Item $localFilePath).Length / 1MB, 2)) MB" -ForegroundColor Green
-        } catch {
-            Write-Host "[!] WARNING: Could not save local file: $_" -ForegroundColor Yellow
-        }
+    try {
+            # Save without BOM(Byte Order Mark) to avoid JSON parsing errors
+        $utf8NoBom = New - Object System.Text.UTF8Encoding($false)
+        [System.IO.File]:: WriteAllText($localFilePath, $jsonPayload, $utf8NoBom)
 
-    # Skip API upload in offline mode
-        if ($OfflineMode) {
-            Write-Host "\`n[*] OFFLINE MODE: Skipping API upload" -ForegroundColor Yellow
-            Write-Host "[+] JSON file saved to: $localFilePath" -ForegroundColor Green
-            
-            # Compress JSON file for easier transport
-            Write-Host "\`n[*] Compressing file for transport..." -ForegroundColor Yellow
-            $zipPath = $localFilePath -replace '\\.json$', '.zip'
-            
-            try {
-                Compress-Archive -Path $localFilePath -DestinationPath $zipPath -Force
-                $zipSizeMB = [math]::Round((Get-Item $zipPath).Length / 1MB, 2)
-                $compressionRatio = [math]::Round((1 - ((Get-Item $zipPath).Length / (Get-Item $localFilePath).Length)) * 100, 1)
-                
-                Write-Host "[+] File compressed successfully!" -ForegroundColor Green
-                Write-Host "[+] Compressed file: $zipPath" -ForegroundColor Green
-                Write-Host "[+] Compressed size: $zipSizeMB MB (reduced $compressionRatio%)" -ForegroundColor Green
-                Write-Host "\`n[*] INSTRUCTIONS FOR UPLOAD:" -ForegroundColor Cyan
-                Write-Host "  1. Transfer the ZIP file to a machine with internet access" -ForegroundColor White
-                Write-Host "  2. Go to: https://your-saas-domain.com/assessment/$AssessmentId" -ForegroundColor White
-                Write-Host "  3. Upload the ZIP file (no need to unzip)" -ForegroundColor White
-                Write-Host "\`n[+] Zip file location: $zipPath" -ForegroundColor Green
-            } catch {
-                Write-Host "[!] WARNING: Could not compress file: $_" -ForegroundColor Yellow
-                Write-Host "[*] You can still upload the JSON file: $localFilePath" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "\`n[*] Sending data to API endpoint..." -ForegroundColor Green
-            $headers = @{
-                "Content-Type" = "application/json"
-            }
-
-            $finalPayload = @{
-                assessmentId = $AssessmentId
-            jsonData = $collectedData
-            domainName = $DomainName
-            } | ConvertTo-Json -Depth 10 -Compress
-
-            $response = Invoke-RestMethod -Uri $ApiEndpoint -Method POST -Body $finalPayload -Headers $headers -TimeoutSec 300
-
-            Write-Host "[+] SUCCESS! Data successfully sent to Assessment Platform" -ForegroundColor Green
-        }
-
+        Write - Host "[+] Data saved locally: $localFilePath" - ForegroundColor Green
+        Write - Host "[+] File size: $([math]::Round((Get-Item $localFilePath).Length / 1MB, 2)) MB" - ForegroundColor Green
     } catch {
-        Write-Host "[!] ERROR: $_" -ForegroundColor Red
-        Write-Host "[!] Full error: $($_.Exception.Message)" -ForegroundColor Red
-
-        $backupFile = "AD-Assessment-$AssessmentId-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
-        Write-Host "[*] Saving data to backup file: $backupFile" -ForegroundColor Yellow
-        
-        # Save without BOM
-        try {
-            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-            [System.IO.File]::WriteAllText($backupFile, $jsonPayload, $utf8NoBom)
-            Write-Host "[+] Data saved to: $backupFile" -ForegroundColor Yellow
-        } catch {
-            # Fallback to Out-File if WriteAllText fails
-            $jsonPayload | Out-File -FilePath $backupFile -Encoding UTF8
-            Write-Host "[+] Data saved to: $backupFile (with BOM)" -ForegroundColor Yellow
-        }
-        
-        Write-Host "[*] Please manually upload this file to the Assessment Platform" -ForegroundColor Yellow
+        Write - Host "[!] WARNING: Could not save local file: $_" - ForegroundColor Yellow
     }
 
-    Write-Host "\`n" + ("=" * 80) -ForegroundColor Cyan
-    Write-Host "Data Collection Complete" -ForegroundColor Cyan
-    Write-Host("=" * 80) -ForegroundColor Cyan
-    Write-Host ""
+    # Skip API upload in offline mode
+    if ($OfflineMode) {
+        Write - Host "\`n[*] OFFLINE MODE: Skipping API upload" - ForegroundColor Yellow
+        Write - Host "[+] JSON file saved to: $localFilePath" - ForegroundColor Green
+            
+            # Compress JSON file for easier transport
+            Write - Host "\`n[*] Compressing file for transport..." - ForegroundColor Yellow
+        $zipPath = $localFilePath - replace '\\.json$', '.zip'
+
+        try {
+            Compress - Archive - Path $localFilePath - DestinationPath $zipPath - Force
+            $zipSizeMB = [math]:: Round((Get - Item $zipPath).Length / 1MB, 2)
+            $compressionRatio = [math]:: Round((1 - ((Get - Item $zipPath).Length / (Get - Item $localFilePath).Length)) * 100, 1)
+
+            Write - Host "[+] File compressed successfully!" - ForegroundColor Green
+            Write - Host "[+] Compressed file: $zipPath" - ForegroundColor Green
+            Write - Host "[+] Compressed size: $zipSizeMB MB (reduced $compressionRatio%)" - ForegroundColor Green
+            Write - Host "\`n[*] INSTRUCTIONS FOR UPLOAD:" - ForegroundColor Cyan
+            Write - Host "  1. Transfer the ZIP file to a machine with internet access" - ForegroundColor White
+            Write - Host "  2. Go to: https://your-saas-domain.com/assessment/$AssessmentId" - ForegroundColor White
+            Write - Host "  3. Upload the ZIP file (no need to unzip)" - ForegroundColor White
+            Write - Host "\`n[+] Zip file location: $zipPath" - ForegroundColor Green
+        } catch {
+            Write - Host "[!] WARNING: Could not compress file: $_" - ForegroundColor Yellow
+            Write - Host "[*] You can still upload the JSON file: $localFilePath" - ForegroundColor Yellow
+        }
+    } else {
+        Write - Host "\`n[*] Sending data to API endpoint..." - ForegroundColor Green
+        $headers = @{
+            "Content-Type" = "application/json"
+        }
+
+        $finalPayload = @{
+            assessmentId = $AssessmentId
+            jsonData = $collectedData
+            domainName = $DomainName
+        } | ConvertTo - Json - Depth 10 - Compress
+
+        $response = Invoke - RestMethod - Uri $ApiEndpoint - Method POST - Body $finalPayload - Headers $headers - TimeoutSec 300
+
+        Write - Host "[+] SUCCESS! Data successfully sent to Assessment Platform" - ForegroundColor Green
+    }
+
+} catch {
+    Write - Host "[!] ERROR: $_" - ForegroundColor Red
+    Write - Host "[!] Full error: $($_.Exception.Message)" - ForegroundColor Red
+
+    $backupFile = "AD-Assessment-$AssessmentId-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
+    Write - Host "[*] Saving data to backup file: $backupFile" - ForegroundColor Yellow
+        
+        # Save without BOM
+    try {
+        $utf8NoBom = New - Object System.Text.UTF8Encoding($false)
+        [System.IO.File]:: WriteAllText($backupFile, $jsonPayload, $utf8NoBom)
+        Write - Host "[+] Data saved to: $backupFile" - ForegroundColor Yellow
+    } catch {
+            # Fallback to Out - File if WriteAllText fails
+        $jsonPayload | Out - File - FilePath $backupFile - Encoding UTF8
+        Write - Host "[+] Data saved to: $backupFile (with BOM)" - ForegroundColor Yellow
+    }
+
+    Write - Host "[*] Please manually upload this file to the Assessment Platform" - ForegroundColor Yellow
+}
+
+Write - Host "\`n" + ("=" * 80) - ForegroundColor Cyan
+Write - Host "Data Collection Complete" - ForegroundColor Cyan
+Write - Host("=" * 80) - ForegroundColor Cyan
+Write - Host ""
 `;
 
         // Create blob and download
@@ -2063,7 +2145,7 @@ function Get-TombstoneLifetime {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `AD - Assessment - ${domain} -${Date.now()}.ps1`;
+        a.download = `AD - Assessment - ${ domain } -${ Date.now() }.ps1`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
