@@ -16,11 +16,13 @@ interface AIConfig {
     openai: boolean;
     gemini: boolean;
     deepseek: boolean;
+    anthropic: boolean;
   };
   models: {
     openai: string[];
     gemini: string[];
     deepseek: string[];
+    anthropic: string[];
   };
 }
 
@@ -32,7 +34,8 @@ const AIConfigPanel = () => {
   const [apiKeys, setApiKeys] = useState({
     openai: '',
     gemini: '',
-    deepseek: ''
+    deepseek: '',
+    anthropic: ''
   });
 
   useEffect(() => {
@@ -71,6 +74,7 @@ const AIConfigPanel = () => {
       if (apiKeys.openai) payload.api_keys.openai = apiKeys.openai;
       if (apiKeys.gemini) payload.api_keys.gemini = apiKeys.gemini;
       if (apiKeys.deepseek) payload.api_keys.deepseek = apiKeys.deepseek;
+      if (apiKeys.anthropic) payload.api_keys.anthropic = apiKeys.anthropic;
 
       const response = await fetch(`${VPS_ENDPOINT}/api/config/ai`, {
         method: 'POST',
@@ -86,7 +90,7 @@ const AIConfigPanel = () => {
       });
 
       // Limpiar los campos de API keys después de guardar
-      setApiKeys({ openai: '', gemini: '', deepseek: '' });
+      setApiKeys({ openai: '', gemini: '', deepseek: '', anthropic: '' });
       loadConfig();
     } catch (error) {
       console.error('Error saving AI config:', error);
@@ -113,7 +117,8 @@ const AIConfigPanel = () => {
   const providerLabels: { [key: string]: string } = {
     openai: 'OpenAI',
     gemini: 'Google Gemini',
-    deepseek: 'DeepSeek'
+    deepseek: 'DeepSeek',
+    anthropic: 'Anthropic (Claude)'
   };
 
   return (
@@ -146,6 +151,9 @@ const AIConfigPanel = () => {
                 <SelectItem value="deepseek" disabled={!config.available_providers.deepseek && !apiKeys.deepseek}>
                   DeepSeek {config.available_providers.deepseek && <Badge variant="outline" className="ml-2">Configurado</Badge>}
                 </SelectItem>
+                <SelectItem value="anthropic" disabled={!config.available_providers.anthropic && !apiKeys.anthropic}>
+                  Anthropic (Claude) {config.available_providers.anthropic && <Badge variant="outline" className="ml-2">Configurado</Badge>}
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -173,7 +181,7 @@ const AIConfigPanel = () => {
         {/* API Keys */}
         <div className="space-y-4 border-t pt-4">
           <h4 className="text-sm font-medium">Claves de API (opcional - solo si necesitas cambiarlas)</h4>
-          
+
           {/* OpenAI API Key */}
           <div className="space-y-2">
             <Label htmlFor="openai-key" className="flex items-center gap-2">
@@ -248,6 +256,32 @@ const AIConfigPanel = () => {
                 onClick={() => setShowKeys({ ...showKeys, deepseek: !showKeys.deepseek })}
               >
                 {showKeys.deepseek ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          {/* Anthropic API Key */}
+          <div className="space-y-2">
+            <Label htmlFor="anthropic-key" className="flex items-center gap-2">
+              Anthropic API Key
+              {config.available_providers.anthropic && (
+                <Badge variant="secondary" className="text-xs">Configurada</Badge>
+              )}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="anthropic-key"
+                type={showKeys.anthropic ? "text" : "password"}
+                placeholder="sk-ant-..."
+                value={apiKeys.anthropic}
+                onChange={(e) => setApiKeys({ ...apiKeys, anthropic: e.target.value })}
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowKeys({ ...showKeys, anthropic: !showKeys.anthropic })}
+              >
+                {showKeys.anthropic ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </Button>
             </div>
           </div>

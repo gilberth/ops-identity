@@ -114,10 +114,70 @@ async function analyzeCategory(assessmentId, category, data) {
       return [];
     }
 
-    // Chunking logic for large datasets
-    const CHUNK_SIZE = 10000; // Process 10K items at a time
-    const MAX_PARALLEL_CHUNKS = 3; // Limit concurrent processing
-    let allFindings = [];
+    // Helper to calculate stats
+    function calculateStats(cat, d) {
+      if (cat === 'Users') {
+        let passwordNeverExpires = 0;
+        let inactive = 0;
+        let adminCount = 0;
+        let kerberoastable = 0;
+        const total = d.length;
+        const inactiveDate = new Date();
+        inactiveDate.setDate(inactiveDate.getDate() - 90);
+
+        for (const u of d) {
+          if (u.PasswordNeverExpires === true || u.PasswordNeverExpires === 'true') {
+            if (u.Enabled === true || u.Enabled === 'true') passwordNeverExpires++;
+          }
+          if (u.IsPrivileged === true || u.IsPrivileged === 'true' || u.AdminCount === 1) adminCount++;
+          if (u.ServicePrincipalNames && u.ServicePrincipalNames.length > 0) kerberoastable++;
+
+          if (u.LastLogonDate && (u.Enabled === true || u.Enabled === 'true')) {
+            const logonDate = new Date(u.LastLogonDate);
+            if (logonDate < inactiveDate) inactive++;
+          }
+        }
+        return `\n\nESTADÍSTICAS PRE-CALCULADAS (ÚSALAS COMO VERDAD ABSOLUTA PARA LOS CONTEOS):
+- Total Usuarios Analizados en este chunk: ${total}
+- Usuarios con PasswordNeverExpires=true: ${passwordNeverExpires}
+- Usuarios Inactivos (>90 días sin login): ${inactive}
+- Usuarios Privilegiados (AdminCount=1 o Grupos Admin): ${adminCount}
+- Usuarios Kerberoastable (SPN presente): ${kerberoastable}`;
+      } else if (cat === 'Computers') {
+        let obsolete = 0;
+        let inactiveComputers = 0;
+        let total = d.length;
+        // Patrones de OS obsoletos
+        const obsoletePatterns = [/Windows Server 2008/i, /Windows Server 2003/i, /Windows 7/i, /Windows XP/i, /Windows 2000/i, /Windows Server 2012/i];
+
+        const inactiveDate = new Date();
+        inactiveDate.setDate(inactiveDate.getDate() - 90);
+
+        for (const c of d) {
+          if (c.OperatingSystem) {
+            for (const pattern of obsoletePatterns) {
+              if (pattern.test(c.OperatingSystem)) {
+                obsolete++;
+                break;
+              }
+            }
+          }
+
+          if (c.LastLogonDate) {
+            const logonDate = new Date(c.LastLogonDate);
+            // Validar fecha y comparar
+            if (!isNaN(logonDate.getTime()) && logonDate < inactiveDate) {
+              inactiveComputers++;
+            }
+          }
+        }
+        return `\n\nESTADÍSTICAS PRE-CALCULADAS (ÚSALAS COMO VERDAD ABSOLUTA PARA LOS CONTEOS):
+- Total Equipos Analizados en este chunk: ${total}
+- Equipos con OS Obsoleto (2012/2008/2003/Win7/XP): ${obsolete}
+- Equipos Inactivos (>90 días sin login): ${inactiveComputers}`;
+      }
+      return '';
+    }
 
     if (data.length > CHUNK_SIZE) {
       // Large dataset - process in chunks
@@ -141,7 +201,8 @@ async function analyzeCategory(assessmentId, category, data) {
               try {
                 await addLog(assessmentId, 'info', `Analizando chunk ${chunkIndex + 1}/${totalChunks} (${chunk.length.toLocaleString()} items)`, category);
 
-                const prompt = buildPrompt(category, chunk);
+                const stats = calculateStats(category, chunk);
+                const prompt = buildPrompt(category, chunk) + stats;
                 console.log(`[${timestamp()}] [AI] Chunk ${chunkIndex + 1} prompt: ${prompt.length} chars`);
 
                 const findings = await callAI(prompt, provider, model, apiKey);
@@ -218,7 +279,8 @@ async function analyzeCategory(assessmentId, category, data) {
     } else {
       // Small dataset - process as single chunk
       console.log(`[${timestamp()}] [AI] ${category}: Small dataset (${data.length} items), processing in single chunk`);
-      const prompt = buildPrompt(category, data);
+      const stats = calculateStats(category, data);
+      const prompt = buildPrompt(category, data) + stats;
       console.log(`[${timestamp()}] [AI] Analyzing ${category} with prompt length: ${prompt.length} chars`);
 
       allFindings = await callAI(prompt, provider, model, apiKey);
@@ -275,11 +337,16 @@ function buildPrompt(cat, d) {
   const categoryInstructions = {
     Users: `Analiza estos usuarios de Active Directory para identificar vulnerabilidades de seguridad.
 
-**⚠️ VALIDACIÓN CRÍTICA PARA USUARIOS:**
-- SOLO genera findings si hay usuarios con el problema en los datos (count > 0)
-- Los nombres de usuarios en affected_objects deben ser REALES de los datos analizados
-- Los comandos PowerShell deben incluir los SamAccountName reales encontrados
-- Si los datos muestran 0 usuarios con un problema, NO generes finding para eso
+**⚠️ INSTRUCCIONES DE ANÁLISIS DE DATOS (JSON):**
+1. Recibirás una lista de objetos JSON. CADA objeto es un usuario.
+2. Debes ITERAR mentalmente sobre CADA usuario de la lista.
+3. Verifica las condiciones de seguridad para CADA uno.
+4. CUENTA cuántos usuarios cumplen cada condición de vulnerabilidad.
+5. Si encuentras al menos 1 usuario vulnerable, GENERA EL HALLAZGO.
+
+**⚠️ VALIDACIÓN CRÍTICA:**
+- Los nombres de usuarios en affected_objects deben ser REALES de los datos analizados (propiedad 'SamAccountName').
+- Si los datos muestran 0 usuarios con un problema, NO generes finding para eso.
 
 **BUSCA ESPECÍFICAMENTE (SOLO SI HAY EVIDENCIA):**
 
@@ -462,6 +529,40 @@ function buildPrompt(cat, d) {
   * Comandos PowerShell para implementar
 - **Evidencia**: Lista de equipos (hostname, OS, última actividad)`,
 
+    ReplicationStatus: `Analiza la salud de la replicación de Active Directory y la topología del bosque.
+
+**⚠️ CONTEXTO CRÍTICO:**
+La replicación es el corazón de AD. Fallos aquí significan contraseñas no sincronizadas, objetos fantasma y posible corrupción de la base de datos.
+Debes detectar problemas de topología, conexiones huérfanas y errores de replicación persistentes.
+
+**BUSCA ESPECÍFICAMENTE:**
+
+1. **🔴 CRITICAL: Objetos Eliminados (Lingering Objects)**
+   - Conexiones que apuntan a servidores con nombres que contienen "\\0ADEL:"
+   - Riesgo: Corrupción de base de datos, reaparición de objetos borrados.
+   - Acción: Eliminar conexión y ejecutar limpieza de metadatos.
+
+2. **🔴 CRITICAL: Fallos de Replicación Prolongados**
+   - "ConsecutiveReplicationFailures" > 5 o "LastReplicationSuccess" > 24 horas.
+   - Riesgo: Inconsistencia de datos, problemas de autenticación.
+
+3. **⚠️ HIGH: Exceso de Conexiones (KCC Storm)**
+   - Un mismo servidor con > 5 conexiones de replicación entrantes (para sitios pequeños/medianos).
+   - Riesgo: Sobrecarga de red, topología ineficiente.
+
+4. **⚠️ MEDIUM: Topología Incompleta**
+   - Sitios sin enlaces o subredes no asociadas a sitios.
+
+**PARA CADA HALLAZGO, PROPORCIONA:**
+- **type_id**: REPLICATION_LINGERING_OBJECTS, REPLICATION_FAILURE_CRITICAL, KCC_CONNECTION_STORM.
+- **Título**: "X conexiones a servidores eliminados detectadas" o "Fallo de replicación crítico en [SERVER]".
+- **Descripción**: Explica el problema técnico y su impacto en la salud del bosque.
+- **Recomendación**:
+  * Comandos para limpiar conexiones (Remove-ADReplicationConnection).
+  * Comandos para forzar replicación (repadmin /syncall).
+  * Pasos para limpieza de metadatos (ntdsutil).
+- **Evidencia**: Nombres de servidores origen/destino, códigos de error, fechas de último éxito.`,
+
     Groups: `Eres un auditor de seguridad especializado en privilegios y gestión de identidades en Active Directory.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
@@ -470,10 +571,10 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
 **🎯 PRIORIDADES DE DETECCIÓN (EN ORDEN):**
 
 1. **🔴 CRITICAL: Grupos de Tier 0 sobrepoblados**
-   - Domain Admins > 5 miembros permanentes
-   - Enterprise Admins > 3 miembros
-   - Schema Admins con miembros permanentes (debe estar vacío excepto durante cambios)
-   - Administrators (Built-in) > 10 miembros
+   - Domain Admins (o "Admins. del dominio") > 5 miembros permanentes
+   - Enterprise Admins (o "Administradores de empresas") > 3 miembros
+   - Schema Admins (o "Administradores de esquema") con miembros permanentes
+   - Administrators (o "Administradores") > 10 miembros
    - Riesgo: Superficie de ataque masiva, dificulta respuesta a incidentes
    - MITRE ATT&CK: T1078.002 (Valid Accounts: Domain Accounts)
    - CIS Control: 5.4 - Restrict Administrator Privileges to Dedicated Accounts
@@ -531,15 +632,6 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
 - **Descripción** (3 párrafos obligatorios):
   * Párrafo 1 - ESTADO ACTUAL: Número exacto, nombres de grupos afectados, configuración actual vs baseline recomendado
   * Párrafo 2 - RIESGO: Vector de ataque específico (credential theft, lateral movement), técnicas MITRE ATT&CK aplicables
-  * Párrafo 3 - IMPACTO: Consecuencias en negocio (downtime, data breach), compliance (GDPR Art. 32, SOX 404, PCI-DSS 7.1.2, ISO 27001 A.9.2.3)
-- **Recomendación** (roadmap de implementación paso a paso):
-  * FASE 1 - AUDITORÍA (Semana 1):
-    - Comando PowerShell: Get-ADGroupMember "Domain Admins" -Recursive | Get-ADUser -Properties LastLogonDate,PasswordLastSet,Enabled | Export-CSV
-    - Identificar cuentas sin justificación documentada
-    - Validar con owners de cada cuenta (IT Manager, CISO)
-  * FASE 2 - LIMPIEZA (Semana 2-3):
-    - Criterios de remoción: cuentas inactivas > 90 días, usuarios sin rol admin documentado, cuentas de servicio mal ubicadas
-    - Comando fix: Remove-ADGroupMember -Identity "Domain Admins" -Members "username" -Confirm:$false
     - Proceso de aprobación: Requiere sign-off de CISO + CIO
   * FASE 3 - HARDENING (Semana 4):
     - Implementar naming convention: Renombrar cuentas a formato admin-firstname.lastname
@@ -586,7 +678,7 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
    - Riesgo: Pérdida de datos en backups antiguos
 
 9. **🔴 Sincronización de Tiempo (NTP) Incorrecta**
-   - Analiza la sección `TimeSyncConfig` en los datos.
+   - Analiza la sección 'TimeSyncConfig' en los datos.
    - **PDC Emulator**: Debe usar fuente externa (NTP) confiable (ej. pool.ntp.org).
      - CRITICAL: Si Source es "Local CMOS Clock", "Free-running System Clock" o "VM IC Time Sync Provider" (en virtual sin config especial).
    - **Otros DCs**: Deben sincronizar vía NT5DS (jerarquía de dominio).
@@ -696,7 +788,7 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
 
 5. **ℹ️ INFO/LOW: Tiempos de Lease Inadecuados**
    - Lease < 8 horas (redes cableadas estables) o > 24 horas (WiFi invitados/dinámicos).
-   - Analizar `ScopeDetails` -> `LeaseDuration`.
+   - Analizar 'ScopeDetails' -> 'LeaseDuration'.
    - Riesgo: Agotamiento de IPs (lease muy largo) o tráfico excesivo (lease muy corto).
    - Recomendación: Ajustar según tipo de red (8 días para desktops, 2-4 horas para WiFi).
 
@@ -890,7 +982,7 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
   * affected_count: [número de DCs afectados]
   * details: "LMCompatibilityLevel actual: [valores por DC], Baseline recomendado: 5 (NTLMv2 only), Desvío: [análisis], DCs críticos afectados: [lista prioritaria]"`,
 
-      Kerberos: `Eres un especialista en protocolos de autenticación Kerberos y detección de vectores de ataque avanzados en Active Directory.
+    Kerberos: `Eres un especialista en protocolos de autenticación Kerberos y detección de vectores de ataque avanzados en Active Directory.
 
 **⚠️ VALIDACIÓN CRÍTICA PARA KERBEROS:**
 - SIEMPRE revisa KRBTGTPasswordAge - es el indicador más crítico
@@ -1039,10 +1131,20 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
 - **Evidencia**:
   * affected_objects: ["krbtgt"]
   * affected_count: 1
-  * details: "KRBTGTPasswordAge: [DÍAS] días ([AÑOS] años), KRBTGTPasswordLastSet: [FECHA_EXACTA], Última rotación: [FECHA_HUMANA], Desvío sobre baseline: [DÍAS-180] días, Compliance: CRÍTICO - Excede 180 días recomendados por Microsoft, CIS, NIST"`
-},
+  * details: "KRBTGTPasswordAge: [DÍAS] días ([AÑOS] años), KRBTGTPasswordLastSet: [FECHA_EXACTA], Última rotación: [FECHA_HUMANA], Desvío sobre baseline: [DÍAS-180] días, Compliance: CRÍTICO - Excede 180 días recomendados por Microsoft, CIS, NIST"`,
 
-Sites: `Eres un arquitecto de Active Directory especializado en topología de replicación y diseño de sitios.
+    ADCSInventory: `Analiza la infraestructura de Certificados (ADCS) en busca de vulnerabilidades críticas.
+**BUSCA:**
+1. **ESC1 (Vulnerable Templates)**: Plantillas que permiten al solicitante especificar el Subject Name (EnrolleeSuppliesSubject) Y permiten autenticación de cliente. Esto permite a cualquiera ser Domain Admin.
+2. **CAs en Controladores de Dominio**: Mala práctica de seguridad.
+3. **Permisos de CA**: Si usuarios autenticados tienen permisos excesivos.`,
+
+    ProtocolSecurity: `Analiza la seguridad de protocolos de red.
+**BUSCA:**
+1. **LDAP Signing No Forzado**: Si 'LDAPServerIntegrity' no es 2, permite ataques de NTLM Relay a LDAP.
+2. **LDAP Channel Binding No Forzado**: Necesario para prevenir ataques de relay modernos.`,
+
+    Sites: `Eres un arquitecto de Active Directory especializado en topología de replicación y diseño de sitios.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 La topología de sitios define cómo se replica el tráfico de AD y cómo los clientes encuentran los DCs más cercanos. Una mala configuración causa lentitud en logons, fallos de replicación y tráfico WAN innecesario.
@@ -1070,12 +1172,43 @@ La topología de sitios define cómo se replica el tráfico de AD y cómo los cl
 - **Título**: "[N] subredes no asociadas a ningún sitio AD"
 - **Descripción**: Impacto en latencia de logon y tráfico WAN.
 - **Recomendación**: Comandos para asociar subredes.
-- **Evidencia**: Lista de subredes huérfanas.`;
+- **Evidencia**: Lista de subredes huérfanas.`
   };
 
-const instruction = categoryInstructions[cat] || `Analiza los siguientes datos de ${cat} para vulnerabilidades de seguridad.`;
+  // Map specialized categories to broader prompts
+  const promptMap = {
+    'DNSConfiguration': 'Infrastructure',
+    'DHCPConfiguration': 'Infrastructure',
+    'SiteTopology': 'Infrastructure',
+    'OUStructure': 'Infrastructure',
+    'TombstoneLifetime': 'Infrastructure',
+    'DNSScavenging': 'Infrastructure',
+    'TimeSyncConfig': 'Infrastructure',
 
-return `${instruction}
+    'KerberosConfig': 'SecurityHardening',
+    'LAPS': 'SecurityHardening',
+    'SMBv1Status': 'SecurityHardening',
+    'NTLMSettings': 'SecurityHardening',
+    'RC4EncryptionTypes': 'SecurityHardening',
+    'BackupStatus': 'SecurityHardening',
+    'ProtectedUsers': 'SecurityHardening',
+
+    'DCSyncPermissions': 'IdentityRisks',
+    'UnconstrainedDelegation': 'IdentityRisks',
+    'AdminSDHolder': 'IdentityRisks',
+    'AdminCountObjects': 'IdentityRisks',
+
+    'ADCSInventory': 'ADCSInventory',
+    'ProtocolSecurity': 'ProtocolSecurity',
+
+    'GPOPermissions': 'GPOs',
+    'DCPolicy': 'GPOs'
+  };
+
+  const promptKey = promptMap[cat] || cat;
+  const instruction = categoryInstructions[promptKey] || categoryInstructions['DEFAULT'] || `Analiza los siguientes datos de ${cat} para vulnerabilidades de seguridad.`;
+
+  return `${instruction}
 
 <assessment_data>
 ${str(d, 4000)}
@@ -1172,6 +1305,8 @@ async function callAI(prompt, provider, model, apiKey) {
       return await callGemini(prompt, model, apiKey);
     } else if (provider === 'deepseek') {
       return await callDeepSeek(prompt, model, apiKey);
+    } else if (provider === 'anthropic') {
+      return await callAnthropic(prompt, model, apiKey);
     } else {
       throw new Error(`Unknown AI provider: ${provider}`);
     }
@@ -1472,6 +1607,91 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
   return [];
 }
 
+async function callAnthropic(prompt, model, key) {
+  const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+
+PRINCIPIOS FUNDAMENTALES:
+1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
+2. EVIDENCIA PRIMERO - Si no hay evidencia concreta (count > 0, nombres específicos), NO generes finding
+3. COMANDOS RELEVANTES - Cada comando PowerShell debe estar directamente relacionado con el problema específico
+4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
+5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
+
+FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
+{
+  "findings": [
+    {
+      "type_id": "string",
+      "title": "string",
+      "severity": "critical|high|medium|low",
+      "description": "string",
+      "recommendation": "string",
+      "evidence": {
+        "affected_objects": ["string"],
+        "count": number,
+        "details": "string"
+      },
+      "mitre_attack": "string (opcional)",
+      "cis_control": "string (opcional)",
+      "timeline": "string (opcional)",
+      "affected_count": number (opcional)
+    }
+  ]
+}`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: model,
+      max_tokens: 8192,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
+      ]
+    })
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error(`[${timestamp()}] [Anthropic] API error: ${res.status} - ${errorText}`);
+    throw new Error(`Anthropic API error: ${res.status} - ${errorText}`);
+  }
+
+  const result = await res.json();
+  console.log(`[${timestamp()}] [Anthropic] Response received:`, JSON.stringify(result).substring(0, 500));
+
+  const content = result.content?.[0]?.text;
+  if (content) {
+    // Anthropic might wrap JSON in markdown blocks, clean it up
+    const cleanContent = content.replace(/```json\n?|\n?```/g, '').trim();
+    try {
+      const parsed = JSON.parse(cleanContent);
+      console.log(`[${timestamp()}] [Anthropic] Parsed ${parsed.findings?.length || 0} findings`);
+      return parsed.findings || [];
+    } catch (e) {
+      console.error(`[${timestamp()}] [Anthropic] Error parsing JSON:`, e.message);
+      // Try to find JSON object if mixed with text
+      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.findings || [];
+        } catch (e2) {
+          console.error(`[${timestamp()}] [Anthropic] Error parsing extracted JSON:`, e2.message);
+        }
+      }
+    }
+  }
+
+  console.log(`[${timestamp()}] [Anthropic] No valid content in response`);
+  return [];
+}
+
 // Main Processing Function
 async function processAssessment(assessmentId, jsonData) {
   try {
@@ -1514,6 +1734,8 @@ async function processAssessment(assessmentId, jsonData) {
     );
 
     // 4. Process Categories
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
     for (const categoryInfo of availableCategories) {
       const { id: category, data } = categoryInfo;
 
@@ -1525,6 +1747,10 @@ async function processAssessment(assessmentId, jsonData) {
       progressData[category].status = 'completed';
       progressData[category].progress = 100;
       await pool.query('UPDATE assessments SET analysis_progress = $1 WHERE id = $2', [progressData, assessmentId]);
+
+      // Rate limit protection: Wait 20 seconds between categories
+      console.log(`[${timestamp()}] Waiting 20s to respect API rate limits...`);
+      await sleep(20000);
     }
 
     // 5. Finish
@@ -1595,6 +1821,7 @@ app.get('/api/config/ai', async (req, res) => {
     const hasOpenAIKey = !!(await getConfig('openai_api_key') || process.env.OPENAI_API_KEY);
     const hasGeminiKey = !!await getConfig('gemini_api_key');
     const hasDeepSeekKey = !!await getConfig('deepseek_api_key');
+    const hasAnthropicKey = !!await getConfig('anthropic_api_key');
 
     res.json({
       provider,
@@ -1602,12 +1829,14 @@ app.get('/api/config/ai', async (req, res) => {
       available_providers: {
         openai: hasOpenAIKey,
         gemini: hasGeminiKey,
-        deepseek: hasDeepSeekKey
+        deepseek: hasDeepSeekKey,
+        anthropic: hasAnthropicKey
       },
       models: {
         openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
         gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'],
-        deepseek: ['deepseek-chat', 'deepseek-coder']
+        deepseek: ['deepseek-chat', 'deepseek-coder'],
+        anthropic: ['claude-sonnet-4-5-20250929', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620', 'claude-3-opus-20240229']
       }
     });
   } catch (error) {
@@ -1633,6 +1862,7 @@ app.post('/api/config/ai', async (req, res) => {
       if (api_keys.openai) await setConfig('openai_api_key', api_keys.openai);
       if (api_keys.gemini) await setConfig('gemini_api_key', api_keys.gemini);
       if (api_keys.deepseek) await setConfig('deepseek_api_key', api_keys.deepseek);
+      if (api_keys.anthropic) await setConfig('anthropic_api_key', api_keys.anthropic);
     }
 
     res.json({ success: true, message: 'AI configuration updated' });
