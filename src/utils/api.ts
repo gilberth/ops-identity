@@ -1,9 +1,8 @@
 import pako from 'pako';
 
-// Use empty string for production (relative URLs), localhost for development
-const VPS_ENDPOINT = import.meta.env.VITE_VPS_ENDPOINT !== undefined 
-    ? import.meta.env.VITE_VPS_ENDPOINT 
-    : 'http://localhost:3000';
+// Runtime configuration via window.env (injected by Docker)
+// Fallback to build-time env var or localhost for development
+const VPS_ENDPOINT = window.env?.VPS_ENDPOINT || import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
 
 export const api = {
     async getAssessments() {
@@ -59,10 +58,10 @@ export const api = {
     getAssessmentData: async (id: string) => {
         const response = await fetch(`${VPS_ENDPOINT}/api/assessments/${id}/data`);
         if (!response.ok) throw new Error('Failed to fetch assessment data');
-        
+
         // Get response as ArrayBuffer to handle gzip compressed data
         const arrayBuffer = await response.arrayBuffer();
-        
+
         // Decompress gzip data manually (in case browser doesn't auto-decompress)
         try {
             const uint8Array = new Uint8Array(arrayBuffer);

@@ -49,6 +49,7 @@ jobs:
           cp -r package.json package-lock.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts tailwind.config.ts postcss.config.js components.json index.html src public frontend-build/
           cp vps-deploy/frontend/Dockerfile frontend-build/
           cp vps-deploy/frontend/nginx.conf frontend-build/
+          cp vps-deploy/frontend/docker-entrypoint.sh frontend-build/
           
           # Create a dummy .env.production for build (will be overridden at runtime or by env vars)
           # We set VITE_VPS_ENDPOINT to empty string so requests go to /api/assessments (relative)

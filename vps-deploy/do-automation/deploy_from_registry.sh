@@ -73,8 +73,16 @@ echo ""
 # 6. Deploy
 log "Configuring server..."
 
-# Install Docker
-ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$IP_ADDRESS "curl -fsSL https://get.docker.com | sh"
+# Install Docker with retry logic for apt lock
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$IP_ADDRESS "
+    for i in {1..5}; do
+        if curl -fsSL https://get.docker.com | sh; then
+            break
+        fi
+        echo 'Docker install failed (likely apt lock), retrying in 10s...'
+        sleep 10
+    done
+"
 
 # Login to GHCR
 log "Logging in to GitHub Container Registry..."
@@ -112,6 +120,8 @@ services:
   frontend:
     image: $IMAGE_FRONTEND
     restart: always
+    environment:
+      VITE_VPS_ENDPOINT: "" # Empty for relative paths via Nginx proxy
     ports:
       - "80:80"
     depends_on:
@@ -125,12 +135,13 @@ EOF
 scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" docker-compose-registry.yml root@$IP_ADDRESS:/root/ad-sentinel/docker-compose.yml
 
 # Copy init.sql (Ensure it's copied as a file)
-scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ../../vps-deploy/init.sql root@$IP_ADDRESS:/root/ad-sentinel/init.sql
+# Use PROJECT_ROOT to find the file correctly
+scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" "$PROJECT_ROOT/vps-deploy/init.sql" root@$IP_ADDRESS:/root/ad-sentinel/init.sql
 
 # Start
 log "Starting services..."
 # We need to pass the OPENAI_API_KEY from local env
-LOCAL_KEY=$(grep OPENAI_API_KEY ../../vps-deploy/.env | cut -d '=' -f2)
+LOCAL_KEY=$(grep OPENAI_API_KEY "$PROJECT_ROOT/vps-deploy/.env" | cut -d '=' -f2)
 
 if [ -z "$LOCAL_KEY" ]; then
     log "${YELLOW}Warning: OPENAI_API_KEY not found in local .env${NC}"
