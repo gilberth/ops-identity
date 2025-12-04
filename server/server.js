@@ -7,6 +7,11 @@ import multer from 'multer';
 import AdmZip from 'adm-zip';
 import fs from 'fs';
 import zlib from 'zlib';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -2234,6 +2239,14 @@ async function processAssessmentData(assessmentId, jsonData) {
   }
 }
 
+// Serve static files from 'public' directory
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Handle React routing, return all requests to React app
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Self-hosted backend listening on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });

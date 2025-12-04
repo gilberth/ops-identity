@@ -10,7 +10,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,37 +30,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Build and Push Backend
-      - name: Build and push Backend
+      - name: Build and push Unified App
         uses: docker/build-push-action@v5
         with:
-          context: ./vps-deploy/backend
+          context: .
+          file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Build and Push Frontend
-      # Note: Frontend build needs project root context but uses Dockerfile in vps-deploy/frontend
-      # We need to prepare the context similar to how we do it in manual deployment
-      - name: Prepare Frontend Context
-        run: |
-          mkdir -p frontend-build
-          cp -r package.json package-lock.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts tailwind.config.ts postcss.config.js components.json index.html src public frontend-build/
-          cp vps-deploy/frontend/Dockerfile frontend-build/
-          cp vps-deploy/frontend/nginx.conf frontend-build/
-          cp vps-deploy/frontend/docker-entrypoint.sh frontend-build/
-          
-          # Create a dummy .env.production for build (will be overridden at runtime or by env vars)
-          # We set VITE_VPS_ENDPOINT to empty string so requests go to /api/assessments (relative)
-          echo "VITE_VPS_ENDPOINT=" > frontend-build/.env.production
-
-      - name: Build and push Frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend-build
-          file: ./frontend-build/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
