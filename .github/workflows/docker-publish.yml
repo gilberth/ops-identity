@@ -45,14 +45,14 @@ jobs:
       # We need to prepare the context similar to how we do it in manual deployment
       - name: Prepare Frontend Context
         run: |
-          mkdir -p frontend-build/app
-          cp -r package.json package-lock.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts tailwind.config.ts postcss.config.js components.json index.html src public frontend-build/app/
+          mkdir -p frontend-build
+          cp -r package.json package-lock.json tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts tailwind.config.ts postcss.config.js components.json index.html src public frontend-build/
           cp vps-deploy/frontend/Dockerfile frontend-build/
           cp vps-deploy/frontend/nginx.conf frontend-build/
           
           # Create a dummy .env.production for build (will be overridden at runtime or by env vars)
           # We set VITE_VPS_ENDPOINT to /api to ensure it works with the reverse proxy
-          echo "VITE_VPS_ENDPOINT=/api" > frontend-build/app/.env.production
+          echo "VITE_VPS_ENDPOINT=/api" > frontend-build/.env.production
 
       - name: Build and push Frontend
         uses: docker/build-push-action@v5
