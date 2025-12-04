@@ -81,15 +81,10 @@ log "Logging in to GitHub Container Registry..."
 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$IP_ADDRESS "echo '$GITHUB_TOKEN' | docker login ghcr.io -u USERNAME --password-stdin"
 
 # Create docker-compose.yml
-log "Creating docker-compose.yml..."
+# Create directory structure explicitly
 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$IP_ADDRESS "mkdir -p /root/ad-sentinel"
 
-# We need to inject the IP into the frontend container if needed, 
-# BUT since we are using the pre-built image, the VITE_VPS_ENDPOINT is already baked in.
-# Wait! The image built by GH Actions will have whatever env var was present at build time.
-# In the workflow file I set: echo 'VITE_VPS_ENDPOINT=/api' > .env.production
-# So the image IS generic and correct! It expects to be served relative to /api.
-
+# Create docker-compose.yml
 cat > docker-compose-registry.yml <<EOF
 version: '3.8'
 services:
@@ -126,13 +121,22 @@ volumes:
   postgres_data:
 EOF
 
+# Copy docker-compose
 scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" docker-compose-registry.yml root@$IP_ADDRESS:/root/ad-sentinel/docker-compose.yml
-scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ../../vps-deploy/init.sql root@$IP_ADDRESS:/root/ad-sentinel/
+
+# Copy init.sql (Ensure it's copied as a file)
+scp -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ../../vps-deploy/init.sql root@$IP_ADDRESS:/root/ad-sentinel/init.sql
 
 # Start
 log "Starting services..."
 # We need to pass the OPENAI_API_KEY from local env
 LOCAL_KEY=$(grep OPENAI_API_KEY ../../vps-deploy/.env | cut -d '=' -f2)
-ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$IP_ADDRESS "cd /root/ad-sentinel && export OPENAI_API_KEY=$LOCAL_KEY && docker compose up -d"
+
+if [ -z "$LOCAL_KEY" ]; then
+    log "${YELLOW}Warning: OPENAI_API_KEY not found in local .env${NC}"
+fi
+
+# Export key and start
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@$IP_ADDRESS "cd /root/ad-sentinel && export OPENAI_API_KEY='$LOCAL_KEY' && docker compose up -d"
 
 log "${GREEN}Deployment Complete! Access at http://$IP_ADDRESS${NC}"
