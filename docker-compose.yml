@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # Database Service
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-active_scan_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Mount init.sql from local file system to initialize DB schema
+      - ./server/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Application Service (Frontend + Backend)
+  app:
+    image: ghcr.io/gilberth/ad-security-assessment-ai:latest
+    restart: always
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Database Connection
+      # We construct the URL from individual vars or use the full URL if provided
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-active_scan_db}
+      
+      # AI Configuration (Read from .env)
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
+      
+      # Frontend Configuration
+      # Empty string means relative paths (recommended for single-container)
+      VITE_VPS_ENDPOINT: ${VITE_VPS_ENDPOINT:-}
+      
+      # Node Config
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
