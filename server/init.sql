@@ -27,6 +27,17 @@ CREATE TABLE IF NOT EXISTS public.findings (
   description TEXT NOT NULL,
   recommendation TEXT NOT NULL,
   evidence JSONB,
+  mitre_attack TEXT,
+  cis_control TEXT,
+  impact_business TEXT,
+  remediation_commands TEXT,
+  prerequisites TEXT,
+  operational_impact TEXT,
+  microsoft_docs TEXT,
+  microsoft_docs TEXT,
+  current_vs_recommended TEXT,
+  timeline TEXT,
+  affected_count INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
@@ -55,3 +66,9 @@ CREATE TRIGGER update_assessments_updated_at
   BEFORE UPDATE ON public.assessments
   FOR EACH ROW
   EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS system_config (
+    key VARCHAR(50) PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

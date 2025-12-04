@@ -35,6 +35,8 @@ const CATEGORIES = [
 ];
 
 const MAX_PROMPT = 8000;
+const CHUNK_SIZE = 50;
+const MAX_PARALLEL_CHUNKS = 3;
 
 // Helper: Log to DB
 const timestamp = () => new Date().toISOString();
@@ -61,14 +63,18 @@ function sanitizeText(text) {
 }
 
 // Helper: Get system configuration
+// Helper: Get system configuration with Env Fallback
 async function getConfig(key) {
   try {
     const result = await pool.query('SELECT value FROM system_config WHERE key = $1', [key]);
-    return result.rows[0]?.value || null;
+    if (result.rows[0]?.value) return result.rows[0].value;
   } catch (error) {
-    console.error(`[${timestamp()}] Error getting config ${key}:`, error.message);
-    return null;
+    // console.error(`[${timestamp()}] Error getting config ${key}:`, error.message);
   }
+
+  // Fallback to Environment Variables
+  const envKey = key.toUpperCase();
+  return process.env[envKey] || null;
 }
 
 // Helper: Set system configuration
@@ -105,7 +111,8 @@ function extractCategoryData(jsonData, categoryName) {
 }
 
 // AI Analysis Logic (Ported from Edge Function)
-async function analyzeCategory(assessmentId, category, data) {
+async function analyzeCategory(assessmentId, category, data, provider, model, apiKey) {
+  let allFindings = [];
   try {
     await addLog(assessmentId, 'info', `Starting AI analysis for ${category}...`, category);
 
@@ -1702,17 +1709,17 @@ async function processAssessment(assessmentId, jsonData) {
   try {
     await addLog(assessmentId, 'info', '🚀 Starting processing on Self-Hosted VPS');
 
-    // 1. Store Raw Data (compressed)
-    const jsonString = JSON.stringify(jsonData);
-    const compressed = zlib.gzipSync(jsonString);
-    const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
-    console.log(`[${timestamp()}] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
+    // 1. Store Raw Data (JSONB handles storage efficiently)
+    // const jsonString = JSON.stringify(jsonData);
+    // const compressed = zlib.gzipSync(jsonString);
+    // const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
+    // console.log(`[${timestamp()}] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
 
     await pool.query(
       'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2)',
-      [assessmentId, compressed]
+      [assessmentId, jsonData]
     );
-    await addLog(assessmentId, 'info', `✅ Raw data stored (compressed ${compressionRatio}%)`);
+    await addLog(assessmentId, 'info', `✅ Raw data stored successfully`);
 
     // 2. Identify Categories
     const availableCategories = [];
@@ -1972,15 +1979,20 @@ app.get('/api/assessments/:id/data', async (req, res) => {
       return res.status(404).json({ error: 'Assessment data not found' });
     }
 
-    // Decompress data in streaming mode to reduce memory usage
-    const compressedData = result.rows[0].data;
+    // Check if data is compressed (Buffer) or raw JSON (Object from JSONB)
+    const rawData = result.rows[0].data;
 
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Encoding', 'gzip');
-
-    // Send compressed data directly, let browser decompress
-    console.log(`[${timestamp()}] [API] Sending compressed raw data for assessment ${id} (${Math.round(compressedData.length / 1024 / 1024)} MB)`);
-    res.send(compressedData);
+    if (Buffer.isBuffer(rawData)) {
+      // Legacy: Compressed data
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Encoding', 'gzip');
+      console.log(`[${timestamp()}] [API] Sending compressed raw data for assessment ${id} (${Math.round(rawData.length / 1024 / 1024)} MB)`);
+      res.send(rawData);
+    } else {
+      // New: JSONB data (already parsed by pg)
+      console.log(`[${timestamp()}] [API] Sending JSON raw data for assessment ${id}`);
+      res.json(rawData);
+    }
   } catch (error) {
     console.error(`[${timestamp()}] [API] Error fetching assessment data:`, error);
     res.status(500).json({ error: error.message });

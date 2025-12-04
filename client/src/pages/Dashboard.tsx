@@ -22,6 +22,8 @@ const Dashboard = () => {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [insightsModalOpen, setInsightsModalOpen] = useState(false);
   const [alertsModalOpen, setAlertsModalOpen] = useState(false);
+  const [categoryData, setCategoryData] = useState<any[]>([]);
+  const [trendData, setTrendData] = useState<any[]>([]);
 
   useEffect(() => {
     loadAssessments();
@@ -31,21 +33,23 @@ const Dashboard = () => {
     try {
       const assessmentsData = await api.getAssessments();
 
-      // Ensure assessmentsData is an array
       if (!Array.isArray(assessmentsData)) {
         console.warn('Invalid assessments data received:', assessmentsData);
         setAssessments([]);
         return;
       }
 
-      // Load findings count for each assessment
+      let allFindings: any[] = [];
       const assessmentsWithFindings = await Promise.all(
         assessmentsData.map(async (assessment) => {
           try {
             const findings = await api.getFindings(assessment.id);
+            if (findings) allFindings.push(...findings);
 
-            const criticalFindings = findings?.filter(f => f.severity === 'critical').length || 0;
-            const highFindings = findings?.filter(f => f.severity === 'high').length || 0;
+            const criticalFindings = findings?.filter((f: any) => f.severity === 'critical').length || 0;
+            const highFindings = findings?.filter((f: any) => f.severity === 'high').length || 0;
+            const mediumFindings = findings?.filter((f: any) => f.severity === 'medium').length || 0;
+            const lowFindings = findings?.filter((f: any) => f.severity === 'low').length || 0;
 
             return {
               id: assessment.id,
@@ -54,6 +58,8 @@ const Dashboard = () => {
               status: assessment.status,
               criticalFindings,
               highFindings,
+              mediumFindings,
+              lowFindings
             };
           } catch (error) {
             console.error(`Error loading findings for assessment ${assessment.id}:`, error);
@@ -64,12 +70,59 @@ const Dashboard = () => {
               status: assessment.status,
               criticalFindings: 0,
               highFindings: 0,
+              mediumFindings: 0,
+              lowFindings: 0
             };
           }
         })
       );
 
+      // Sort by date desc
+      assessmentsWithFindings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setAssessments(assessmentsWithFindings);
+
+      // Calculate Category Data
+      const catMap = new Map();
+      allFindings.forEach(f => {
+        let cat = 'General';
+        const type = (f.type_id || '').toUpperCase();
+        const title = (f.title || '').toUpperCase();
+
+        if (type.includes('PASSWORD') || type.includes('USER') || type.includes('ADMIN') || type.includes('ACCOUNT') || title.includes('USUARIO') || title.includes('CONTRASEÑA')) cat = 'Identity';
+        else if (type.includes('GPO') || type.includes('POLICY') || title.includes('POLÍTICA')) cat = 'GPO';
+        else if (type.includes('DNS') || type.includes('DHCP') || type.includes('NETWORK') || title.includes('RED')) cat = 'Network';
+        else if (type.includes('COMPUTER') || type.includes('OS') || type.includes('SERVER') || title.includes('SERVIDOR')) cat = 'Infrastructure';
+        else if (type.includes('KERBEROS') || type.includes('SPN')) cat = 'Kerberos';
+
+        catMap.set(cat, (catMap.get(cat) || 0) + 1);
+      });
+      setCategoryData(Array.from(catMap.entries()).map(([category, findings]) => ({ category, findings })));
+
+      // Calculate Trend Data (Last 7 days or all available)
+      const trendMap = new Map();
+      // Initialize last 7 days with 0
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toLocaleDateString('es-ES', { month: 'short', day: 'numeric' });
+        trendMap.set(dateStr, { date: dateStr, critical: 0, high: 0, medium: 0, low: 0 });
+      }
+
+      assessmentsWithFindings.forEach((a: any) => {
+        const dateStr = new Date(a.date).toLocaleDateString('es-ES', { month: 'short', day: 'numeric' });
+        if (trendMap.has(dateStr)) {
+          const entry = trendMap.get(dateStr);
+          entry.critical += a.criticalFindings;
+          entry.high += a.highFindings;
+          entry.medium += a.mediumFindings;
+          entry.low += a.lowFindings;
+        } else {
+          // If older than 7 days, maybe ignore or add? Let's add if it's relevant
+          // For now, stick to last 7 days view
+        }
+      });
+      setTrendData(Array.from(trendMap.values()));
+
     } catch (error) {
       console.error('Error loading assessments:', error);
       setAssessments([]);
@@ -121,31 +174,9 @@ const Dashboard = () => {
   const severityData = [
     { name: 'Critical', value: totalCritical, color: '#ef4444' },
     { name: 'High', value: totalHigh, color: '#f97316' },
-    { name: 'Medium', value: 0, color: '#eab308' }, // TODO: Add medium count
-    { name: 'Low', value: 0, color: '#22c55e' }, // TODO: Add low count
+    { name: 'Medium', value: assessments?.reduce((sum, a) => sum + (a.mediumFindings || 0), 0) || 0, color: '#eab308' },
+    { name: 'Low', value: assessments?.reduce((sum, a) => sum + (a.lowFindings || 0), 0) || 0, color: '#22c55e' },
   ].filter(item => item.value > 0);
-
-  // Category data (mock for now - will be real data from API)
-  const categoryData = [
-    { category: 'Kerberos', findings: Math.floor(totalCritical * 0.3) },
-    { category: 'GPO', findings: Math.floor(totalCritical * 0.25) },
-    { category: 'Permissions', findings: Math.floor(totalCritical * 0.2) },
-    { category: 'Passwords', findings: Math.floor(totalCritical * 0.15) },
-    { category: 'Network', findings: Math.floor(totalCritical * 0.1) },
-  ].filter(item => item.findings > 0);
-
-  // Trend data (mock - last 7 days)
-  const trendData = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - i));
-    return {
-      date: date.toLocaleDateString('es-ES', { month: 'short', day: 'numeric' }),
-      critical: Math.floor(Math.random() * 10),
-      high: Math.floor(Math.random() * 15),
-      medium: Math.floor(Math.random() * 20),
-      low: Math.floor(Math.random() * 25),
-    };
-  });
 
   // Recent activity for timeline
   const recentActivity = (assessments || []).slice(0, 5).map(a => ({
@@ -243,12 +274,21 @@ const Dashboard = () => {
         {!loading && totalAssessments > 0 && (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <SeverityChart data={severityData} loading={loading} />
-              <CategoriesChart data={categoryData} loading={loading} />
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4">Severidad de Hallazgos</h3>
+                <SeverityChart data={severityData} />
+              </Card>
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4">Hallazgos por Categoría</h3>
+                <CategoriesChart data={categoryData} />
+              </Card>
             </div>
 
             <div className="mb-6">
-              <TrendChart data={trendData} loading={loading} />
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4">Tendencia de Riesgo</h3>
+                <TrendChart data={trendData} />
+              </Card>
             </div>
           </>
         )}
@@ -296,7 +336,7 @@ const Dashboard = () => {
           {!loading && totalAssessments > 0 && (
             <div className="lg:col-span-1">
               <h2 className="text-2xl font-bold mb-6">Actividad Reciente</h2>
-              <RecentActivityTimeline activities={recentActivity} loading={loading} />
+              <RecentActivityTimeline assessments={recentActivity} />
             </div>
           )}
         </div>

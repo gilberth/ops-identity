@@ -8,7 +8,7 @@ import { Download, Shield, Terminal, ArrowLeft } from "lucide-react";
 import Header from "@/components/layout/Header";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
-import { api } from "@/utils/api";
+import { api, getApiEndpoint } from "@/utils/api";
 
 const NewAssessment = () => {
     const [domain, setDomain] = useState("");
@@ -53,7 +53,13 @@ const NewAssessment = () => {
     };
 
     const downloadScript = () => {
-        const uploadEndpoint = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+        let uploadEndpoint = getApiEndpoint();
+
+        // Ensure absolute URL for PowerShell script (which runs outside the browser)
+        if (uploadEndpoint.startsWith('/') || uploadEndpoint === '') {
+            uploadEndpoint = `${window.location.origin}${uploadEndpoint}`;
+        }
+
         const apiUrl = `${uploadEndpoint}/api/process-assessment`;
 
         // PowerShell script template with ALL advanced security functions

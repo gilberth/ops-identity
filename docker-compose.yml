@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Database Service
   db:
@@ -21,7 +19,8 @@ services:
 
   # Application Service (Frontend + Backend)
   app:
-    image: ghcr.io/gilberth/ad-security-assessment-ai:latest
+    # image: ghcr.io/gilberth/ad-security-assessment-ai:latest
+    build: .
     restart: always
     ports:
       - "${PORT:-3000}:3000"

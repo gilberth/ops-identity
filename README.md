@@ -78,57 +78,67 @@
 - **Nginx** - Frontend web server
 - **GitHub Actions** (ready for CI/CD)
 
-## 🚀 Quick Start
+## 🚀 Despliegue en Servidor Nuevo (Docker)
 
-### Prerequisites
+Sigue estos pasos para desplegar la aplicación en un servidor limpio (Ubuntu/Debian recomendado) con Docker y Docker Compose instalados.
 
-- Docker & Docker Compose
-- OpenAI API Key
-- ⚠️ **No Supabase required** - Self-hosted with PostgreSQL
-
-### VPS Deployment (Recommended)
-
+### 1. Clonar el Repositorio
 ```bash
-# 1. Clone repository
 git clone https://github.com/gilberth/ad-security-assessment-ai.git
-cd ad-security-assessment-ai/vps-deploy
-
-# 2. Configure ONLY backend environment
-cp .env.example .env
-nano .env  # Add your OPENAI_API_KEY
-
-# 3. Deploy (builds frontend + backend + database)
-docker compose up -d
-
-# 4. Access
-# http://your-vps-ip → Application (nginx serves frontend + proxies /api to backend)
+cd ad-security-assessment-ai
 ```
 
-**That's it!** Frontend automatically uses `.env.production` (already in repo) with `/api` endpoint.
-
-**Architecture**:
-
-```
-Internet → Nginx (port 80) ─┬→ Frontend (static files)
-                             └→ /api → Backend:3000 → PostgreSQL:5432
-```
-
-### Local Development
+### 2. Configurar Variables de Entorno
+Crea el archivo `.env` copiando el ejemplo:
 
 ```bash
-# Install dependencies
+cp env.example .env
+nano .env
+```
+
+**Modificaciones necesarias en `.env`:**
+
+*   **`OPENAI_API_KEY`**: (Obligatorio) Tu clave de API de OpenAI para el análisis de IA.
+*   **`POSTGRES_PASSWORD`**: (Recomendado) Cambia la contraseña por defecto de la base de datos.
+*   **`VITE_VPS_ENDPOINT`**: (Opcional) Si usas un dominio o IP específica, configúralo aquí (ej: `http://mi-servidor.com`). Si lo dejas vacío, la aplicación usará rutas relativas.
+
+### 3. Iniciar los Contenedores
+Ejecuta el siguiente comando para construir e iniciar los servicios (App unificada + Base de datos):
+
+```bash
+docker compose up -d --build
+```
+
+### 4. Verificar el Despliegue
+Accede a tu servidor a través del navegador:
+`http://<TU-IP-SERVIDOR>:3000`
+
+*   **Frontend**: Servido directamente en la raíz `/`.
+*   **Backend API**: Disponible en `/api`.
+*   **Base de Datos**: Puerto 5432 (interno).
+
+---
+
+## 💻 Desarrollo Local
+
+Para ejecutar el entorno de desarrollo en tu máquina local:
+
+```bash
+# 1. Instalar dependencias
 npm install
 
-# Create .env for local development (optional)
-echo "VITE_VPS_ENDPOINT=http://localhost:3000" > .env
+# 2. Configurar entorno
+cp env.example .env
+# (Asegúrate de poner tu OPENAI_API_KEY en .env)
 
-# Start dev server
+# 3. Iniciar base de datos
+docker compose up -d db
+
+# 4. Iniciar servidor de desarrollo (Frontend + Backend)
 npm run dev
-
-# Access: http://localhost:5173
 ```
 
-**Note**: In dev mode, Vite loads `.env` (local) over `.env.production` (VPS). Backend must be running at `http://localhost:3000`.
+Accede a: `http://localhost:5173` (Frontend) y `http://localhost:3000` (Backend).
 
 ## 📖 Usage
 

@@ -2,7 +2,7 @@ import pako from 'pako';
 
 // Runtime configuration via window.env (injected by Docker)
 // Fallback to build-time env var or localhost for development
-const getApiEndpoint = () => {
+export const getApiEndpoint = () => {
     if (typeof window !== 'undefined' && window.env && window.env.VPS_ENDPOINT !== undefined) {
         return window.env.VPS_ENDPOINT;
     }
