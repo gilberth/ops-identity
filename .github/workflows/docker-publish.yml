@@ -51,8 +51,8 @@ jobs:
           cp vps-deploy/frontend/nginx.conf frontend-build/
           
           # Create a dummy .env.production for build (will be overridden at runtime or by env vars)
-          # We set VITE_VPS_ENDPOINT to /api to ensure it works with the reverse proxy
-          echo "VITE_VPS_ENDPOINT=/api" > frontend-build/.env.production
+          # We set VITE_VPS_ENDPOINT to empty string so requests go to /api/assessments (relative)
+          echo "VITE_VPS_ENDPOINT=" > frontend-build/.env.production
 
       - name: Build and push Frontend
         uses: docker/build-push-action@v5
