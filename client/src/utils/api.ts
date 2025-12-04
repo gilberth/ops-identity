@@ -2,7 +2,17 @@ import pako from 'pako';
 
 // Runtime configuration via window.env (injected by Docker)
 // Fallback to build-time env var or localhost for development
-const VPS_ENDPOINT = window.env?.VPS_ENDPOINT || import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+const getApiEndpoint = () => {
+    if (typeof window !== 'undefined' && window.env && window.env.VPS_ENDPOINT !== undefined) {
+        return window.env.VPS_ENDPOINT;
+    }
+    if (import.meta.env.VITE_VPS_ENDPOINT !== undefined) {
+        return import.meta.env.VITE_VPS_ENDPOINT;
+    }
+    return 'http://localhost:3000';
+};
+
+const VPS_ENDPOINT = getApiEndpoint();
 
 export const api = {
     async getAssessments() {
