@@ -1,6 +1,6 @@
-# 🔒 AD Security Assessment AI
+# 🔒 AD Insight 360
 
-**Enterprise Active Directory Security Assessment Platform with AI-powered analysis**
+**Enterprise AD Security Assessment & Compliance Platform**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)](https://www.typescriptlang.org/)
@@ -84,8 +84,8 @@ Sigue estos pasos para desplegar la aplicación en un servidor limpio (Ubuntu/De
 
 ### 1. Clonar el Repositorio
 ```bash
-git clone https://github.com/gilberth/ad-security-assessment-ai.git
-cd ad-security-assessment-ai
+git clone https://github.com/gilberth/ad-insight-360.git
+cd ad-insight-360
 ```
 
 ### 2. Configurar Variables de Entorno
@@ -229,7 +229,7 @@ This repository supports **GitHub Model Context Protocol (MCP)** for AI-assisted
 // Search for open security issues
 const query = await github.formSearchQuery({
   naturalLanguageString: "open security findings with critical severity",
-  repo: { owner: "gilberth", name: "ad-security-assessment-ai" },
+  repo: { owner: "gilberth", name: "ad-insight-360" },
 });
 
 const results = await github.doSearch(query);
@@ -239,8 +239,8 @@ const results = await github.doSearch(query);
 
 For support and inquiries:
 
-- **Repository**: [github.com/gilberth/ad-security-assessment-ai](https://github.com/gilberth/ad-security-assessment-ai)
-- **Issues**: [GitHub Issues](https://github.com/gilberth/ad-security-assessment-ai/issues)
+- **Repository**: [github.com/gilberth/ad-insight-360](https://github.com/gilberth/ad-insight-360)
+- **Issues**: [GitHub Issues](https://github.com/gilberth/ad-insight-360/issues)
 
 ## 🏆 Credits
 

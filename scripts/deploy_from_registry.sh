@@ -4,7 +4,7 @@
 DO_API_TOKEN="${DO_API_TOKEN}"
 GITHUB_TOKEN="${GITHUB_TOKEN}" # Required for pulling images
 REPO_OWNER="gilberth"
-REPO_NAME="ad-security-assessment-ai"
+REPO_NAME="ad-insight-360"
 IMAGE_APP="ghcr.io/$REPO_OWNER/$REPO_NAME:latest"
 
 REGION="nyc1"

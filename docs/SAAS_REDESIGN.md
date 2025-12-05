@@ -670,7 +670,7 @@ services:
 
 ### Git
 
-- **Repository:** https://github.com/gilberth/ad-security-assessment-ai
+- **Repository:** https://github.com/gilberth/ad-insight-360
 - **Backup Branch:** `backup/pre-saas-redesign`
 - **Feature Branch:** `feature/saas-dashboard-redesign`
 - **Main Branch:** `main` (merged)

@@ -1,5 +1,5 @@
 {
-    "name": "active-scan-backend",
+    "name": "ad-insight-360-backend",
     "version": "1.0.0",
     "description": "Self-hosted backend for Active Scan Insight",
     "main": "server.js",
