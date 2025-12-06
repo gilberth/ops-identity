@@ -9,6 +9,11 @@ import AssessmentDetail from "./pages/AssessmentDetail";
 import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
 import Auth from "./pages/Auth";
+import Users from "./pages/Users";
+import GPOAnalysis from "./pages/GPOAnalysis";
+import DNSNetwork from "./pages/DNSNetwork";
+import Reports from "./pages/Reports";
+import AuthentikSetup from "./pages/AuthentikSetup";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { ThemeProvider } from "@/components/theme-provider";
 
@@ -16,7 +21,7 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+    <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -26,7 +31,12 @@ const App = () => (
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/new-assessment" element={<ProtectedRoute><NewAssessment /></ProtectedRoute>} />
             <Route path="/assessment/:id" element={<ProtectedRoute><AssessmentDetail /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
+            <Route path="/gpo" element={<ProtectedRoute><GPOAnalysis /></ProtectedRoute>} />
+            <Route path="/dns" element={<ProtectedRoute><DNSNetwork /></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute><AdminPanel /></ProtectedRoute>} />
+            <Route path="/setup" element={<AuthentikSetup />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

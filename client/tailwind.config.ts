@@ -76,6 +76,7 @@ export default {
         'md': 'var(--shadow-md)',
         'lg': 'var(--shadow-lg)',
         'card': 'var(--shadow-card)',
+        'soft': '0 8px 30px rgba(0,0,0,0.04)',
       },
       borderRadius: {
         lg: "var(--radius)",

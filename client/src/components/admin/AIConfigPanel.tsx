@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { Save, Eye, EyeOff } from "lucide-react";
-import { api } from "@/utils/api";
+import { api, getApiEndpoint } from "@/utils/api";
 
 interface AIConfig {
   provider: string;
@@ -44,8 +44,9 @@ const AIConfigPanel = () => {
 
   const loadConfig = async () => {
     try {
-      const VPS_ENDPOINT = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+      const VPS_ENDPOINT = getApiEndpoint();
       const response = await fetch(`${VPS_ENDPOINT}/api/config/ai`);
+      if (!response.ok) throw new Error('Failed to load config');
       const data = await response.json();
       setConfig(data);
     } catch (error) {
@@ -63,7 +64,7 @@ const AIConfigPanel = () => {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const VPS_ENDPOINT = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
+      const VPS_ENDPOINT = getApiEndpoint();
       const payload: any = {
         provider: config?.provider,
         model: config?.model,
@@ -106,9 +107,10 @@ const AIConfigPanel = () => {
 
   if (loading || !config) {
     return (
-      <Card className="mb-6">
-        <CardContent className="p-6">
-          <p className="text-muted-foreground">Cargando configuración...</p>
+      <Card className="mb-6 rounded-[2rem] shadow-soft border-gray-100">
+        <CardContent className="p-8 text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground font-medium">Cargando configuración...</p>
         </CardContent>
       </Card>
     );
@@ -122,57 +124,62 @@ const AIConfigPanel = () => {
   };
 
   return (
-    <Card className="mb-6">
-      <CardHeader>
-        <CardTitle>Configuración de IA</CardTitle>
-        <CardDescription>
+    <Card className="mb-6 rounded-[2rem] shadow-soft border-gray-100 overflow-hidden">
+      <CardHeader className="bg-gray-50/50 border-b border-gray-100 p-6">
+        <CardTitle className="text-xl font-bold tracking-tight">Configuración de IA</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Configura el proveedor y modelo de inteligencia artificial para el análisis de seguridad
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="p-6 space-y-6">
         {/* Provider Selection */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-2">
-            <Label htmlFor="provider">Proveedor de IA</Label>
+            <Label htmlFor="provider" className="text-sm font-semibold">Proveedor de IA</Label>
             <Select
               value={config.provider}
-              onValueChange={(value) => setConfig({ ...config, provider: value })}
+              onValueChange={(value) => setConfig({ ...config, provider: value, model: config.models[value as keyof typeof config.models]?.[0] || '' })}
             >
-              <SelectTrigger id="provider">
+              <SelectTrigger id="provider" className="h-12 rounded-xl border-gray-200">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="openai" disabled={!config.available_providers.openai && !apiKeys.openai}>
-                  OpenAI {config.available_providers.openai && <Badge variant="outline" className="ml-2">Configurado</Badge>}
+                  OpenAI {config.available_providers.openai && <Badge variant="outline" className="ml-2 bg-green-50 text-green-700 border-green-200">Configurado</Badge>}
                 </SelectItem>
                 <SelectItem value="gemini" disabled={!config.available_providers.gemini && !apiKeys.gemini}>
-                  Google Gemini {config.available_providers.gemini && <Badge variant="outline" className="ml-2">Configurado</Badge>}
+                  Google Gemini {config.available_providers.gemini && <Badge variant="outline" className="ml-2 bg-green-50 text-green-700 border-green-200">Configurado</Badge>}
                 </SelectItem>
                 <SelectItem value="deepseek" disabled={!config.available_providers.deepseek && !apiKeys.deepseek}>
-                  DeepSeek {config.available_providers.deepseek && <Badge variant="outline" className="ml-2">Configurado</Badge>}
+                  DeepSeek {config.available_providers.deepseek && <Badge variant="outline" className="ml-2 bg-green-50 text-green-700 border-green-200">Configurado</Badge>}
                 </SelectItem>
                 <SelectItem value="anthropic" disabled={!config.available_providers.anthropic && !apiKeys.anthropic}>
-                  Anthropic (Claude) {config.available_providers.anthropic && <Badge variant="outline" className="ml-2">Configurado</Badge>}
+                  Anthropic (Claude) {config.available_providers.anthropic && <Badge variant="outline" className="ml-2 bg-green-50 text-green-700 border-green-200">Configurado</Badge>}
                 </SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="model">Modelo</Label>
+            <Label htmlFor="model" className="text-sm font-semibold">Modelo</Label>
             <Select
               value={config.model}
               onValueChange={(value) => setConfig({ ...config, model: value })}
+              disabled={!config.provider}
             >
-              <SelectTrigger id="model">
-                <SelectValue />
+              <SelectTrigger id="model" className="h-12 rounded-xl border-gray-200">
+                <SelectValue placeholder="Selecciona un modelo" />
               </SelectTrigger>
               <SelectContent>
-                {config.models[config.provider as keyof typeof config.models]?.map((model) => (
-                  <SelectItem key={model} value={model}>
-                    {model}
-                  </SelectItem>
-                ))}
+                {config.provider && config.models[config.provider as keyof typeof config.models]?.length > 0 ? (
+                  config.models[config.provider as keyof typeof config.models].map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {model}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="p-2 text-sm text-muted-foreground text-center">No hay modelos disponibles</div>
+                )}
               </SelectContent>
             </Select>
           </div>

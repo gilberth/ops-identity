@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Download, Shield, Terminal, ArrowLeft } from "lucide-react";
-import Header from "@/components/layout/Header";
+import { Download, Shield, Terminal, ArrowLeft, CheckCircle } from "lucide-react";
+
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { api, getApiEndpoint } from "@/utils/api";
@@ -2292,123 +2292,183 @@ Write-Host ""
     };
 
     return (
-        <div className="min-h-screen bg-gradient-subtle">
-            <Header />
+        <div className="min-h-screen bg-background text-foreground pb-20">
 
-            <main className="container py-8">
-                <div className="mb-6">
+            <main className="container mx-auto px-4 py-8 max-w-5xl">
+                <div className="mb-8 pl-2">
                     <Link to="/">
-                        <Button variant="ghost" size="sm">
+                        <Button variant="ghost" className="hover:bg-transparent hover:text-primary pl-0">
                             <ArrowLeft className="h-4 w-4 mr-2" />
-                            Volver al Dashboard
+                            Back to Dashboard
                         </Button>
                     </Link>
                 </div>
 
-                <div className="max-w-3xl mx-auto">
-                    <div className="text-center mb-8">
-                        <Shield className="h-16 w-16 text-primary mx-auto mb-4" />
-                        <h1 className="text-4xl font-bold mb-2">Nuevo Assessment</h1>
-                        <p className="text-muted-foreground text-lg">
-                            Genera el script PowerShell para recolectar información de seguridad
-                        </p>
-                    </div>
-
-                    <Card className="shadow-lg">
-                        <CardHeader>
-                            <CardTitle>Configuración del Assessment</CardTitle>
-                            <CardDescription>
-                                Ingresa el nombre del dominio para generar el script personalizado
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                            <div className="space-y-2">
-                                <Label htmlFor="domain">Nombre del Dominio</Label>
-                                <Input
-                                    id="domain"
-                                    placeholder="ejemplo: contoso.local"
-                                    value={domain}
-                                    onChange={(e) => setDomain(e.target.value)}
-                                    className="text-lg"
-                                />
-                                <p className="text-sm text-muted-foreground">
-                                    Este será el dominio de Active Directory a evaluar
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                    {/* Left Column: Context & Info */}
+                    <div className="lg:col-span-4 space-y-6">
+                        <div className="relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-primary to-primary-hover p-8 text-white shadow-soft">
+                            <div className="absolute top-0 right-0 -mt-4 -mr-4 h-24 w-24 rounded-full bg-white/10 blur-2xl" />
+                            <div className="relative z-10">
+                                <div className="mb-6 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
+                                    <Shield className="h-6 w-6 text-white" />
+                                </div>
+                                <h1 className="mb-2 text-2xl font-bold">New Assessment</h1>
+                                <p className="text-primary-foreground/90 text-sm leading-relaxed">
+                                    Generate a specialized PowerShell collector to audit your Active Directory environment.
                                 </p>
                             </div>
+                        </div>
 
-                            <div className="space-y-4">
-                                <Label className="text-base">Módulos de Auditoría</Label>
-                                <div className="grid gap-3">
-                                    {modules.map((module) => (
-                                        <div
-                                            key={module.id}
-                                            className={`flex items-start space-x-3 p-3 border rounded-md transition-all cursor-pointer ${selectedModules.includes(module.id) ? 'bg-primary/5 border-primary/50' : 'hover:bg-accent/50'}`}
-                                            onClick={() => toggleModule(module.id)}
-                                        >
-                                            <div className={`mt-1 h-4 w-4 rounded border flex items-center justify-center ${selectedModules.includes(module.id) ? 'bg-primary border-primary' : 'border-input'}`}>
-                                                {selectedModules.includes(module.id) && <div className="h-2 w-2 bg-primary-foreground rounded-full" />}
-                                            </div>
-                                            <div className="space-y-1">
-                                                <div className="font-medium leading-none">{module.label}</div>
-                                                <p className="text-sm text-muted-foreground">{module.description}</p>
-                                            </div>
+                        <div className="rounded-[2rem] bg-white p-6 shadow-soft">
+                            <h3 className="font-semibold mb-4 flex items-center gap-2">
+                                <Terminal className="h-4 w-4 text-primary" />
+                                How it works
+                            </h3>
+                            <div className="space-y-6">
+                                <div className="flex gap-4">
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-600">1</div>
+                                    <div>
+                                        <h4 className="font-medium text-sm">Configure</h4>
+                                        <p className="text-xs text-muted-foreground mt-1">Enter target domain and select audit modules.</p>
+                                    </div>
+                                </div>
+                                <div className="relative">
+                                    <div className="absolute left-4 top-0 -bottom-6 w-px bg-gray-100" />
+                                    <div className="flex gap-4">
+                                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-600 relative z-10">2</div>
+                                        <div>
+                                            <h4 className="font-medium text-sm">Generate & Run</h4>
+                                            <p className="text-xs text-muted-foreground mt-1">Download the script and run it on a Domain Controller.</p>
                                         </div>
-                                    ))}
+                                    </div>
+                                </div>
+                                <div className="flex gap-4">
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-600">3</div>
+                                    <div>
+                                        <h4 className="font-medium text-sm">Analyze</h4>
+                                        <p className="text-xs text-muted-foreground mt-1">Upload results (auto or manual) to see your dashboard.</p>
+                                    </div>
                                 </div>
                             </div>
-                            {!scriptGenerated ? (
-                                <Button
-                                    onClick={generateScript}
-                                    className="w-full bg-gradient-primary"
-                                    size="lg"
-                                >
-                                    <Terminal className="h-5 w-5 mr-2" />
-                                    Generar Script PowerShell
-                                </Button>
-                            ) : (
+                        </div>
+                    </div>
+
+                    {/* Right Column: Form */}
+                    <div className="lg:col-span-8">
+                        <Card className="border-none shadow-soft rounded-[2.5rem] bg-white overflow-hidden">
+                            <CardHeader className="px-8 pt-8 pb-0">
+                                <CardTitle className="text-xl">Configuration</CardTitle>
+                                <CardDescription>Customize your security details</CardDescription>
+                            </CardHeader>
+                            <CardContent className="p-8 space-y-8">
+                                <div className="space-y-3">
+                                    <Label htmlFor="domain" className="text-sm font-semibold text-foreground">Target Domain</Label>
+                                    <Input
+                                        id="domain"
+                                        placeholder="e.g. contoso.local"
+                                        value={domain}
+                                        onChange={(e) => setDomain(e.target.value)}
+                                        className="h-12 rounded-xl text-lg border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-primary/20 transition-all"
+                                    />
+                                </div>
+
                                 <div className="space-y-4">
-                                    <div className="bg-muted p-4 rounded-lg border border-border">
-                                        <div className="flex items-start space-x-3">
-                                            <Terminal className="h-5 w-5 text-primary mt-0.5" />
-                                            <div className="flex-1">
-                                                <h3 className="font-semibold mb-1">Script Generado</h3>
-                                                <p className="text-sm text-muted-foreground mb-3">
-                                                    El script está listo para descargar. Ejecútalo en el controlador de dominio
-                                                    con privilegios de Domain Admin.
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-sm font-semibold text-foreground">Audit Modules</Label>
+                                        <span className="text-xs text-muted-foreground bg-gray-100 px-2 py-1 rounded-full">{selectedModules.length} selected</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {modules.map((module) => {
+                                            const isSelected = selectedModules.includes(module.id);
+                                            return (
+                                                <div
+                                                    key={module.id}
+                                                    onClick={() => toggleModule(module.id)}
+                                                    className={`
+                                                        relative cursor-pointer rounded-2xl p-4 border-2 transition-all duration-200 ease-out
+                                                        ${isSelected
+                                                            ? 'border-primary bg-primary/5 shadow-sm scale-[1.01]'
+                                                            : 'border-transparent bg-gray-50 hover:bg-gray-100 hover:scale-[1.01]'
+                                                        }
+                                                    `}
+                                                >
+                                                    <div className="flex items-start gap-3">
+                                                        <div className={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}>
+                                                            {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                                                        </div>
+                                                        <div>
+                                                            <div className={`font-semibold text-sm ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+                                                                {module.label}
+                                                            </div>
+                                                            <p className="text-xs text-muted-foreground mt-1 leading-normal">
+                                                                {module.description}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {!scriptGenerated ? (
+                                    <Button
+                                        onClick={generateScript}
+                                        className="w-full h-14 text-base rounded-2xl shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all mt-4"
+                                        size="lg"
+                                    >
+                                        <Terminal className="h-5 w-5 mr-2" />
+                                        Generate Collector Script
+                                    </Button>
+                                ) : (
+                                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
+                                        <div className="rounded-2xl border border-green-100 bg-green-50/50 p-6 flex items-start gap-4">
+                                            <div className="h-10 w-10 shrink-0 rounded-full bg-green-100 flex items-center justify-center">
+                                                <CheckCircle className="h-6 w-6 text-green-600" />
+                                            </div>
+                                            <div>
+                                                <h3 className="font-semibold text-green-900">Script Ready</h3>
+                                                <p className="text-sm text-green-700/80 mt-1">
+                                                    Your assessment ID <strong>{assessmentId}</strong> has been created.
+                                                    Download the script and check the instructions below.
                                                 </p>
                                             </div>
                                         </div>
-                                    </div>
 
-                                    <Button
-                                        onClick={downloadScript}
-                                        className="w-full"
-                                        size="lg"
-                                        variant="default"
-                                    >
-                                        <Download className="h-5 w-5 mr-2" />
-                                        Descargar Script PowerShell
-                                    </Button>
+                                        <Button
+                                            onClick={downloadScript}
+                                            className="w-full h-14 text-base rounded-2xl shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
+                                            size="lg"
+                                        >
+                                            <Download className="h-5 w-5 mr-2" />
+                                            Download PowerShell Script
+                                        </Button>
 
-                                    <div className="bg-severity-info/10 border border-severity-info/30 rounded-lg p-4">
-                                        <h4 className="font-semibold mb-2 text-sm">Instrucciones:</h4>
-                                        <ol className="text-sm space-y-1 text-muted-foreground list-decimal list-inside">
-                                            <li>Descarga el script PowerShell</li>
-                                            <li>Cópialo al controlador de dominio</li>
-                                            <li>Ejecuta PowerShell como administrador</li>
-                                            <li>
-                                                <strong>Con Internet:</strong> <code className="bg-muted px-1 rounded">.\AD-Assessment-{domain}.ps1</code>
-                                            </li>
-                                            <li>
-                                                <strong>Sin Internet (DC aislado):</strong> <code className="bg-muted px-1 rounded">.\AD-Assessment-{domain}.ps1 -OfflineMode</code>
-                                            </li>
-                                            <li>Si usaste -OfflineMode: Copia el JSON generado a una PC con internet y súbelo manualmente desde el dashboard</li>
-                                        </ol>
+                                        <div className="bg-gray-50 rounded-2xl p-6 space-y-4">
+                                            <h4 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Quick Instructions</h4>
+                                            <div className="space-y-3 font-mono text-xs md:text-sm">
+                                                <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">1</span>
+                                                    <span>Run as Admin on Domain Controller</span>
+                                                </div>
+                                                <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">2</span>
+                                                    <code className="text-primary truncate">.\AD-Assessment-{domain || 'domain'}.ps1</code>
+                                                </div>
+                                                <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 shadow-sm opacity-75">
+                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">3</span>
+                                                    <span>
+                                                        Offline Mode: <code className="bg-gray-100 px-1 rounded"> -OfflineMode</code>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
                 </div>
             </main>
         </div>

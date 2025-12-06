@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Download, Shield, Users, FileText, AlertTriangle, RefreshCw, Upload, Terminal } from "lucide-react";
-import Header from "@/components/layout/Header";
+
 import SeverityBadge from "@/components/assessment/SeverityBadge";
 import AnalysisProgress from "@/components/assessment/AnalysisProgress";
 import { AssessmentLogs } from "@/components/assessment/AssessmentLogs";
@@ -409,7 +409,7 @@ const AssessmentDetail = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-subtle">
-        <Header />
+
         <main className="container py-8">
           <div className="text-center py-12">
             <p className="text-muted-foreground">Cargando assessment...</p>
@@ -422,7 +422,7 @@ const AssessmentDetail = () => {
   if (!assessment) {
     return (
       <div className="min-h-screen bg-gradient-subtle">
-        <Header />
+
         <main className="container py-8">
           <div className="text-center py-12">
             <p className="text-muted-foreground">Assessment no encontrado</p>
@@ -440,7 +440,7 @@ const AssessmentDetail = () => {
 
   return (
     <div className="min-h-screen bg-gradient-subtle">
-      <Header />
+
 
       <main className="container py-8">
         <div className="mb-6">

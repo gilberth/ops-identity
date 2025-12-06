@@ -2,7 +2,15 @@
 trigger: always_on
 ---
 
-"Cada vez que se requiera modificar o generar cualquier prompt destinado a un modelo de IA dentro de este código, siempre se debe consultar y aplicar estrictamente las directrices de buenas prácticas de ingeniería de prompts detalladas en el archivo ./guiaprompt.md de este espacio de trabajo. Utiliza este documento como la fuente autorizada de estilo y contenido para los prompts."
+# Directrices Operativas del Sistema
 
+1. **Ingeniería de Prompts y Meta-Prompts:**
+   - Cualquier tarea que implique la modificación, generación o refactorización de prompts para modelos de IA debe regirse estrictamente por las directrices documentadas en `./guiaprompt.md`.
+   - Considera este archivo como la **única fuente de verdad** (Source of Truth) para el estilo, estructura y tono de los prompts.
 
-"Para cualquier trabajo que requiera utilizar github, usa el servidor mcp de github"
+2. **Integración con Control de Versiones (GitHub):**
+   - Para toda operación relacionada con repositorios remotos (commits, PRs, issues, búsquedas), utiliza **exclusivamente** el servidor MCP (Model Context Protocol) de GitHub configurado. No intentes ejecutar comandos de git locales si la acción requiere interacción con la plataforma GitHub.
+
+3. **Generación de UI y Activos Visuales:**
+   - Al recibir solicitudes para cambios de diseño frontend, maquetación o generación de imágenes, debes invocar obligatoriamente el modelo **"Nano Banana Pro"** (versión más reciente/latest).
+   - No utilices modelos de texto estándar para generar o describir soluciones visuales si puedes generarlas directamente con este modelo.
