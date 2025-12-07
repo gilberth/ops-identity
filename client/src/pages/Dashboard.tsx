@@ -8,10 +8,11 @@ import { RiskTrendChart } from "@/components/assessment/RiskTrendChart";
 import { api } from "@/utils/api";
 import { Link } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import { Hammer } from "lucide-react";
+import { RemediationModal } from "@/components/assessment/RemediationModal";
 import { cn } from "@/lib/utils";
 import { MaturityRadar } from "@/components/assessment/MaturityRadar";
 import { ComplianceMatrix } from "@/components/assessment/ComplianceMatrix";
-import { Hammer } from "lucide-react";
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -28,6 +29,8 @@ const Dashboard = () => {
   const [trendData, setTrendData] = useState<any[]>([]);
   const [latestAssessment, setLatestAssessment] = useState<any>(null);
   const [allFindings, setAllFindings] = useState<any[]>([]);
+  const [selectedFinding, setSelectedFinding] = useState<any>(null);
+  const [isRemediationOpen, setIsRemediationOpen] = useState(false);
 
   useEffect(() => {
     loadDashboardData();
@@ -373,7 +376,16 @@ const Dashboard = () => {
                               </Badge>
                               <span className="text-[10px] text-muted-foreground uppercase font-bold">Critical</span>
                             </div>
-                            <Button size="icon" variant="ghost" className="h-6 w-6 text-blue-600 hover:text-blue-800 hover:bg-blue-50" title="Generate Remediation Script">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6 text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                              title="Generate Remediation Script"
+                              onClick={() => {
+                                setSelectedFinding(risk);
+                                setIsRemediationOpen(true);
+                              }}
+                            >
                               <Hammer className="h-3 w-3" />
                             </Button>
                           </div>
@@ -393,6 +405,12 @@ const Dashboard = () => {
           </div>
         </>
       )}
+
+      <RemediationModal
+        isOpen={isRemediationOpen}
+        onClose={() => setIsRemediationOpen(false)}
+        finding={selectedFinding}
+      />
     </div>
   );
 };
