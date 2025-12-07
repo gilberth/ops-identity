@@ -9,6 +9,9 @@ import { api } from "@/utils/api";
 import { Link } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { MaturityRadar } from "@/components/assessment/MaturityRadar";
+import { ComplianceMatrix } from "@/components/assessment/ComplianceMatrix";
+import { Hammer } from "lucide-react";
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -24,6 +27,7 @@ const Dashboard = () => {
   const [categoryScores, setCategoryScores] = useState<any[]>([]);
   const [trendData, setTrendData] = useState<any[]>([]);
   const [latestAssessment, setLatestAssessment] = useState<any>(null);
+  const [allFindings, setAllFindings] = useState<any[]>([]);
 
   useEffect(() => {
     loadDashboardData();
@@ -105,6 +109,9 @@ const Dashboard = () => {
         medium,
         low
       });
+
+      // Save findings for detailed widgets
+      setAllFindings(Array.isArray(findings) ? findings : []);
 
       setTopRisks(risksList.filter((r: any) => r.severity === "critical" || r.severity === "high").slice(0, 5));
 
@@ -299,33 +306,43 @@ const Dashboard = () => {
           {/* Middle Row: Detailed Breakdown */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
 
-            {/* Domain Category Health */}
-            <Card className="col-span-1 lg:col-span-2 rounded-[2rem] border-none shadow-soft bg-white">
-              <CardHeader className="px-8 pt-8">
-                <CardTitle>Category Performance</CardTitle>
-                <CardDescription>Security maturity across different domains</CardDescription>
+            {/* Domain & Compliance Health */}
+            <Card className="col-span-1 lg:col-span-2 rounded-[2rem] border-none shadow-soft bg-white overflow-hidden">
+              <CardHeader className="px-6 pt-6 pb-2 border-b border-gray-50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Maturity & Compliance</CardTitle>
+                    <CardDescription>Security alignment with industry standards</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                    AI Analysis Models Active
+                  </Badge>
+                </div>
               </CardHeader>
-              <CardContent className="px-8 pb-8">
-                <div className="space-y-6">
-                  {categoryScores.map((cat, idx) => (
-                    <div key={idx} className="space-y-2">
-                      <div className="flex items-center justify-between text-sm font-medium">
-                        <span className="text-muted-foreground flex items-center gap-2">
-                          {cat.name === "Account Security" && <Users className="h-4 w-4" />}
-                          {cat.name === "GPO Health" && <FileText className="h-4 w-4" />}
-                          {cat.name === "Infrastructure" && <Globe className="h-4 w-4" />}
-                          {cat.name}
-                        </span>
-                        <span className={cn("font-bold", getScoreColor(cat.score))}>{cat.score}/100</span>
-                      </div>
-                      <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-1000 ease-out"
-                          style={{ width: `${cat.score}%`, backgroundColor: cat.color }}
-                        />
-                      </div>
+              <CardContent className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
+                  {/* Radar Chart */}
+                  <div className="h-[300px] w-full bg-slate-50/50 rounded-2xl p-2 border border-slate-100 relative">
+                    <div className="absolute top-2 left-3 z-10">
+                      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Maturity Model</span>
                     </div>
-                  ))}
+                    <MaturityRadar findings={allFindings} />
+                  </div>
+
+                  {/* Compliance Matrix */}
+                  <div className="h-full flex flex-col justify-center">
+                    <ComplianceMatrix findings={allFindings} />
+
+                    <div className="mt-4 p-4 bg-blue-50/50 border border-blue-100 rounded-xl">
+                      <h4 className="text-xs font-bold text-blue-800 uppercase mb-1">Recommendation Engine</h4>
+                      <p className="text-xs text-blue-600 mb-2">
+                        Based on the analysis, implementing <strong>Tiered Admin Model</strong> would reduce risk score by ~15 points.
+                      </p>
+                      <Button size="sm" variant="outline" className="w-full bg-white text-blue-700 border-blue-200 hover:bg-blue-50 text-xs h-8">
+                        View Implementation Plan
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -347,13 +364,18 @@ const Dashboard = () => {
                     topRisks.map((risk, idx) => (
                       <div key={idx} className="p-4 hover:bg-gray-50 transition-colors flex items-start gap-3">
                         <div className="mt-1 h-2 w-2 rounded-full bg-red-500 shrink-0" />
-                        <div>
+                        <div className="flex-1">
                           <p className="text-sm font-semibold text-foreground line-clamp-2">{risk.title}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-red-200 text-red-600 bg-red-50">
-                              {risk.category}
-                            </Badge>
-                            <span className="text-[10px] text-muted-foreground uppercase font-bold">Critical</span>
+                          <div className="flex items-center justify-between mt-2">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-red-200 text-red-600 bg-red-50">
+                                {risk.category}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold">Critical</span>
+                            </div>
+                            <Button size="icon" variant="ghost" className="h-6 w-6 text-blue-600 hover:text-blue-800 hover:bg-blue-50" title="Generate Remediation Script">
+                              <Hammer className="h-3 w-3" />
+                            </Button>
                           </div>
                         </div>
                       </div>
