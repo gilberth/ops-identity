@@ -23,6 +23,28 @@ const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/postgres',
 });
 
+// Automatic Database Initialization
+async function initializeDatabase() {
+  try {
+    const initSqlPath = path.join(__dirname, 'init.sql');
+    if (fs.existsSync(initSqlPath)) {
+      const initSql = fs.readFileSync(initSqlPath, 'utf8');
+      console.log('🔄 Initializing database schema...');
+      await pool.query(initSql);
+      console.log('✅ Database schema initialized successfully');
+    } else {
+      console.warn('⚠️ init.sql not found, skipping schema initialization');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize database:', error.message);
+    // Optional: exit process or let it continue depending on criticality
+  }
+}
+
+// Run initialization on startup
+initializeDatabase();
+
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '500mb' }));
