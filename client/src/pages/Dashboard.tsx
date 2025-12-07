@@ -295,7 +295,7 @@ const Dashboard = () => {
                         Start Scan
                       </Button>
                     </Link>
-                    <Button variant="outline" className="w-full border-white/10 hover:bg-white/5 text-white rounded-xl">
+                    <Button variant="outline" className="w-full bg-transparent border-white/20 hover:bg-white/10 text-white rounded-xl hover:text-white">
                       <Download className="mr-2 h-3 w-3" /> Download Agent
                     </Button>
                   </div>
