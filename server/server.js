@@ -2275,14 +2275,6 @@ async function processAssessmentData(assessmentId, jsonData) {
 
 import { WebAuthentikSetup } from './authentik-setup.js';
 
-// Serve static files from 'public' directory
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Handle React routing, return all requests to React app
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
 // Authentik Setup Endpoint
 app.post('/api/setup', async (req, res) => {
   try {
@@ -2323,6 +2315,14 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV
   });
+});
+
+// Serve static files from 'public' directory
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Handle React routing, return all requests to React app
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Start Server
