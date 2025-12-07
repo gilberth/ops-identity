@@ -82,20 +82,19 @@ const Dashboard = () => {
             id: f.id || Math.random(),
             title: f.title || f.name || "Unknown Vulnerability",
             severity: sev,
-            category: f.category || "General"
+
+            category: f.category || "General",
+            remediation_commands: f.remediation_commands,
+            recommendation: f.recommendation,
+            description: f.description,
+            microsoft_docs: f.microsoft_docs,
+            type_id: f.type_id
           });
         });
       } else {
-        // Fallback if findings endpoint isn't ready or returns different shape
-        // Mocking counts based on dashboard "feel" if real data is empty
-        critical = 2; high = 5; medium = 12; low = 8;
-        risksList = [
-          { title: "Domain Admin with non-expiring password", severity: "critical", category: "Account Security" },
-          { title: "GPO allowing cleartext passwords", severity: "critical", category: "GPO" },
-          { title: "Kerberoastable accounts detected", severity: "high", category: "Kerberos" },
-          { title: "DNS Zone Transfer enabled", severity: "medium", category: "Infrastructure" },
-          { title: "Insecure LDAP signing configuration", severity: "high", category: "Infrastructure" },
-        ];
+        // No findings or invalid format
+        // Do NOT use mock data. Keep counts at zero.
+        console.log("No findings returned from API");
       }
 
       const penalty = (critical * 15) + (high * 8) + (medium * 3) + (low * 1);
@@ -119,24 +118,23 @@ const Dashboard = () => {
       setTopRisks(risksList.filter((r: any) => r.severity === "critical" || r.severity === "high").slice(0, 5));
 
       // 2. Category Scores
-      // Mocking category breakdown for visualization
+      // Calculate based on finding categories if available, otherwise heuristic
+      // For now, simpler visual logic:
       setCategoryScores([
-        { name: "Account Security", score: calculatedScore - 5, color: "#1C6346" },
-        { name: "GPO Health", score: calculatedScore + 5, color: "#1C6346" },
-        { name: "Kerberos", score: calculatedScore - 10, color: "#eab308" }, // yellow if lower
-        { name: "Infrastructure", score: calculatedScore + 2, color: "#1C6346" },
-        { name: "Privileged Access", score: calculatedScore - 15, color: "#ef4444" }, // red if critical
+        { name: "Account Security", score: Math.min(100, Math.max(0, calculatedScore + (high > 0 ? -10 : 0))), color: "#1C6346" },
+        { name: "GPO Health", score: Math.min(100, Math.max(0, calculatedScore + (critical > 0 ? -15 : 5))), color: "#1C6346" },
+        { name: "Kerberos", score: Math.min(100, Math.max(0, calculatedScore - 5)), color: "#eab308" },
+        { name: "Infrastructure", score: Math.min(100, Math.max(0, calculatedScore)), color: "#1C6346" },
+        { name: "Privileged Access", score: Math.min(100, Math.max(0, calculatedScore - (critical * 5))), color: "#ef4444" },
       ]);
 
       // 3. Trend Data
-      // Mocking trend based on "previous" assessments (generating past dates)
-      const trend = [
-        { date: "30 Days Ago", score: Math.max(0, calculatedScore - 15) },
-        { date: "14 Days Ago", score: Math.max(0, calculatedScore - 5) },
-        { date: "7 Days Ago", score: Math.max(0, calculatedScore - 2) },
-        { date: "Today", score: calculatedScore },
-      ];
-      setTrendData(trend);
+      // Use REAL historical data from sorted assessments
+      const realTrend = assessments.slice(0, 5).reverse().map((a: any) => ({
+        date: new Date(a.created_at).toLocaleDateString(),
+        score: a.score || calculatedScore // Fallback if score not saved in DB yet
+      }));
+      setTrendData(realTrend.length > 0 ? realTrend : [{ date: "Today", score: calculatedScore }]);
 
     } catch (error) {
       console.error("Error loading dashboard:", error);
