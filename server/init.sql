@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS public.findings (
   prerequisites TEXT,
   operational_impact TEXT,
   microsoft_docs TEXT,
-  microsoft_docs TEXT,
+
   current_vs_recommended TEXT,
   timeline TEXT,
   affected_count INTEGER DEFAULT 0,
