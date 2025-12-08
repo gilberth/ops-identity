@@ -121,11 +121,11 @@ const Dashboard = () => {
       // Calculate based on finding categories if available, otherwise heuristic
       // For now, simpler visual logic:
       setCategoryScores([
-        { name: "Account Security", score: Math.min(100, Math.max(0, calculatedScore + (high > 0 ? -10 : 0))), color: "#1C6346" },
-        { name: "GPO Health", score: Math.min(100, Math.max(0, calculatedScore + (critical > 0 ? -15 : 5))), color: "#1C6346" },
-        { name: "Kerberos", score: Math.min(100, Math.max(0, calculatedScore - 5)), color: "#eab308" },
-        { name: "Infrastructure", score: Math.min(100, Math.max(0, calculatedScore)), color: "#1C6346" },
-        { name: "Privileged Access", score: Math.min(100, Math.max(0, calculatedScore - (critical * 5))), color: "#ef4444" },
+        { name: "Infrastructure & Sites", score: Math.min(100, Math.max(0, calculatedScore + (high > 0 ? -5 : 5))), color: "#10b981" },
+        { name: "Replication Health", score: Math.min(100, Math.max(0, calculatedScore + (critical > 0 ? -15 : 0))), color: "#3b82f6" },
+        { name: "Identity & Access", score: Math.min(100, Math.max(0, calculatedScore - (critical * 2))), color: "#eab308" },
+        { name: "GPO & Config", score: Math.min(100, Math.max(0, calculatedScore + 5)), color: "#8b5cf6" },
+        { name: "Certificates (ADCS)", score: Math.min(100, Math.max(0, calculatedScore + 10)), color: "#64748b" },
       ]);
 
       // 3. Trend Data
@@ -276,9 +276,9 @@ const Dashboard = () => {
                 </div>
               </Card>
 
-              {/* Risk Trend Chart */}
+              {/* Categories Breakdown */}
               <div className="col-span-1 md:col-span-2 h-[240px]">
-                <RiskTrendChart data={trendData} />
+                <CategoriesChart data={categoryScores} />
               </div>
 
               {/* Quick Actions / Download Agent */}
