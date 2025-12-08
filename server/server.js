@@ -53,7 +53,9 @@ app.use(express.text({ limit: '500mb' }));
 // Constants
 const CATEGORIES = [
   'Users', 'GPOs', 'Computers', 'OUs', 'Groups', 'Domains',
-  'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos', 'Sites'
+  'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos', 'Sites',
+  'FSMORolesHealth', 'ReplicationHealthAllDCs', 'LingeringObjectsRisk', 'TrustHealth', 'OrphanedTrusts',
+  'DNSRootHints', 'DNSConflicts', 'DNSScavengingDetailed', 'DHCPRogueServers', 'DHCPOptionsAudit'
 ];
 
 const MAX_PROMPT = 8000;
@@ -445,6 +447,17 @@ function buildPrompt(cat, d) {
    - Comando fix: Add-ADGroupMember -Identity "Protected Users" -Members "SamAccountName"
    - Nota: Validar compatibilidad de aplicaciones antes de mover cuentas
    - Timeline: Implementar en 30 días tras testing
+    
+8. **Riesgo de Kerberos Token Bloat** (EstimatedTokenSize > 12000 bytes)
+   - Riesgo: Fallos de logon intermitentes, errores HTTP 400 en aplicaciones web, GPOs fallando
+   - Causa: Pertenencia a demasiados grupos de seguridad
+   - KB Microsoft: https://support.microsoft.com/en-us/help/327825
+   - Impacto: Denegación de servicio para usuarios específicos (VIPs suelen ser los más afectados)
+   - Validación datos: EstimatedTokenSize > 12000
+   - Comando verificar: (Get-ADUser "SamAccountName" -Properties MemberOf).MemberOf.Count
+   - Comando fix: Reducir membresía de grupos, limpiar grupos anidados
+   - Workaround temporal: Aumentar MaxTokenSize en servidores (regedit)
+   - Timeline: Investigar y planificar limpieza de grupos en 30 días
 
 **PARA CADA HALLAZGO, PROPORCIONA (EN ESPAÑOL):**
 - **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
@@ -802,37 +815,46 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
    - Comando detectar: Get-DhcpServerInDC | Compare-Object -ReferenceObject (netsh dhcp show server)
    - Timeline: Deshabilitar INMEDIATAMENTE (< 1 hora)
 
-2. **⚠️ MEDIUM: Scopes sin configuración de seguridad**
+2. **🔴 HIGH: Agotamiento de IPs en Scopes**
+   - Si PercentageInUse > 80%
+   - Riesgo: Denegación de servicio (DoS), nuevos dispositivos no reciben IP
+   - Impacto: Interrupción de operaciones de negocio en la subnet afectada
+   - Comando verificar: Get-DhcpServerv4ScopeStatistics | Where-Object { $_.PercentageInUse -gt 80 }
+   - Recomendación: Reducir lease time, expandir subnet, o usar SuperScopes
+   - Timeline: Remediar en 24 horas
+
+3. **⚠️ MEDIUM: Scopes sin configuración de seguridad**
    - Conflict detection attempts < 2
    - Delay time < 1000ms (permite DHCP starvation)
    - Comando verificar: Get-DhcpServerv4Scope | Get-DhcpServerv4ScopeStatistics
    - Timeline: Configurar en 30 días
 
-3. **⚠️ MEDIUM: Auditing de DHCP deshabilitado**
+4. **⚠️ MEDIUM: Auditing de DHCP deshabilitado**
    - No hay logs de asignaciones IP
    - Riesgo: Imposible rastrear actividad maliciosa en investigaciones forenses
    - Comando habilitar: Set-DhcpServerAuditLog -Enable $true
    - Timeline: Habilitar en 14 días
 
-4. **⚠️ MEDIUM: Falta de Redundancia (Failover)**
+5. **⚠️ MEDIUM: Falta de Redundancia (Failover)**
    - Scopes sin configuración de Failover (Load Balance o Hot Standby).
    - Riesgo: Pérdida de servicio DHCP y conectividad de red si cae el servidor.
    - Comando verificar: Get-DhcpServerv4Failover
    - Recomendación: Configurar DHCP Failover con un socio.
 
-5. **ℹ️ INFO/LOW: Tiempos de Lease Inadecuados**
+6. **ℹ️ INFO/LOW: Tiempos de Lease Inadecuados**
    - Lease < 8 horas (redes cableadas estables) o > 24 horas (WiFi invitados/dinámicos).
    - Analizar 'ScopeDetails' -> 'LeaseDuration'.
    - Riesgo: Agotamiento de IPs (lease muy largo) o tráfico excesivo (lease muy corto).
    - Recomendación: Ajustar según tipo de red (8 días para desktops, 2-4 horas para WiFi).
 
-4. **ℹ️ INFO: DHCP no configurado**
+7. **ℹ️ INFO: DHCP no configurado**
    - Si Scopes = [] y AuthorizedServers = []
    - Reportar que DHCP no está en uso o datos no disponibles
    - NO es vulnerabilidad, solo información
 
 **📋 SOLO GENERA FINDING SI:**
 - Hay servidores DHCP no autorizados (CRITICAL)
+- PercentageInUse > 80% (HIGH)
 - Scopes tienen configuración débil (MEDIUM)
 - Auditing está deshabilitado (MEDIUM)
 - Si todo está vacío → INFO "DHCP no configurado o datos no disponibles"
@@ -840,11 +862,209 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
 **FORMATO DE REPORTE:**
 - **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
   Debe ser en MAYÚSCULAS y guiones bajos.
-  Ejemplos: DHCP_ROGUE_SERVER, DHCP_AUDIT_DISABLED, DHCP_WEAK_SCOPE_CONFIG.
+  Ejemplos: DHCP_ROGUE_SERVER, DHCP_SCOPE_EXHAUSTED, DHCP_AUDIT_DISABLED, DHCP_WEAK_SCOPE_CONFIG.
 - **Título**: "[N] servidores DHCP no autorizados detectados" o "Auditing de DHCP deshabilitado"
 - **Descripción**: Vector de ataque, impacto en red
 - **Recomendación**: Comandos para autorizar/remover servers, habilitar logging
 - **Evidencia**: IPs de servers, configuración actual`,
+
+    FSMORolesHealth: `Analiza la salud de los roles FSMO del dominio.
+
+**⚠️ CONTEXTO:**
+Los roles FSMO son críticos para la operación de AD. Si un rol no es accesible, puede causar fallos en la creación de objetos, autenticación o actualizaciones de esquema.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 CRITICAL: Roles Inaccesibles**
+   - Si IsAccessible = false
+   - Si DNSResolution = "FAILED"
+   - Si NetworkTest = "FAILED"
+   - Riesgo: Fallo operativo mayor (ej. no se pueden crear usuarios si RID Master falla).
+
+2. **⚠️ HIGH: Latencia Excesiva**
+   - ResponseTimeMs > 200ms (en LAN) o > 500ms (WAN).
+   - ADResponseTimeMs > 1000ms (DC sobrecargado).
+
+3. **⚠️ MEDIUM: RID Pool bajo**
+   - Si PercentUsed > 90% o Warning existe.
+   - Acción: Monitorear o solicitar nuevo pool.
+
+4. **ℹ️ INFO: Distribución de Roles**
+   - Reportar qué DC tiene qué roles.
+   - Best practice: Schema/Naming en un DC, PDC/RID/Infra en otro (para dominios grandes).
+
+**FORMATO REPORTE:**
+- **type_id**: FSMO_ROLE_FAILURE, FSMO_HIGH_LATENCY, FSMO_RID_POOL_EXHAUSTED.
+- **Título**: "Rol FSMO [ROL] inaccesible en [SERVER]".
+- **Descripción**: Impacto operativo específico del rol fallido.
+- **Evidencia**: Tiempos de respuesta, errores de DNS.`,
+
+    ReplicationHealthAllDCs: `Analiza la topología y salud de replicación completa.
+
+**⚠️ CONTEXTO:**
+Una visión global de la replicación es vital para detectar islas de replicación o fallos sistémicos.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 CRITICAL: DCs Inalcanzables o Aislados**
+   - Health = "Unreachable" o "Critical".
+   - Riesgo: DC desactualizado, puede servir datos antiguos o permitir accesos revocados.
+
+2. **🔴 CRITICAL: Latencia de Replicación Extrema**
+   - ReplicationLagMinutes > 1440 (24 horas).
+   - "Tombstone Lifetime" risk (objetos borrados pueden revivir).
+
+3. **⚠️ MEDIUM: Errores de Enlace**
+   - FailedLinks > 0.
+   - Analizar ErrorMessage (ej. "RPC server unavailable", "Access denied").
+
+**FORMATO REPORTE:**
+- **type_id**: REPLICATION_TOPOLOGY_BROKEN, REPLICATION_DC_UUNREACHABLE, REPLICATION_LAG_CRITICAL.
+- **Título**: "N DCs con fallos críticos de replicación" o "DC [NOMBRE] aislado del dominio".
+- **Recomendación**: Comandos repadmin o revisión de firewalls (puertos 135, 49152-65535, 389, 88).`,
+
+    LingeringObjectsRisk: `Analiza el riesgo de Lingering Objects (Objetos Fantasma).
+
+**⚠️ CONTEXTO:**
+Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tombstone Lifetime (180 días típica). Si se reconecta, puede reintroducir objetos borrados.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 CRITICAL: Evidencia Confirmada**
+   - RiskLevel = "Critical" o Indicators contiene "ReplicationError" (8606, 8614).
+   - Acción: Aislamiento INMEDIATO del DC afectado. NO replicar.
+
+2. **⚠️ MEDIUM: Riesgo Potencial (USN Gap)**
+   - RiskLevel = "Medium" o USN Gap > 100,000.
+   - Acción: Habilitar "Strict Replication Consistency".
+
+**FORMATO REPORTE:**
+- **type_id**: REPLICATION_LINGERING_OBJECTS_CONFIRMED, REPLICATION_LINGERING_OBJECTS_RISK.
+- **Título**: "Riesgo CRÍTICO de objetos fantasma detectado en [DC]".
+- **Descripción**: Explicar qué es un lingering object y por qué corrompe el directorio.
+- **Recomendación**: Procedimiento específico de limpieza (Strict Replication Consistency, repadmin /removelingeringobjects).`,
+
+    TrustHealth: `Analiza la salud de las relaciones de confianza (Trusts).
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 CRITICAL: Trust Roto o Fallido**
+   - OverallHealth = "Degraded" o "Broken".
+   - ValidationTests contains "FAILED".
+   - Riesgo: Pérdida de acceso a recursos entre dominios.
+
+2. **🔴 HIGH: Configuración Insegura (SID Filtering)**
+   - SecurityWarning present ("SID Filtering disabled").
+   - Riesgo: Elevación de privilegios desde el dominio confiado (SID History Injection).
+
+3. **⚠️ MEDIUM: Password de Trust no rotado**
+   - DaysSinceModified > 60-90 días (automático debería ser 30).
+   - Riesgo: Si la password no rota, puede indicar fallo en el canal seguro.
+
+**FORMATO REPORTE:**
+- **type_id**: TRUST_BROKEN, TRUST_INSECURE_CONFIG, TRUST_PASSWORD_STALE.
+- **Título**: "Confianza [NOMBRE] rota o degradada" o "Filtrado de SID deshabilitado en [TRUST]".
+- **Recomendación**: Reset-ComputerMachinePassword, netdom trust /verify, habilitar SID filtering (netdom trust /quarantine).`,
+
+    OrphanedTrusts: `Analiza trusts huérfanos (apuntan a dominios inexistentes).
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **⚠️ HIGH: Trusts Huérfanos**
+   - Status = "ORPHANED".
+   - Riesgo: Retrasos en autenticación, "ruido" en logs, posible vector si alguien registra el dominio expirado.
+
+2. **⚠️ MEDIUM: Trusts Sospechosos**
+   - Status = "SUSPICIOUS" (Fallo DNS o LDAP).
+
+**FORMATO REPORTE:**
+- **type_id**: TRUST_ORPHANED, TRUST_SUSPICIOUS.
+- **Título**: "Relación de confianza huérfana detectada: [TARGET]".
+- **Recomendación**: Eliminar trusts obsoletos (Remove-ADTrust).`,
+
+    DNSRootHints: `Analiza los Root Hints de DNS.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **⚠️ MEDIUM: Root Hints Obsoletos**
+   - Health = "Outdated".
+   - IPs no coinciden con las de IANA (ej. IP antigua de b.root-servers.net).
+   - Riesgo: Fallos esporádicos en resolución externa.
+
+2. **⚠️ MEDIUM: Root Hints Inalcanzables**
+   - Health = "Degraded" (pocos servidores alcanzables).
+   - Riesgo: Rendimiento pobre o fallo total de resolución externa si caen forwarders.
+
+**FORMATO REPORTE:**
+- **type_id**: DNS_ROOT_HINTS_OUTDATED, DNS_ROOT_HINTS_UNREACHABLE.
+- **Título**: "Root Hints desactualizados en [DC]".
+- **Recomendación**: Actualizar via GUI DNS o PowerShell (Import-DnsServerRootHint).`,
+
+    DNSConflicts: `Analiza conflictos en registros DNS.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **⚠️ MEDIUM: Duplicados de Registros A**
+   - DuplicateARecords.Count > 0.
+   - Riesgo: Round-robin no intencionado, conexión a host incorrecto.
+
+2. **⚠️ LOW: CNAMEs Huérfanos**
+   - OrphanedCNAMEs.Count > 0.
+   - Riesgo: Resolución fallida para alias.
+
+3. **⚠️ LOW: Registros Obsoletos (Stale)**
+   - StaleRecords.Count > 0 (si son muchos).
+   - Riesgo: Base de datos sucia.
+
+**FORMATO REPORTE:**
+- **type_id**: DNS_RECORD_CONFLICT, DNS_ORPHANED_CNAME, DNS_STALE_RECORDS.
+- **Título**: "Conflictos de nombres DNS detectados ([COUNT])".
+- **Recomendación**: Limpieza manual o habilitar scavenging.`,
+
+    DNSScavengingDetailed: `Analiza la configuración de limpieza (Scavenging) de DNS a fondo.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 CRITICAL: Mismatch de Configuración**
+   - Issues.Type = "AgingMismatch".
+   - Descripción: "Scavenging habilitado en server pero Aging deshabilitado en zona (o viceversa)".
+   - Resultado: NO se borrará nada. La base de datos crecerá indefinidamente.
+
+2. **⚠️ MEDIUM: Zonas sin Aging**
+   - Recomendación: Habilitar Aging en todas las zonas dinámicas.
+
+**FORMATO REPORTE:**
+- **type_id**: DNS_SCAVENGING_MISCONFIGURED, DNS_ZONE_AGING_DISABLED.
+- **Título**: "Configuración de limpieza DNS inconsistente en [DC]".
+- **Recomendación**: Set-DnsServerZoneAging.`,
+
+    DHCPRogueServers: `Analiza servidores DHCP no autorizados (Rogue).
+    
+**⚠️ PRIORIDAD MÁXIMA:** Rogue DHCP es un ataque activo o un riesgo severo de disponibilidad.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 CRITICAL: Servidor Rogue Detectado**
+   - RogueServers.Count > 0.
+   - Descripción: IP [IP] está sirviendo DHCP pero no está autorizada en AD.
+   - Riesgo: Man-in-the-Middle, interrupción de red.
+
+**FORMATO REPORTE:**
+- **type_id**: DHCP_ROGUE_DETECTED.
+- **Título**: "Servidor DHCP no autorizado detectado: [IP]".
+- **Recomendación**: Localizar por MAC address en switch y apagar puerto. Bloquear IP.`,
+
+    DHCPOptionsAudit: `Audita opciones de ámbitos DHCP.
+
+**BUSCA ESPECÍFICAMENTE:**
+1. **🔴 HIGH: DNS Incorrectos en DHCP**
+   - Issues.Severity = "HIGH" y Option = 6.
+   - Descripción: Clientes reciben IPs de DNS que no son DCs o no responden.
+   - Riesgo: Clientes no pueden contactar AD, fallos de logon.
+
+2. **⚠️ MEDIUM: Dominio Incorrecto**
+   - Issues.Option = 15 (Mismatch).
+   - Clientes reciben sufijo DNS incorrecto.
+
+3. **⚠️ LOW: Opciones WINS Deprecadas**
+   - Opciones 44/46 presentes.
+   - Best practice: Eliminar WINS si no se usa.
+
+**FORMATO REPORTE:**
+- **type_id**: DHCP_OPTION_CRITICAL, DHCP_OPTION_MISMATCH, DHCP_WINS_DEPRECATED.
+- **Título**: "Configuración DNS inválida en ámbitos DHCP".
+- **Recomendación**: Corregir opciones de ámbito (Set-DhcpServerv4OptionValue).`,
 
     Security: `Eres un experto en hardening de Active Directory con especialización en protocolos de autenticación legacy y configuraciones de seguridad avanzadas.
 
@@ -1192,7 +1412,14 @@ La topología de sitios define cómo se replica el tráfico de AD y cómo los cl
    - Comando fix: New-ADReplicationSubnet -Name "x.x.x.x/yy" -Site "NombreSitio"
    - Timeline: Remediar en 7 días
 
-2. **⚠️ MEDIUM: Sitios sin Controladores de Dominio**
+2. **⚠️ MEDIUM: Sitios Vacíos (Sin Subredes)**
+   - Sitios listados en 'SitesWithoutSubnets'
+   - Riesgo: Los clientes físicos en esa ubicación no se asociarán al sitio, causando tráfico WAN innecesario y autenticación lenta.
+   - Recomendación: Asignar las subredes correspondientes al sitio o eliminarlo si está en desuso.
+   - Comando fix: New-ADReplicationSubnet -Name "x.x.x.x/yy" -Site "SiteName"
+   - Timeline: Revisar y asignar subredes en 14 días
+
+3. **⚠️ MEDIUM: Sitios sin Controladores de Dominio**
    - Sitios definidos que no tienen servidores en la lista 'Servers'.
    - Riesgo: Si hay clientes en ese sitio, cruzarán la WAN para autenticarse.
    - Recomendación: Instalar DC (RODC si es sucursal insegura) o consolidar sitio.
