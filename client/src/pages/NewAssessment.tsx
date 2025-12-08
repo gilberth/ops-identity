@@ -19,11 +19,11 @@ const NewAssessment = () => {
     const [selectedModules, setSelectedModules] = useState<string[]>(["Core", "Infrastructure", "Security", "GPO", "Replication"]);
 
     const modules = [
-        { id: "Core", label: "Core Identity (Users, Groups, Computers)", description: "Essential AD inventory and basic security checks." },
-        { id: "Infrastructure", label: "Infrastructure (DNS, DHCP, Sites)", description: "Network services (DNS/DHCP), Sites, FSMO roles, and Trust relationships." },
-        { id: "Security", label: "Advanced Security (Kerberos, LAPS, ACLs)", description: "Deep security analysis including delegation and encryption." },
-        { id: "GPO", label: "Group Policy Objects", description: "Analysis of GPO configurations and permissions." },
-        { id: "Replication", label: "Replication Health", description: "Deep analysis of replication topology and failures." },
+        { id: "Infrastructure", label: "Infrastructure & Operational Health", description: "Comprehensive health check: DNS/DHCP hygiene, FSMO availability, Trusts, and Sites topology." },
+        { id: "Replication", label: "Replication & Lingering Objects", description: "Critical analysis of replication consistency, topology, and lingering objects risk." },
+        { id: "Security", label: "Advanced Security (Kerberos, LAPS, ACLs)", description: "Deep security analysis including delegation, encryption, and protocol hardening." },
+        { id: "Core", label: "Core Identity (Users, Groups, Computers)", description: "Essential AD inventory, user analysis (Token Bloat), and basic security checks." },
+        { id: "GPO", label: "Group Policy Objects", description: "Analysis of GPO configurations, permissions, and security settings." },
         { id: "ADCS", label: "Certificates & Protocols", description: "ADCS vulnerabilities (ESC1) and protocol hardening (LDAP Signing)." }
     ];
 
