@@ -2,7 +2,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Download, Shield, Users, FileText, AlertTriangle, RefreshCw, Upload, Terminal } from "lucide-react";
+import { ArrowLeft, Download, Shield, Users, FileText, AlertTriangle, RefreshCw, Upload, Terminal, Trash2 } from "lucide-react";
 
 import SeverityBadge from "@/components/assessment/SeverityBadge";
 import AnalysisProgress from "@/components/assessment/AnalysisProgress";
@@ -444,7 +444,7 @@ const AssessmentDetail = () => {
 
       <main className="container py-8">
         <div className="mb-6">
-          <Link to="/">
+          <Link to="/dashboard">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="h-4 w-4 mr-2" />
               Volver al Dashboard
@@ -525,6 +525,25 @@ const AssessmentDetail = () => {
                   </Button>
                 </>
               )}
+
+              <Button
+                onClick={() => {
+                  if (window.confirm("¿Estás seguro de que quieres ELIMINAR este assessment permanentemente? Esta acción no se puede deshacer.")) {
+                    api.deleteAssessment(id!)
+                      .then(() => {
+                        toast({ title: "Assessment eliminado", description: "Redirigiendo al dashboard..." });
+                        navigate('/dashboard');
+                      })
+                      .catch(err => toast({ title: "Error", description: err.message, variant: "destructive" }));
+                  }
+                }}
+                variant="destructive"
+                size="lg"
+                title="Eliminar Assessment Permanentemente"
+              >
+                <Trash2 className="h-5 w-5 mr-2" />
+                Eliminar
+              </Button>
               {assessment.status === 'completed' && (
                 <>
                   <Button onClick={handleDownloadReport} size="lg">
@@ -732,17 +751,19 @@ const AssessmentDetail = () => {
             </div>
           ) : null}
         </div>
-      </main>
+      </main >
 
       {/* Logs Modal */}
-      {id && (
-        <AssessmentLogs
-          assessmentId={id}
-          isOpen={logsOpen}
-          onClose={() => setLogsOpen(false)}
-        />
-      )}
-    </div>
+      {
+        id && (
+          <AssessmentLogs
+            assessmentId={id}
+            isOpen={logsOpen}
+            onClose={() => setLogsOpen(false)}
+          />
+        )
+      }
+    </div >
   );
 };
 
