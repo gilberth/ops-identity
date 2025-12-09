@@ -328,8 +328,14 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
       allFindings = await callAI(prompt, provider, model, apiKey);
     }
 
-    console.log(`[${timestamp()}] [AI] ${category} analysis complete: ${allFindings.length} findings`);
-    await addLog(assessmentId, 'info', `AI analysis complete: ${allFindings.length} findings`, category);
+
+    // POST-PROCESSING: Strict Grounding Check
+    // Verify that every finding's affected objects actually exist in the source data.
+    // This is the "Safety Net" against AI hallucinations.
+    allFindings = validateFindings(allFindings, data, category);
+
+    console.log(`[${timestamp()}] [AI] ${category} analysis complete (validated): ${allFindings.length} findings`);
+    await addLog(assessmentId, 'info', `AI analysis complete: ${allFindings.length} verified findings`, category);
 
     // Save findings to database
     if (allFindings.length > 0) {
@@ -371,6 +377,78 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
     await addLog(assessmentId, 'error', `Analysis error: ${error.message}`, category);
     return [];
   }
+}
+
+// 🛡️ SECURITY: Grounding Verification Function
+// Ensures AI cannot invent objects that don't exist in the input data.
+function validateFindings(findings, data, category) {
+  if (!findings || findings.length === 0) return [];
+
+  // Create a Set of all valid object identifiers for O(1) lookup
+  const validNames = new Set();
+
+  data.forEach(item => {
+    if (item.SamAccountName) validNames.add(item.SamAccountName.toLowerCase());
+    if (item.Name) validNames.add(item.Name.toLowerCase());
+    if (item.DistinguishedName) validNames.add(item.DistinguishedName.toLowerCase());
+    if (item.DNSHostName) validNames.add(item.DNSHostName.toLowerCase());
+    if (item.DisplayName) validNames.add(item.DisplayName.toLowerCase());
+    if (item.GpoId) validNames.add(item.GpoId.toLowerCase());
+  });
+
+  const validatedFindings = [];
+
+  for (const finding of findings) {
+    // If finding has no specific affected objects, we can't validate it by name.
+    // But usually 'affected_objects' is required.
+    const evidence = finding.evidence || {};
+    const affectedObjects = evidence.affected_objects || [];
+
+    if (affectedObjects.length === 0) {
+      // If finding claims count > 0 but has no objects, it's suspicious.
+      // But some findings might be global (e.g. "Password Policy is weak").
+      // We allow global findings if check is generic.
+      if (evidence.count > 0 && category === 'Users') {
+        console.log(`[Validation] Dropping finding "${finding.title}" - Claims ${evidence.count} affected but lists 0 objects.`);
+        continue;
+      }
+      validatedFindings.push(finding);
+      continue;
+    }
+
+    // Filter the affected_objects list against validNames
+    const validObjects = affectedObjects.filter(objName => {
+      // Clean up name (sometimes AI adds "CN=...")
+      const cleanName = objName.replace(/^CN=|,.*/g, '').trim().toLowerCase();
+      // Also check raw name
+      const rawName = objName.toLowerCase();
+
+      const isValid = validNames.has(cleanName) || validNames.has(rawName) ||
+        Array.from(validNames).some(vn => vn.includes(cleanName)); // Fuzzy check for partial matches
+
+      return isValid;
+    });
+
+    if (validObjects.length === 0) {
+      console.log(`[Validation] BLOCKING HALLUCINATION: Finding "${finding.title}" listed ${affectedObjects.length} objects (e.g. ${affectedObjects[0]}) but NONE exist in the dataset.`);
+      continue; // Drop the finding entirely
+    }
+
+    // Update the finding with ONLY valid objects
+    finding.evidence.affected_objects = validObjects;
+    finding.evidence.count = validObjects.length;
+    finding.affected_count = validObjects.length;
+
+    // Update title count if it matches the old count logic
+    // (Optional: leave title as is to not break grammar, but fixing count is safer)
+    if (/^\d+/.test(finding.title)) {
+      finding.title = finding.title.replace(/^\d+/, validObjects.length.toString());
+    }
+
+    validatedFindings.push(finding);
+  }
+
+  return validatedFindings;
 }
 
 function buildPrompt(cat, d) {
