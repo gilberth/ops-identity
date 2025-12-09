@@ -15,8 +15,28 @@ export const getApiEndpoint = () => {
 const VPS_ENDPOINT = getApiEndpoint();
 
 export const api = {
-    async getAssessments() {
-        const response = await fetch(`${VPS_ENDPOINT}/api/assessments`);
+    async getClients() {
+        const response = await fetch(`${VPS_ENDPOINT}/api/clients`);
+        if (!response.ok) throw new Error('Failed to fetch clients');
+        return response.json();
+    },
+
+    async createClient(data: { name: string, contact_email?: string }) {
+        const response = await fetch(`${VPS_ENDPOINT}/api/clients`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!response.ok) throw new Error('Failed to create client');
+        return response.json();
+    },
+
+    async getAssessments(clientId?: string) {
+        let url = `${VPS_ENDPOINT}/api/assessments`;
+        if (clientId) {
+            url += `?clientId=${clientId}`;
+        }
+        const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch assessments');
         return response.json();
     },
@@ -55,11 +75,11 @@ export const api = {
         return response.json();
     },
 
-    async createAssessment(domain: string) {
+    async createAssessment(domain: string, clientId?: string) {
         const response = await fetch(`${VPS_ENDPOINT}/api/assessments`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ domain }),
+            body: JSON.stringify({ domain, client_id: clientId }),
         });
         if (!response.ok) throw new Error('Failed to create assessment');
         return response.json();

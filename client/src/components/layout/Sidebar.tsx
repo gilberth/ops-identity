@@ -1,13 +1,15 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, FileText, Network, Shield, Download, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Network, Shield, Download, Settings, Briefcase } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { useClient } from '@/context/ClientContext';
 
 export const Sidebar = () => {
     const location = useLocation();
+    const { currentClient, clearClient } = useClient();
 
     const navItems = [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
         { icon: Users, label: 'Users', path: '/users' },
         { icon: FileText, label: 'GPO Analysis', path: '/gpo' },
         { icon: Network, label: 'DNS & Network', path: '/dns' },
@@ -16,10 +18,10 @@ export const Sidebar = () => {
     ];
 
     return (
-        <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-100 bg-white shadow-sm">
+        <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-100 bg-white shadow-sm flex flex-col">
             {/* Logo Area */}
-            <div className="flex h-24 items-center px-8">
-                <Link to="/" className="flex items-center gap-3">
+            <div className="flex h-24 items-center px-8 flex-shrink-0">
+                <Link to="/dashboard" className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/20">
                         <span className="font-bold text-lg">Op</span>
                     </div>
@@ -29,8 +31,30 @@ export const Sidebar = () => {
                 </Link>
             </div>
 
+            {/* Client Context Card */}
+            <div className="px-6 pb-2 flex-shrink-0">
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex items-center gap-2 mb-1">
+                        <Briefcase className="h-3 w-3 text-slate-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                            CLIENTE ACTUAL
+                        </span>
+                    </div>
+                    <p className="font-bold text-slate-800 truncate" title={currentClient?.name}>
+                        {currentClient?.name || "Seleccione..."}
+                    </p>
+                    <Link
+                        to="/"
+                        onClick={() => clearClient()}
+                        className="text-xs text-primary font-medium hover:underline mt-1 block"
+                    >
+                        Cambiar Empresa →
+                    </Link>
+                </div>
+            </div>
+
             {/* Navigation */}
-            <nav className="flex-1 space-y-2 px-4 py-6">
+            <nav className="flex-1 space-y-2 px-4 py-4 overflow-y-auto">
                 <p className="px-4 text-[11px] font-bold uppercase tracking-widest text-muted-foreground/50 mb-4 ml-1">
                     Menu
                 </p>
@@ -50,21 +74,13 @@ export const Sidebar = () => {
                         >
                             <item.icon className={cn("h-5 w-5", isActive ? "text-white" : "text-muted-foreground group-hover:text-foreground")} />
                             {item.label}
-                            {item.label === 'Dashboard' && (
-                                <span className={cn(
-                                    "ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-md px-1 text-[10px] font-bold",
-                                    isActive ? "bg-white/20 text-white" : "bg-gray-200 text-gray-600"
-                                )}>
-                                    12+
-                                </span>
-                            )}
                         </Link>
                     );
                 })}
             </nav>
 
             {/* Bottom Card - 'Download App' style */}
-            <div className="p-4 mt-auto mb-4">
+            <div className="p-4 mt-auto mb-4 flex-shrink-0">
                 <div className="relative overflow-hidden rounded-3xl bg-[#0f172a] p-6 text-white shadow-xl">
                     {/* Abstract curve background */}
                     <div className="absolute right-[-20px] top-[-20px] h-32 w-32 rounded-full border-[10px] border-white/5 opacity-50" />
@@ -78,9 +94,11 @@ export const Sidebar = () => {
                             <p className="font-bold text-lg leading-tight">Download Agent</p>
                             <p className="text-xs text-white/60 mt-1 font-medium">Get the collector script</p>
                         </div>
-                        <Button size="sm" className="w-full bg-primary hover:bg-primary-hover text-white font-semibold border-none rounded-xl mt-1 h-10">
-                            Download
-                        </Button>
+                        <Link to="/new-assessment" className="w-full">
+                            <Button size="sm" className="w-full bg-primary hover:bg-primary-hover text-white font-semibold border-none rounded-xl mt-1 h-10">
+                                Download
+                            </Button>
+                        </Link>
                     </div>
                 </div>
             </div>

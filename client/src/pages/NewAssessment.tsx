@@ -9,12 +9,14 @@ import { Download, Shield, Terminal, ArrowLeft, CheckCircle } from "lucide-react
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { api, getApiEndpoint } from "@/utils/api";
+import { useClient } from "@/context/ClientContext";
 
 const NewAssessment = () => {
     const [domain, setDomain] = useState("");
     const [scriptGenerated, setScriptGenerated] = useState(false);
     const [assessmentId, setAssessmentId] = useState<string | null>(null);
     const navigate = useNavigate();
+    const { currentClient } = useClient();
 
     const [selectedModules, setSelectedModules] = useState<string[]>(["Core", "Infrastructure", "Security", "GPO", "Replication"]);
 
@@ -41,7 +43,7 @@ const NewAssessment = () => {
 
         try {
             // Create assessment in database
-            const data = await api.createAssessment(domain.trim());
+            const data = await api.createAssessment(domain.trim(), currentClient?.id);
 
             setAssessmentId(data.id);
             setScriptGenerated(true);

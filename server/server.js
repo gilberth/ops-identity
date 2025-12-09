@@ -2160,17 +2160,47 @@ app.post('/api/config/ai', async (req, res) => {
   }
 });
 
+// POST /api/clients - Create a new client
+app.post('/api/clients', async (req, res) => {
+  const { name, contact_email } = req.body;
+  if (!name) return res.status(400).json({ error: 'Client Name is required' });
+
+  try {
+    const result = await pool.query(
+      'INSERT INTO clients (name, contact_email) VALUES ($1, $2) RETURNING *',
+      [name, contact_email]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating client:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/clients - List all clients
+app.get('/api/clients', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM clients ORDER BY name ASC'
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching clients:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/assessments - Create a new assessment
 app.post('/api/assessments', async (req, res) => {
-  const { domain } = req.body;
+  const { domain, client_id } = req.body;
   if (!domain) {
     return res.status(400).json({ error: 'Domain is required' });
   }
 
   try {
     const result = await pool.query(
-      'INSERT INTO assessments (domain, status) VALUES ($1, $2) RETURNING *',
-      [domain, 'pending']
+      'INSERT INTO assessments (domain, client_id, status) VALUES ($1, $2, $3) RETURNING *',
+      [domain, client_id || null, 'pending']
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -2179,12 +2209,21 @@ app.post('/api/assessments', async (req, res) => {
   }
 });
 
-// GET /api/assessments - List all assessments
+// GET /api/assessments - List all assessments (optionally filtered by client)
 app.get('/api/assessments', async (req, res) => {
+  const { clientId } = req.query;
   try {
-    const result = await pool.query(
-      'SELECT * FROM assessments ORDER BY created_at DESC'
-    );
+    let query = 'SELECT * FROM assessments';
+    let params = [];
+
+    if (clientId) {
+      query += ' WHERE client_id = $1';
+      params.push(clientId);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching assessments:', error);

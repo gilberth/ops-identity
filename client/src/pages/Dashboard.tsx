@@ -13,8 +13,10 @@ import { RemediationModal } from "@/components/assessment/RemediationModal";
 import { cn } from "@/lib/utils";
 import { MaturityRadar } from "@/components/assessment/MaturityRadar";
 import { ComplianceMatrix } from "@/components/assessment/ComplianceMatrix";
+import { useClient } from "@/context/ClientContext";
 
 const Dashboard = () => {
+  const { currentClient } = useClient();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     score: 0,
@@ -34,13 +36,14 @@ const Dashboard = () => {
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+  }, [currentClient]);
 
   const loadDashboardData = async () => {
     try {
-      const assessments = await api.getAssessments();
+      const assessments = await api.getAssessments(currentClient?.id);
       if (!assessments || assessments.length === 0) {
         setLoading(false);
+        setLatestAssessment(null);
         return;
       }
 

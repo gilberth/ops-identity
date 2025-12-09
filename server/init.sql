@@ -1,6 +1,17 @@
+-- Create clients table
+CREATE TABLE IF NOT EXISTS public.clients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  contact_email TEXT,
+  status TEXT DEFAULT 'active',
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+
 -- Create assessments table
 CREATE TABLE IF NOT EXISTS public.assessments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL,
   domain TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'analyzing', 'completed', 'error', 'uploaded', 'failed')),
   created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
@@ -9,6 +20,14 @@ CREATE TABLE IF NOT EXISTS public.assessments (
   file_path TEXT,
   analysis_progress JSONB
 );
+
+-- Add client_id column to assessments if it doesn't exist (migration for existing DBs)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='assessments' AND column_name='client_id') THEN
+        ALTER TABLE public.assessments ADD COLUMN client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- Create assessment_data table
 CREATE TABLE IF NOT EXISTS public.assessment_data (

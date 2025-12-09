@@ -7,18 +7,20 @@ import { FileText, Download, Calendar, ArrowRight, Loader2 } from "lucide-react"
 import { api } from "@/utils/api";
 import { Link } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import { useClient } from "@/context/ClientContext";
 
 const Reports = () => {
     const [loading, setLoading] = useState(true);
     const [assessments, setAssessments] = useState<any[]>([]);
+    const { currentClient } = useClient();
 
     useEffect(() => {
         loadData();
-    }, []);
+    }, [currentClient]); // Reload if client changes
 
     const loadData = async () => {
         try {
-            const data = await api.getAssessments();
+            const data = await api.getAssessments(currentClient?.id);
             // Sort by date desc
             const sorted = (data || []).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
             setAssessments(sorted);
