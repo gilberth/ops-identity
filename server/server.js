@@ -10,6 +10,7 @@ import zlib from 'zlib';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { analyzeUsersDeterministic } from './analyzers/userRules.js';
+import { WebAuthentikSetup } from './authentik-setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2862,7 +2863,7 @@ CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay e
         }
       }
 
-      import { WebAuthentikSetup } from './authentik-setup.js';
+
 
       // Authentik Setup Endpoint
       app.post('/api/setup', async (req, res) => {
