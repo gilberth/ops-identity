@@ -378,17 +378,12 @@ function validateFindings(findings, data, category) {
   const validNames = new Set();
 
   data.forEach(item => {
-    if (item.SamAccountName) validNames.add(item.SamAccountName.toLowerCase());
-    if (item.Name) validNames.add(item.Name.toLowerCase());
-    if (item.DistinguishedName) validNames.add(item.DistinguishedName.toLowerCase());
-    if (item.DNSHostName) validNames.add(item.DNSHostName.toLowerCase());
-    if (item.DisplayName) validNames.add(item.DisplayName.toLowerCase());
-    if (item.UserPrincipalName) validNames.add(item.UserPrincipalName.toLowerCase()); // Add UPN
-    if (item.GpoId) validNames.add(item.GpoId.toLowerCase());
-    // Extended keys for other categories (Replication, DNS, ACLs, etc)
-    const extraKeys = ['Source', 'Destination', 'Partner', 'Server', 'HostName', 'Id', 'ZoneName', 'Identity', 'Group', 'Account', 'Principal', 'cn', 'CN', 'name'];
-    extraKeys.forEach(k => {
-      if (item[k]) validNames.add(item[k].toString().toLowerCase());
+    // DEEP GROUNDING: Add ALL string values from the object to the allowlist
+    // This is more robust than guessing specific keys (DisplayName vs Name vs GpoName...)
+    Object.values(item).forEach(val => {
+      if (typeof val === 'string' && val.length > 2 && val.length < 100) {
+        validNames.add(val.toLowerCase());
+      }
     });
   });
 
