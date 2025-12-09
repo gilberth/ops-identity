@@ -426,6 +426,130 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
         ] : []),
 
+        // SALUD DE ROLES FSMO
+        ...(rawData?.FSMORolesHealth ? [
+          new Paragraph({
+            text: "Salud y Ubicación de Roles FSMO",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Rol", "Titular", "Estado", "Latencia"], true),
+              ...Object.entries(rawData.FSMORolesHealth).map(([role, info]: [string, any]) => {
+                const status = info.Status === "OK" ? "✅ OK" : "⚠️ Error";
+                const statusColor = info.Status === "OK" ? "low" : "critical";
+                return createTableRow([
+                  role,
+                  info.Holder || "Desconocido",
+                  status,
+                  `${info.ResponseTime} ms`
+                ], false, statusColor);
+              }),
+            ],
+          }),
+        ] : []),
+
+        // SALUD DE REPLICACIÓN
+        ...(rawData?.ReplicationHealthAllDCs && rawData.ReplicationHealthAllDCs.length > 0 ? [
+          new Paragraph({
+            text: "Salud de Replicación Active Directory",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "Análisis del estado de replicación entre controladores de dominio. Se muestran posibles fallos y latencias excesivas.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["DC Origen", "Socio (Partner)", "Estado", "Fallas Consec."], true),
+              ...rawData.ReplicationHealthAllDCs.flatMap((dc: any) =>
+                (dc.ReplicationPartners || []).map((partner: any) => {
+                  const isHealthy = partner.LastReplicationResult === 0;
+                  const statusText = isHealthy ? "✅ Éxito" : `❌ Error ${partner.LastReplicationResult}`;
+                  const color = isHealthy ? "low" : "critical";
+                  return createTableRow([
+                    dc.SourceDC || "N/A",
+                    partner.Partner || "N/A",
+                    statusText,
+                    partner.ConsecutiveFailureCount?.toString() || "0"
+                  ], false, color);
+                })
+              ).slice(0, 20), // Limit detailed rows to prevent overflow
+            ],
+          }),
+        ] : []),
+
+        // TOPOLOGÍA DE SITIOS Y SUBNETS
+        ...(rawData?.SiteTopology ? [
+          new Paragraph({
+            text: "Topología de Sitios y Subnets",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+
+          // Sitios sin Subnets
+          ...(rawData.SiteTopology.SitesWithoutSubnets && rawData.SiteTopology.SitesWithoutSubnets.length > 0 ? [
+            new Paragraph({
+              text: "⚠️ Sitios Sin Subnets Asociadas",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Paragraph({
+              text: "Los siguientes sitios no tienen subredes asignadas, lo que puede causar problemas de autenticación y tráfico de clientes:",
+              spacing: { after: 100 }
+            }),
+            ...rawData.SiteTopology.SitesWithoutSubnets.map((site: string) =>
+              new Paragraph({
+                text: `• ${site}`,
+                bullet: { level: 0 },
+                spacing: { after: 50 },
+                // color: COLORS.high
+              })
+            )
+          ] : []),
+
+          // Subnets sin Sitio
+          ...(rawData.SiteTopology.SubnetsWithoutSite && rawData.SiteTopology.SubnetsWithoutSite.length > 0 ? [
+            new Paragraph({
+              text: "⚠️ Subredes No Asociadas a Sitios",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Paragraph({
+              text: "Las siguientes subredes no están asociadas a ningún sitio AD. Los clientes en estas redes pueden autenticarse contra DCs remotos ineficientes:",
+              spacing: { after: 100 }
+            }),
+            ...rawData.SiteTopology.SubnetsWithoutSite.map((subnet: string) =>
+              new Paragraph({
+                text: `• ${subnet}`,
+                bullet: { level: 0 },
+                spacing: { after: 50 }
+              })
+            )
+          ] : []),
+
+          // Sitios Vacíos (Sin DCs)
+          ...(rawData.SiteTopology.EmptySites && rawData.SiteTopology.EmptySites.length > 0 ? [
+            new Paragraph({
+              text: "ℹ️ Sitios Vacíos (Sin Controladores de Dominio)",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            ...rawData.SiteTopology.EmptySites.map((site: string) =>
+              new Paragraph({
+                text: `• ${site}`,
+                bullet: { level: 0 },
+                spacing: { after: 50 }
+              })
+            )
+          ] : [])
+
+        ] : []),
+
         // ANÁLISIS DE OBJETOS DE DIRECTIVA DE GRUPO
         ...(rawData?.GPOs && rawData.GPOs.length > 0 ? [
           new Paragraph({
@@ -437,6 +561,8 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: `Se identificaron un total de ${rawData.GPOs.length} Objetos de Directiva de Grupo en el dominio. La siguiente sección proporciona información detallada sobre cada GPO, incluyendo su estado, enlaces, permisos y mejoras recomendadas.`,
             spacing: { after: 200 },
           }),
+          // ... (resto del bloque GPO existente)
+
 
           // Tabla de Resumen de GPO
           new Paragraph({
@@ -592,6 +718,87 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           })(),
         ] : []),
 
+        // RELACIONES DE CONFIANZA Y OBJETOS HUÉRFANOS
+        ...(rawData?.TrustHealth ? [
+          new Paragraph({
+            text: "Salud de Relaciones de Confianza",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          ...(rawData.TrustHealth.length > 0 ? [
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Target", "Tipo", "Dirección", "Estado"], true),
+                ...rawData.TrustHealth.map((trust: any) => {
+                  const status = trust.Status === "Success" || trust.Status === "Ok" ? "✅ Activo" : "⚠️ Error";
+                  const color = trust.Status === "Success" || trust.Status === "Ok" ? "low" : "high";
+                  return createTableRow([
+                    trust.Target || "N/A",
+                    trust.TrustType || "N/A",
+                    trust.TrustDirection || "N/A",
+                    status
+                  ], false, color);
+                }),
+              ],
+            }),
+          ] : [
+            new Paragraph({
+              text: "No se detectaron relaciones de confianza externas configuradas.",
+              spacing: { after: 200 },
+            })
+          ]),
+
+          ...(rawData?.OrphanedTrusts && rawData.OrphanedTrusts.length > 0 ? [
+            new Paragraph({
+              text: "⚠️ Relaciones de Confianza Huérfanas Detectadas",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Paragraph({
+              text: "Se han detectado objetos TDO (Trusted Domain Objects) que no parecen tener una relación activa correspondiente. Revise estos objetos:",
+              spacing: { after: 100 },
+              color: COLORS.high
+            }),
+            ...rawData.OrphanedTrusts.map((orphan: any) =>
+              new Paragraph({
+                text: `• ${orphan.Name} (DN: ${orphan.DistinguishedName})`,
+                bullet: { level: 0 },
+                spacing: { after: 50 },
+              })
+            )
+          ] : []),
+        ] : []),
+
+        // RIESGO DE OBJETOS PERSISTENTES (LINGERING OBJECTS)
+        ...(rawData?.LingeringObjectsRisk ? [
+          new Paragraph({
+            text: "Análisis de Riesgo: Objetos Persistentes (Lingering Objects)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "El análisis de 'Lingering Objects' verifica inconsistencias de replicación críticas que pueden reintroducir objetos eliminados.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["DC", "Estado de Riesgo", "Detalles"], true),
+              ...rawData.LingeringObjectsRisk.map((risk: any) => {
+                const isSafe = risk.Status === "Pass" || risk.RiskLevel === "Low";
+                const statusIcon = isSafe ? "✅ Bajo Riesgo" : "🔴 Alto Riesgo";
+                const color = isSafe ? "low" : "critical";
+                return createTableRow([
+                  risk.TargetDC || "N/A",
+                  statusIcon,
+                  risk.Message || "Sin problemas detectados"
+                ], false, color);
+              }),
+            ],
+          }),
+        ] : []),
+
         // ANÁLISIS DE CONFIGURACIÓN DNS
         ...(rawData?.DNSConfiguration ? [
           new Paragraph({
@@ -644,6 +851,92 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               )
             )
           ] : []),
+
+          // DETALLES AVANZADOS DE DNS
+
+          // 1. Conflictos DNS
+          ...(rawData?.DNSConflicts && rawData.DNSConflicts.length > 0 ? [
+            new Paragraph({
+              text: "⚠️ Conflictos de Registros DNS",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Paragraph({
+              text: "Se han detectado registros duplicados o en conflicto.",
+              spacing: { after: 100 }
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Registro", "Conflicto", "Detalle"], true),
+                ...rawData.DNSConflicts.slice(0, 15).map((conflict: any) =>
+                  createTableRow([
+                    conflict.RecordName || "N/A",
+                    conflict.ConflictType || "Duplicado",
+                    conflict.Message || "-"
+                  ], false, "high")
+                ),
+              ],
+            }),
+            new Paragraph({ text: "", spacing: { after: 200 } })
+          ] : []),
+
+          // 2. Scavenging Detallado
+          ...(rawData?.DNSScavengingDetailed ? [
+            new Paragraph({
+              text: "Análisis de Limpieza DNS (Scavenging)",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            ...(rawData.DNSScavengingDetailed.ConfigurationMismatches && rawData.DNSScavengingDetailed.ConfigurationMismatches.length > 0 ? [
+              new Paragraph({
+                children: [new TextRun({
+                  text: "⚠️ Desalineación de Configuración: La configuración de limpieza difiere entre zonas y servidor.",
+                  color: COLORS.high
+                })],
+                spacing: { after: 100 }
+              }),
+              ...rawData.DNSScavengingDetailed.ConfigurationMismatches.map((mismatch: string) =>
+                new Paragraph({
+                  text: `• ${mismatch}`,
+                  bullet: { level: 0 },
+                  spacing: { after: 50 }
+                })
+              )
+            ] : [
+              new Paragraph({
+                text: "✅ La configuración (Aging/Scavenging) parece consistente.",
+                spacing: { after: 100 }
+              })
+            ]),
+            new Paragraph({ text: "", spacing: { after: 200 } })
+          ] : []),
+
+          // 3. Root Hints
+          ...(rawData?.DNSRootHints && rawData.DNSRootHints.UnresponsiveHints && rawData.DNSRootHints.UnresponsiveHints.length > 0 ? [
+            new Paragraph({
+              text: "⚠️ Problemas con Root Hints",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Paragraph({
+              text: "Algunos servidores raíz no responden:",
+              spacing: { after: 100 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Servidor Raíz", "Estado"], true),
+                ...rawData.DNSRootHints.UnresponsiveHints.map((hint: any) =>
+                  createTableRow([
+                    hint.NameServer || hint.ToString(),
+                    "No Responde"
+                  ], false, "medium")
+                )
+              ]
+            })
+          ] : [])
+
         ] : []),
 
         // ANÁLISIS DE CONFIGURACIÓN DHCP
@@ -703,6 +996,61 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             }),
           ] : []),
         ] : []),
+
+        // DETALLES AVANZADOS DE DHCP
+
+        // 1. Servidores Rogue (No Autorizados)
+        ...(rawData?.DHCPRogueServers && rawData.DHCPRogueServers.RogueServers && rawData.DHCPRogueServers.RogueServers.length > 0 ? [
+          new Paragraph({
+            text: "🚨 Servidores DHCP Rogue Detectados",
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 300, after: 100 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "CRÍTICO: Se han detectado servidores DHCP respondiendo en la red que NO están autorizados en Active Directory. Esto representa un riesgo grave de seguridad (Man-in-the-Middle) o interrupción de servicio.",
+              color: COLORS.critical,
+              bold: true
+            })],
+            spacing: { after: 100 }
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["IP Server", "Mensaje"], true),
+              ...rawData.DHCPRogueServers.RogueServers.map((rogue: any) =>
+                createTableRow([
+                  rogue.ServerIpAddress || "N/A",
+                  "No Autorizado en AD"
+                ], false, "critical")
+              )
+            ]
+          }),
+          new Paragraph({ text: "", spacing: { after: 200 } })
+        ] : []),
+
+        // 2. Auditoría de Opciones DHCP (WINS, DNS obsoletos, etc.)
+        ...(rawData?.DHCPOptionsAudit && rawData.DHCPOptionsAudit.Issues && rawData.DHCPOptionsAudit.Issues.length > 0 ? [
+          new Paragraph({
+            text: "Auditoría de Opciones de Ámbito",
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 300, after: 100 },
+          }),
+          new Paragraph({
+            text: "Se han detectado configuraciones obsoletas o inseguras en las opciones de ámbito DHCP (ej. Servidores WINS, DNS heredados).",
+            spacing: { after: 100 }
+          }),
+          ...rawData.DHCPOptionsAudit.Issues.map((issue: string) =>
+            new Paragraph({
+              text: `• ${issue}`,
+              bullet: { level: 0 },
+              spacing: { after: 50 }
+            })
+          ),
+          new Paragraph({ text: "", spacing: { after: 200 } })
+        ] : [])
+
+
 
         // SALUD DE CONTROLADORES DE DOMINIO
         ...(rawData?.DCHealth ? [
