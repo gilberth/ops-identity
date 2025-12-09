@@ -198,9 +198,11 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
   const computers = ensureArray(rawData.Computers);
   const gpos = ensureArray(rawData.GPOs);
   const dcs = ensureArray(rawData.DomainControllers);
-  const ous = ensureArray(rawData.OUs);
-  const dns = ensureArray(rawData.DNSConfiguration || rawData.DNS);
-  const dhcp = ensureArray(rawData.DHCPConfiguration || rawData.DHCP);
+
+  // Fix: Handle nested arrays for OUs, DNS, and DHCP
+  const ous = rawData.OUs?.OUs ? ensureArray(rawData.OUs.OUs) : ensureArray(rawData.OUs);
+  const dns = rawData.DNSConfiguration?.Zones ? ensureArray(rawData.DNSConfiguration.Zones) : ensureArray(rawData.DNSConfiguration || rawData.DNS);
+  const dhcp = rawData.DHCPConfiguration?.Scopes ? ensureArray(rawData.DHCPConfiguration.Scopes) : ensureArray(rawData.DHCPConfiguration || rawData.DHCP);
 
   const activeUsers = users.filter((u: any) => u?.Enabled !== false).length;
   const activeComputers = computers.filter((c: any) => c?.Enabled !== false).length;
@@ -434,7 +436,7 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
       dc.HostName || dc.Name || 'N/A',
       dc.IPv4Address || dc.IPAddress || '-',
       dc.OperatingSystem || '-',
-      '-'
+      (dc.Roles || []).join(', ') || '-'
     ]),
     ...tableTheme,
     didDrawPage: (data) => {
@@ -453,16 +455,34 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
   doc.text('7. Configuración de Dominio', margin, 30);
 
   const domainInfo = rawData.DomainInfo || {};
+
+  // Extract FSMO Roles from Domain Controllers list if not in DomainInfo
+  const findRoleHolder = (rolePattern: string) => {
+    if (!dcs || !Array.isArray(dcs)) return 'N/A';
+    const holder = dcs.find((dc: any) => {
+      const roles = dc.Roles || dc.OperationMasterRoles;
+      if (Array.isArray(roles)) {
+        return roles.some(r => r.toLowerCase().includes(rolePattern.toLowerCase()));
+      }
+      return false;
+    });
+    return holder ? (holder.HostName || holder.Name) : 'N/A';
+  };
+
+  const pdc = domainInfo.PDCEmulator || findRoleHolder('PDC') || findRoleHolder('Primary');
+  const rid = domainInfo.RIDMaster || findRoleHolder('RID');
+  const infra = domainInfo.InfrastructureMaster || findRoleHolder('Infrastructure');
+
   autoTable(doc, {
     startY: 40,
     body: [
-      ['Nombre DNS', domainInfo.DomainName || 'N/A'],
-      ['Nivel Funcional', domainInfo.DomainMode || 'N/A'],
+      ['Nombre DNS', domainInfo.DomainName || domainInfo.DomainDNS || 'N/A'],
+      ['Nivel Funcional', domainInfo.DomainMode || domainInfo.DomainFunctionalLevel || 'N/A'],
       ['Distinguished Name', domainInfo.DistinguishedName || 'N/A'],
-      ['NetBIOS', domainInfo.NetBIOSName || 'N/A'],
-      ['PDC Emulator', domainInfo.PDCEmulator || 'N/A'],
-      ['RID Master', domainInfo.RIDMaster || 'N/A'],
-      ['Infrastructure Master', domainInfo.InfrastructureMaster || 'N/A']
+      ['NetBIOS', domainInfo.NetBIOSName || domainInfo.DomainNetBIOS || 'N/A'],
+      ['PDC Emulator', pdc],
+      ['RID Master', rid],
+      ['Infrastructure Master', infra]
     ],
     theme: 'striped',
     styles: { fontSize: 10, cellPadding: 4 },
