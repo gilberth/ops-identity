@@ -99,12 +99,13 @@ const Dashboard = () => {
       });
 
       setAllFindings(Array.isArray(findings) ? findings : []);
+      // Filter for top items
       setTopRisks(risksList.filter((r: any) => r.severity === "critical" || r.severity === "high").slice(0, 5));
 
       setCategoryScores([
-        { name: "Identity Security", score: Math.max(30, 100 - (critical * 5)), color: "#3b82f6" },
-        { name: "Infrastructure", score: Math.max(40, 100 - (high * 3)), color: "#10b981" },
-        { name: "Governance (GPO)", score: Math.max(50, 100 - (medium * 2)), color: "#8b5cf6" },
+        { name: "Identity Hygiene", score: Math.max(30, 100 - (critical * 5)), color: "#3b82f6" },
+        { name: "Infrastructure Health", score: Math.max(40, 100 - (high * 3)), color: "#10b981" },
+        { name: "GPO Management", score: Math.max(50, 100 - (medium * 2)), color: "#8b5cf6" },
       ]);
 
     } catch (error) {
@@ -137,20 +138,20 @@ const Dashboard = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200/60 pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Security Command Center</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Infrastructure Health Control</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Monitoring <span className="font-semibold text-slate-700">{currentClient?.name || 'Unknown Client'}</span> environment
+            Tracking Configuration Drift & Operational Hygiene for <span className="font-semibold text-slate-700">{currentClient?.name || 'Unknown Client'}</span>
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Link to="/reports">
             <Button variant="outline" className="h-9 text-xs rounded-lg border-slate-200">
-              <FileText className="mr-2 h-3.5 w-3.5 text-slate-500" /> Export Report
+              <FileText className="mr-2 h-3.5 w-3.5 text-slate-500" /> Export Audit Report
             </Button>
           </Link>
           <Link to="/new-assessment">
             <Button className="h-9 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20">
-              <Activity className="mr-2 h-3.5 w-3.5" /> Start New Scan
+              <Activity className="mr-2 h-3.5 w-3.5" /> New Health Check
             </Button>
           </Link>
         </div>
@@ -168,38 +169,38 @@ const Dashboard = () => {
               <CardContent className="p-6 relative overflow-hidden">
                 <div className="absolute right-0 top-0 h-32 w-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-2xl" />
                 <div className="relative z-10">
-                  <p className="text-indigo-100 text-sm font-medium mb-2">Overall Hygiene Score</p>
+                  <p className="text-indigo-100 text-sm font-medium mb-2">Technical Debt Score</p>
                   <div className="flex items-end gap-3">
-                    <h2 className="text-5xl font-bold tracking-tighter">{stats.score}</h2>
+                    <h2 className="text-5xl font-bold tracking-tighter">{100 - stats.score}</h2>
                     <span className="text-lg font-medium text-indigo-200 mb-2">/ 100</span>
                   </div>
                   <div className="mt-4 flex items-center gap-2 text-indigo-100 text-xs bg-white/10 w-fit px-2 py-1 rounded-lg backdrop-blur-sm">
                     <Activity className="h-3 w-3" />
-                    {stats.score >= 80 ? 'Optimal Status' : 'Attention Required'}
+                    {stats.score >= 80 ? 'Low Debt' : 'High Debt'}
                   </div>
                 </div>
               </CardContent>
             </Card>
 
             <MetricCard
-              title="Critical Risks"
+              title="Config Gaps"
               value={stats.critical}
-              subtext="Immediate action items"
+              subtext="Requires Optimization"
               icon={AlertTriangle}
               color="bg-red-500/10 text-red-600"
               trend={stats.critical > 0 ? 'up' : 'down'}
             />
             <MetricCard
-              title="Domain Admins"
-              value="--" // Placeholder until real extraction logic is perfect
-              subtext="Privileged Accounts"
+              title="Privileged Bloat"
+              value="--"
+              subtext="Deviation from Least Privilege"
               icon={Users}
               color="bg-amber-500/10 text-amber-600"
             />
             <MetricCard
-              title="Active Directory"
+              title="Topology"
               value="Healthy"
-              subtext="Replication & DNS"
+              subtext="Replication & Sites"
               icon={Globe}
               color="bg-emerald-500/10 text-emerald-600"
             />
@@ -212,14 +213,14 @@ const Dashboard = () => {
             <Card className="col-span-1 lg:col-span-2 rounded-2xl border border-slate-100 shadow-sm bg-white">
               <CardHeader className="px-6 py-5 border-b border-slate-50 flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle className="text-base font-bold text-slate-800">Priority Action Items</CardTitle>
-                  <CardDescription className="text-xs">Top issues affecting your security score</CardDescription>
+                  <CardTitle className="text-base font-bold text-slate-800">Architectural & Hygiene Gaps</CardTitle>
+                  <CardDescription className="text-xs">Top misconfigurations affecting stability</CardDescription>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
                 <div className="divide-y divide-slate-50">
                   {topRisks.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400 text-sm">No critical issues found. System is healthy.</div>
+                    <div className="p-8 text-center text-slate-400 text-sm">No architectural issues found.</div>
                   ) : (
                     topRisks.map((risk, i) => (
                       <div key={i} className="p-4 hover:bg-slate-50 transition-colors flex items-start gap-4">
@@ -245,11 +246,11 @@ const Dashboard = () => {
                                 setIsRemediationOpen(true);
                               }}
                             >
-                              <Hammer className="h-3 w-3 mr-1.5" /> Fix Issue
+                              <Hammer className="h-3 w-3 mr-1.5" /> View Fix
                             </Button>
                             {risk.microsoft_docs && (
                               <a href={risk.microsoft_docs} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 hover:underline flex items-center">
-                                Docs <ArrowRight className="h-2 w-2 ml-0.5" />
+                                Best Practice Ref <ArrowRight className="h-2 w-2 ml-0.5" />
                               </a>
                             )}
                           </div>
@@ -265,7 +266,7 @@ const Dashboard = () => {
             <div className="space-y-6">
               <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white overflow-hidden">
                 <CardHeader className="px-6 py-5 border-b border-slate-50">
-                  <CardTitle className="text-sm font-bold text-slate-800">Security Domain Maturity</CardTitle>
+                  <CardTitle className="text-sm font-bold text-slate-800">Operational Maturity</CardTitle>
                 </CardHeader>
                 <div className="p-4 bg-slate-50/50">
                   <CategoriesChart data={categoryScores} />
@@ -273,7 +274,7 @@ const Dashboard = () => {
               </Card>
 
               <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white p-6">
-                <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-4">Infrastructure Health</h4>
+                <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-4">Infrastructure Status</h4>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl border border-green-100">
                     <div className="flex items-center gap-3">
@@ -281,8 +282,8 @@ const Dashboard = () => {
                         <Globe className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-slate-700">Replication</p>
-                        <p className="text-[10px] text-green-600 font-medium">Fully Synced</p>
+                        <p className="text-sm font-bold text-slate-700">Replication Topology</p>
+                        <p className="text-[10px] text-green-600 font-medium">Converged</p>
                       </div>
                     </div>
                     <CheckCircle className="h-4 w-4 text-green-500" />
@@ -295,10 +296,10 @@ const Dashboard = () => {
                       </div>
                       <div>
                         <p className="text-sm font-bold text-slate-700">Domain Controllers</p>
-                        <p className="text-[10px] text-slate-500">All Online</p>
+                        <p className="text-[10px] text-slate-500">Consistent OS Version</p>
                       </div>
                     </div>
-                    <Badge variant="secondary" className="bg-white text-slate-600">Active</Badge>
+                    <Badge variant="secondary" className="bg-white text-slate-600">Optimized</Badge>
                   </div>
                 </div>
               </Card>
