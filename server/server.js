@@ -662,7 +662,9 @@ function buildPrompt(cat, d) {
     Computers: `Analiza estos equipos de Active Directory para identificar riesgos.
 
 **BUSCA ESPECÍFICAMENTE:**
-1. **Sistemas operativos obsoletos** (Windows Server 2008/2012, Windows 7/8)
+1. **Sistemas operativos obsoletos** (Windows Server 2008/2003, Windows 7/XP/Vista)
+   - ⚠️ IMPORTANTE: Windows Server 2025, 2022, 2019, 2016 NO son obsoletos.
+   - ⚠️ Windows Server 2012 R2 está en fin de soporte (EOL), pero 2025 es el MÁS NUEVO. NO lo marques como obsoleto.
    - Riesgo: Sin soporte, vulnerabilidades sin parchar
    - CIS Control: 7.1 - Maintain supported OS versions
 
