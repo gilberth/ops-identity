@@ -393,56 +393,74 @@ function validateFindings(findings, data, category) {
     if (item.DistinguishedName) validNames.add(item.DistinguishedName.toLowerCase());
     if (item.DNSHostName) validNames.add(item.DNSHostName.toLowerCase());
     if (item.DisplayName) validNames.add(item.DisplayName.toLowerCase());
+    if (item.UserPrincipalName) validNames.add(item.UserPrincipalName.toLowerCase()); // Add UPN
     if (item.GpoId) validNames.add(item.GpoId.toLowerCase());
+    // For groups or computers sometimes just Name is used
   });
 
   const validatedFindings = [];
 
   for (const finding of findings) {
-    // If finding has no specific affected objects, we can't validate it by name.
-    // But usually 'affected_objects' is required.
     const evidence = finding.evidence || {};
-    const affectedObjects = evidence.affected_objects || [];
+    let affectedObjects = evidence.affected_objects || [];
 
+    // 1. GLOBAL/GENERIC CHECKS (Type II Findings)
+    // If finding has NO affected objects listed, it might be a global setting (e.g. "Complexity Enabled")
+    // We only allow this if the category supports global findings.
     if (affectedObjects.length === 0) {
-      // If finding claims count > 0 but has no objects, it's suspicious.
-      // But some findings might be global (e.g. "Password Policy is weak").
-      // We allow global findings if check is generic.
-      if (evidence.count > 0 && category === 'Users') {
-        console.log(`[Validation] Dropping finding "${finding.title}" - Claims ${evidence.count} affected but lists 0 objects.`);
-        continue;
+      if (['Users', 'Computers', 'Groups'].includes(category)) {
+        // These categories SHOULD always have affected objects for specific findings.
+        // Unless it's a summary stats finding, which we discourage AI from making.
+        // We'll treat "0 objects" but "count > 0" as a hallucination for these categories.
+        if (evidence.count > 0 || finding.affected_count > 0) {
+          console.log(`[Validation] 🛑 PURGING HALLUCINATION: "${finding.title}" (Category: ${category}) claims issues but lists NO objects.`);
+          continue;
+        }
       }
+      // For DNS, GPO, etc, global findings are okay.
       validatedFindings.push(finding);
       continue;
     }
 
-    // Filter the affected_objects list against validNames
+    // 2. SPECIFIC OBJECT CHECKS (Type I Findings)
+    // Validate every single object name against the source of truth
     const validObjects = affectedObjects.filter(objName => {
-      // Clean up name (sometimes AI adds "CN=...")
-      const cleanName = objName.replace(/^CN=|,.*/g, '').trim().toLowerCase();
-      // Also check raw name
-      const rawName = objName.toLowerCase();
+      if (!objName) return false;
+      const lowerObj = objName.toString().toLowerCase();
+      // Clean up common prefixes
+      const cleanName = lowerObj.replace(/^(cn=|name=|user=|computer=)/, '').split(',')[0].trim();
 
-      const isValid = validNames.has(cleanName) || validNames.has(rawName) ||
-        Array.from(validNames).some(vn => vn.includes(cleanName)); // Fuzzy check for partial matches
+      // Strict Check
+      const isValid = validNames.has(cleanName) || validNames.has(lowerObj) ||
+        Array.from(validNames).some(vn => vn.includes(cleanName) || cleanName.includes(vn));
 
       return isValid;
     });
 
+    // 3. DECISION GATES
     if (validObjects.length === 0) {
-      console.log(`[Validation] BLOCKING HALLUCINATION: Finding "${finding.title}" listed ${affectedObjects.length} objects (e.g. ${affectedObjects[0]}) but NONE exist in the dataset.`);
-      continue; // Drop the finding entirely
+      console.log(`[Validation] 🛑 BLOCKING TOTAL HALLUCINATION: Finding "${finding.title}" listed ${affectedObjects.length} objects but NONE exist in real data.`);
+      continue; // DELETE FINDING
     }
 
-    // Update the finding with ONLY valid objects
+    if (validObjects.length !== affectedObjects.length) {
+      console.log(`[Validation] ⚠️ PARTIAL HALLUCINATION FIX: Finding "${finding.title}" reduced from ${affectedObjects.length} to ${validObjects.length} real objects.`);
+    }
+
+    // 4. REWRITE REALITY
+    // Force the finding to match the verified reality
     finding.evidence.affected_objects = validObjects;
     finding.evidence.count = validObjects.length;
     finding.affected_count = validObjects.length;
 
-    // Update title count if it matches the old count logic
-    // (Optional: leave title as is to not break grammar, but fixing count is safer)
+    // Update title to be mathematically correct
     if (/^\d+/.test(finding.title)) {
       finding.title = finding.title.replace(/^\d+/, validObjects.length.toString());
+    } else {
+      // If title doesn't start with number but finding implies count, prepend it
+      if (!finding.title.includes(validObjects.length.toString())) {
+        finding.title = `(${validObjects.length}) ${finding.title}`;
+      }
     }
 
     validatedFindings.push(finding);
