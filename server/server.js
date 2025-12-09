@@ -124,14 +124,80 @@ function extractCategoryData(jsonData, categoryName) {
   if (!categoryKey || !jsonData[categoryKey]) return null;
 
   const categoryData = jsonData[categoryKey];
+  let result = [];
 
   if (categoryData.Data) {
-    return Array.isArray(categoryData.Data) ? categoryData.Data : [categoryData.Data];
+    result = Array.isArray(categoryData.Data) ? categoryData.Data : [categoryData.Data];
+  } else if (Array.isArray(categoryData)) {
+    result = categoryData;
+  } else if (typeof categoryData === 'object') {
+    result = [categoryData];
+  } else {
+    return null;
   }
-  if (Array.isArray(categoryData)) return categoryData;
-  if (typeof categoryData === 'object') return [categoryData];
 
-  return null;
+  // Smart Filtering to reduce AI hallucinations and token usage
+  // We only send "interesting" objects to the AI
+  if (categoryName.toLowerCase() === 'users' && result.length > 0) {
+    const originalCount = result.length;
+
+    result = result.filter(user => {
+      // Keep if any risk/relevant flag is present
+      return (
+        user.Enabled === false || // Bloqueados/Deshabilitados
+        user.PasswordNeverExpires === true || // Password Never Expires
+        user.PasswordNotRequired === true || // Password Not Required
+        user.TrustedForDelegation === true || // Unconstrained Delegation
+        user.IsPrivileged === true || // Admin/Privileged
+        user.AdminCount === 1 || // AdminSDHolder protected
+        user.DoNotRequirePreAuth === true || // AS-REP Roasting vulnerable
+        user.IsASREPRoastable === true ||
+        user.IsKerberoastable === true // Kerberoasting vulnerable
+      );
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Users' category reduced from ${originalCount} to ${result.length} items (keeping only high-risk objects)`);
+    }
+  }
+
+  // Smart Filtering for Computers
+  if (categoryName.toLowerCase() === 'computers' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(computer => {
+      const os = (computer.OperatingSystem || '').toLowerCase();
+      const isLegacy = os.includes('2008') || os.includes('2003') || os.includes('2000') || os.includes('xp') || os.includes('vista') || os.includes('windows 7');
+
+      return (
+        computer.IsStale === true || // Equipos inactivos/stale
+        computer.TrustedForDelegation === true || // Unconstrained Delegation
+        computer.Enabled === false || // Deshabilitados
+        isLegacy // Sistemas operativos antiguos
+      );
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Computers' category reduced from ${originalCount} to ${result.length} items`);
+    }
+  }
+
+  // Smart Filtering for Groups (Focus on Privileged or Empty)
+  if (categoryName.toLowerCase() === 'groups' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(group => {
+      return (
+        group.IsPrivileged === true || // Grupos administrativos (Tier 0/1)
+        group.MemberCount === 0 || // Grupos vacíos (higiene)
+        (group.Members && group.Members.length === 0)
+      );
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Groups' category reduced from ${originalCount} to ${result.length} items`);
+    }
+  }
+
+  return result;
 }
 
 // AI Analysis Logic (Ported from Edge Function)
@@ -148,86 +214,6 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
     if (!apiKey) {
       await addLog(assessmentId, 'warn', `No API key found for ${provider}. Skipping AI analysis.`, category);
       return [];
-    }
-
-    // Helper to calculate stats
-    function calculateStats(cat, d) {
-      if (cat === 'Users') {
-        let passwordNeverExpires = 0;
-        let inactive = 0;
-        let adminCount = 0;
-        let kerberoastable = 0;
-        const total = d.length;
-        const inactiveDate = new Date();
-        inactiveDate.setDate(inactiveDate.getDate() - 90);
-
-        for (const u of d) {
-          // Check for 'true' string or boolean true
-          const isEnabled = u.Enabled === true || u.Enabled === 'true';
-          const isPwdNeverExpires = u.PasswordNeverExpires === true || u.PasswordNeverExpires === 'true';
-
-          if (isEnabled && isPwdNeverExpires) {
-            passwordNeverExpires++;
-          }
-
-          if (u.IsPrivileged === true || u.IsPrivileged === 'true' || u.AdminCount === 1) {
-            adminCount++;
-          }
-
-          if (u.ServicePrincipalNames && u.ServicePrincipalNames.length > 0) {
-            kerberoastable++;
-          }
-
-          if (u.LastLogonDate && isEnabled) {
-            const logonDate = new Date(u.LastLogonDate);
-            if (!isNaN(logonDate.getTime()) && logonDate < inactiveDate) {
-              inactive++;
-            }
-          }
-        }
-        return `\n\nESTADÍSTICAS PRE-CALCULADAS (ÚSALAS COMO VERDAD ABSOLUTA PARA LOS CONTEOS):
-- Total Usuarios Analizados en este chunk: ${total}
-- Usuarios con PasswordNeverExpires=true (y Enabled): ${passwordNeverExpires}
-- Usuarios Inactivos (>90 días sin login y Enabled): ${inactive}
-- Usuarios Privilegiados (AdminCount=1 o Grupos Admin): ${adminCount}
-- Usuarios Kerberoastable (SPN presente): ${kerberoastable}`;
-      }
-
-      if (cat === 'Computers') {
-        let obsolete = 0;
-        let inactiveComputers = 0;
-        const total = d.length;
-        const inactiveDate = new Date();
-        inactiveDate.setDate(inactiveDate.getDate() - 90);
-
-        for (const c of d) {
-          // Detectar OS Obsoletos
-          const os = (c.OperatingSystem || '').toLowerCase();
-          if (
-            os.includes('server 2008') ||
-            os.includes('server 2003') ||
-            os.includes('server 2012') ||
-            os.includes('windows 7') ||
-            os.includes('windows 8') ||
-            os.includes('windows xp')
-          ) {
-            obsolete++;
-          }
-
-          if (c.LastLogonDate) {
-            const logonDate = new Date(c.LastLogonDate);
-            // Validar fecha y comparar
-            if (!isNaN(logonDate.getTime()) && logonDate < inactiveDate) {
-              inactiveComputers++;
-            }
-          }
-        }
-        return `\n\nESTADÍSTICAS PRE-CALCULADAS (ÚSALAS COMO VERDAD ABSOLUTA PARA LOS CONTEOS):
-- Total Equipos Analizados en este chunk: ${total}
-- Equipos con OS Obsoleto (2012/2008/2003/Win7/XP): ${obsolete}
-- Equipos Inactivos (>90 días sin login): ${inactiveComputers}`;
-      }
-      return '';
     }
 
     if (data.length > CHUNK_SIZE) {
@@ -252,8 +238,7 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
               try {
                 await addLog(assessmentId, 'info', `Analizando chunk ${chunkIndex + 1}/${totalChunks} (${chunk.length.toLocaleString()} items)`, category);
 
-                const stats = calculateStats(category, chunk);
-                const prompt = buildPrompt(category, chunk) + stats;
+                const prompt = buildPrompt(category, chunk);
                 console.log(`[${timestamp()}] [AI] Chunk ${chunkIndex + 1} prompt: ${prompt.length} chars`);
 
                 const findings = await callAI(prompt, provider, model, apiKey);
@@ -330,8 +315,7 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
     } else {
       // Small dataset - process as single chunk
       console.log(`[${timestamp()}] [AI] ${category}: Small dataset (${data.length} items), processing in single chunk`);
-      const stats = calculateStats(category, data);
-      const prompt = buildPrompt(category, data) + stats;
+      const prompt = buildPrompt(category, data);
       console.log(`[${timestamp()}] [AI] Analyzing ${category} with prompt length: ${prompt.length} chars`);
 
       allFindings = await callAI(prompt, provider, model, apiKey);
