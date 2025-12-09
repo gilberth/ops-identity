@@ -5,8 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Terminal, X, RefreshCw, Download } from "lucide-react";
 
+import { api } from "@/utils/api";
+
 interface Log {
-  timestamp: number;
+  created_at: string;
   level: string;
   message: string;
 }
@@ -26,7 +28,8 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
 
   useEffect(() => {
     if (isOpen) {
-      fetchLogs();
+      setLoading(true); // Set loading only on open
+      fetchLogs().finally(() => setLoading(false));
 
       if (autoRefresh) {
         intervalRef.current = setInterval(() => {
@@ -50,15 +53,9 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
   }, [logs]);
 
   const fetchLogs = async () => {
-    setLoading(true);
     try {
-      // Call backend API directly for self-hosted version
-      const vpsEndpoint = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
-      const response = await fetch(`${vpsEndpoint}/api/assessments/${assessmentId}/logs`);
-
-      if (!response.ok) throw new Error('Failed to fetch logs');
-
-      const data = await response.json();
+      // Use centralized API utility
+      const data = await api.getLogs(assessmentId);
 
       if (Array.isArray(data)) {
         setLogs(data);
@@ -67,14 +64,12 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
       }
     } catch (error) {
       console.error('Error fetching logs:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
   const downloadLogs = () => {
     const content = logs
-      .map(log => `[${new Date(log.timestamp).toISOString()}] [${log.level}] ${log.message}`)
+      .map(log => `[${new Date(log.created_at).toISOString()}] [${log.level}] ${log.message}`)
       .join('\n');
 
     const blob = new Blob([content], { type: 'text/plain' });
@@ -152,7 +147,7 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
               logs.map((log, index) => (
                 <div key={index} className="flex gap-2 py-1 hover:bg-accent/50 px-2 rounded">
                   <span className="text-muted-foreground text-xs whitespace-nowrap">
-                    {new Date(log.timestamp).toLocaleTimeString('es-ES', {
+                    {new Date(log.created_at).toLocaleTimeString('es-ES', {
                       hour: '2-digit',
                       minute: '2-digit',
                       second: '2-digit'

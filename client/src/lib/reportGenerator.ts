@@ -756,9 +756,11 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               spacing: { before: 300, after: 100 },
             }),
             new Paragraph({
-              text: "Se han detectado objetos TDO (Trusted Domain Objects) que no parecen tener una relación activa correspondiente. Revise estos objetos:",
+              children: [new TextRun({
+                text: "Se han detectado objetos TDO (Trusted Domain Objects) que no parecen tener una relación activa correspondiente. Revise estos objetos:",
+                color: COLORS.high
+              })],
               spacing: { after: 100 },
-              color: COLORS.high
             }),
             ...rawData.OrphanedTrusts.map((orphan: any) =>
               new Paragraph({
@@ -781,22 +783,36 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: "El análisis de 'Lingering Objects' verifica inconsistencias de replicación críticas que pueden reintroducir objetos eliminados.",
             spacing: { after: 200 },
           }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["DC", "Estado de Riesgo", "Detalles"], true),
-              ...rawData.LingeringObjectsRisk.map((risk: any) => {
-                const isSafe = risk.Status === "Pass" || risk.RiskLevel === "Low";
-                const statusIcon = isSafe ? "✅ Bajo Riesgo" : "🔴 Alto Riesgo";
-                const color = isSafe ? "low" : "critical";
-                return createTableRow([
-                  risk.TargetDC || "N/A",
-                  statusIcon,
-                  risk.Message || "Sin problemas detectados"
-                ], false, color);
-              }),
-            ],
-          }),
+          ...(Array.isArray(rawData.LingeringObjectsRisk) ? [
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["DC", "Estado de Riesgo", "Detalles"], true),
+                ...rawData.LingeringObjectsRisk.map((risk: any) => {
+                  const isSafe = risk.Status === "Pass" || risk.RiskLevel === "Low";
+                  const statusIcon = isSafe ? "✅ Bajo Riesgo" : "🔴 Alto Riesgo";
+                  const color = isSafe ? "low" : "critical";
+                  return createTableRow([
+                    risk.TargetDC || "N/A",
+                    statusIcon,
+                    risk.Message || "Sin problemas detectados"
+                  ], false, color);
+                }),
+              ],
+            })
+          ] : [
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Nivel de Riesgo", "Método de Detección", "Indicadores"], true),
+                createTableRow([
+                  rawData.LingeringObjectsRisk.RiskLevel || "Desconocido",
+                  rawData.LingeringObjectsRisk.DetectionMethod || "N/A",
+                  (rawData.LingeringObjectsRisk.Indicators || []).join(", ") || "Ninguno"
+                ], false, rawData.LingeringObjectsRisk.RiskLevel === "Low" ? "low" : "medium")
+              ]
+            })
+          ]),
         ] : []),
 
         // ANÁLISIS DE CONFIGURACIÓN DNS

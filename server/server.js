@@ -1657,13 +1657,18 @@ Cada finding DEBE incluir estos campos para personal de TI:
       "timeline": "24h - Inmediato | 7d | 30d | 60d | 90d",
       "affected_count": 15,
       "evidence": {
-        "affected_objects": ["user1", "user2"],
+        "affected_objects": ["CN=Administrator", "CN=JSmith"],
         "count": 15,
-        "details": "Detalles técnicos específicos"
+        "details": "Detalles técnicos específicos tomados EXACTAMENTE de los datos"
       }
     }
   ]
 }
+
+CRÍTICO:
+- NO INVENTES NOMBRES (user1, user2, test...). Usa SOLO los nombres reales presentes en el JSON.
+- Si count = 0, NO generes el finding.
+- Si no hay evidencia clara, devuelve "findings": []
 
 EJEMPLOS DE CAMPOS TÉCNICOS:
 
@@ -1785,7 +1790,9 @@ PRINCIPIOS FUNDAMENTALES:
 4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
 5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
 
-FORMATO JSON REQUERIDO: Devuelve un objeto JSON con array "findings" que contenga objetos con: type_id, severity, title, description, recommendation, evidence (con affected_objects, count, details), y opcionalmente: mitre_attack, cis_control, impact_business, remediation_commands, prerequisites, operational_impact, microsoft_docs, current_vs_recommended, timeline, affected_count`;
+FORMATO JSON REQUERIDO: Devuelve un objeto JSON con array "findings". 
+CRÍTICO: NO INVENTES DATOS. Usa SOLO nombres que existan en el JSON. Si no hay hallazgos verificables, devuelve "findings": []. 
+NO uses ejemplos como 'user1', 'user2'.`;
 
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: 'POST',
@@ -1856,7 +1863,7 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
       "description": "string",
       "recommendation": "string",
       "evidence": {
-        "affected_objects": ["string"],
+        "affected_objects": ["CN=Administrator", "CN=JSmith"],
         "count": number,
         "details": "string"
       },
@@ -1866,7 +1873,8 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
       "affected_count": number (opcional)
     }
   ]
-}`
+}
+CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay evidencia, devuelve array vacío.`
         },
         { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
       ],
@@ -1915,7 +1923,7 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
       "description": "string",
       "recommendation": "string",
       "evidence": {
-        "affected_objects": ["string"],
+        "affected_objects": ["CN=Administrator", "CN=JSmmith"],
         "count": number,
         "details": "string"
       },
@@ -1925,7 +1933,8 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
       "affected_count": number (opcional)
     }
   ]
-}`;
+}
+CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay evidencia, devuelve array vacío.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
