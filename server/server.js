@@ -2591,6 +2591,203 @@ app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
   }
 });
 
+// DEBUG ENDPOINTS
+// ------------------------------------------------------------------
+
+// 1. Generate/Trigger Assessment Analysis (Manual Trigger)
+app.post('/api/debug/assessments/:id/analyze', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Assessment data not found' });
+    }
+
+    let jsonData;
+    const rawData = result.rows[0].data;
+
+    // Handle compressed data
+    if (Buffer.isBuffer(rawData)) {
+      try {
+        const decompressed = zlib.gunzipSync(rawData);
+        jsonData = JSON.parse(decompressed.toString());
+      } catch (e) {
+        // Fallback if not compressed (legacy)
+        jsonData = JSON.parse(rawData.toString());
+      }
+    } else {
+      jsonData = rawData; // Already JSON
+    }
+
+    // Trigger analysis in background
+    processAssessmentData(id, jsonData).catch(err => console.error('Manual trigger error:', err));
+
+    res.json({ message: 'Analysis triggered manually', assessmentId: id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 2. Validate Assessment Quality (Check findings vs Data)
+app.get('/api/debug/assessments/:id/validate', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get findings
+    const findingsRes = await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id]);
+    const findings = findingsRes.rows;
+
+    // Get raw data
+    const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+    if (dataRes.rows.length === 0) return res.status(404).json({ error: 'No data' });
+
+    let rawData;
+    // Decompress if needed
+    if (Buffer.isBuffer(dataRes.rows[0].data)) {
+      rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
+    } else {
+      rawData = dataRes.rows[0].data;
+    }
+
+    const validationReport = {
+      totalFindings: findings.length,
+      hallucinationsDetected: [],
+      validFindings: 0
+    };
+
+    // Build Valid Names Set
+    const validNames = new Set();
+    const categories = ['Users', 'Computers', 'Groups', 'GPOs', 'DNSConfiguration'];
+
+    // Naive extraction for validation
+    const extractNames = (obj) => {
+      if (!obj) return;
+      if (obj.SamAccountName) validNames.add(obj.SamAccountName.toLowerCase());
+      if (obj.Name) validNames.add(obj.Name.toLowerCase());
+      if (obj.DNSHostName) validNames.add(obj.DNSHostName.toLowerCase());
+      if (obj.DistinguishedName) validNames.add(obj.DistinguishedName.toLowerCase());
+    };
+
+    categories.forEach(cat => {
+      const catData = extractCategoryData(rawData, cat);
+      if (catData) catData.forEach(extractNames);
+    });
+
+    // Validating Findings
+    findings.forEach(f => {
+      const evidence = f.evidence || {};
+      const affected = evidence.affected_objects || [];
+
+      if (affected.length > 0) {
+        const invalidObjects = affected.filter(obj => {
+          const clean = obj.replace(/^CN=|,.*/g, '').trim().toLowerCase();
+          return !validNames.has(clean) && !validNames.has(obj.toLowerCase());
+        });
+
+        if (invalidObjects.length > 0) {
+          validationReport.hallucinationsDetected.push({
+            findingId: f.id,
+            title: f.title,
+            invalidObjects: invalidObjects
+          });
+        } else {
+          validationReport.validFindings++;
+        }
+      } else {
+        // Global findings
+        validationReport.validFindings++;
+      }
+    });
+
+    res.json(validationReport);
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. View Raw Uploaded JSON (Decompressed)
+app.get('/api/debug/assessments/:id/json', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+
+    let jsonData;
+    if (Buffer.isBuffer(result.rows[0].data)) {
+      jsonData = JSON.parse(zlib.gunzipSync(result.rows[0].data).toString());
+    } else {
+      jsonData = result.rows[0].data;
+    }
+
+    res.json(jsonData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 4. Word Report Data Preview
+app.get('/api/debug/assessments/:id/word-data', async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Simulate what goes into the word report
+    const assessment = (await pool.query('SELECT * FROM assessments WHERE id = $1', [id])).rows[0];
+    const findings = (await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id])).rows;
+    // Retrieve raw data
+    const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+    let rawData = {};
+    if (dataRes.rows.length > 0) {
+      if (Buffer.isBuffer(dataRes.rows[0].data)) {
+        rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
+      } else {
+        rawData = dataRes.rows[0].data;
+      }
+    }
+
+    const reportPayload = {
+      assessment: assessment,
+      findingsCount: findings.length,
+      findingsPreview: findings.map(f => ({ title: f.title, risk: f.severity })),
+      keyMetrics: {
+        users: rawData.Users ? (rawData.Users.Data ? rawData.Users.Data.length : rawData.Users.length) : 0,
+        computers: rawData.Computers ? (rawData.Computers.Data ? rawData.Computers.Data.length : rawData.Computers.length) : 0,
+      }
+    };
+
+    res.json(reportPayload);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 5. Dashboard Data Debug
+app.get('/api/debug/assessments/:id/dashboard-data', async (req, res) => {
+  // This mimics the dashboard data loading logic
+  try {
+    const { id } = req.params;
+    const findings = (await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id])).rows;
+
+    // Calculate Dashboard Metrics
+    const criticalCount = findings.filter(f => f.severity === 'critical').length;
+    const highCount = findings.filter(f => f.severity === 'high').length;
+
+    const dashboardDebug = {
+      scorecard: {
+        critical: criticalCount,
+        high: highCount,
+        total: findings.length
+      },
+      topRisks: findings.filter(f => f.severity === 'critical').map(f => f.title)
+    };
+
+    res.json(dashboardDebug);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Helper function to process assessment data
 async function processAssessmentData(assessmentId, jsonData) {
   try {
