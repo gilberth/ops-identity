@@ -51,7 +51,7 @@ const userRules = {
         check: (user) => {
             return user.Enabled === true && user.AdminCount === 1;
         },
-        remediation: (users) => `Revisar membresía de grupos para confirmar privilegios. Si ya no son admins, limpiar atributo:\nSet-ADUser -Identity <User> -Clear "adminCount"\nEnable-ADAccount -Identity <User> (para restablecer herencia)`;
+        remediation: (users) => `Revisar membresía de grupos para confirmar privilegios. Si ya no son admins, limpiar atributo:\nSet-ADUser -Identity <User> -Clear "adminCount"\nEnable-ADAccount -Identity <User> (para restablecer herencia)`
     },
 
     // 4. Kerberoastable Users (Has SPN)
