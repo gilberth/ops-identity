@@ -3123,32 +3123,43 @@ function Find-RogueDHCPServers {
         # Get authorized DHCP servers from AD
         Write-Host "[*] Retrieving authorized DHCP servers from AD..." -ForegroundColor Cyan
 
-        try {
-            $authorizedServers = Get-DhcpServerInDC -ErrorAction Stop
-        $rogueDetection.AuthorizedServers = $authorizedServers | ForEach-Object {
-            @{
-                DNSName = $_.DNSName
-                    IPAddress = $_.IPAddress.ToString()
+        $authorizedServers = @()
+        
+        if (Get-Command "Get-DhcpServerInDC" -ErrorAction SilentlyContinue) {
+            try {
+                $uniqueAuthCmd = Get-DhcpServerInDC -ErrorAction Stop
+                $authorizedServers = $uniqueAuthCmd | ForEach-Object {
+                    @{
+                        DNSName = $_.DNSName
+                        IPAddress = $_.IPAddress.ToString()
+                    }
+                }
+            } catch {
+                Write-Host "[!] AD DHCP cmdlet failed, attempting fallback..." -ForegroundColor Yellow
             }
         }
-        } catch {
-            # Fallback: Query AD directly
-        $configNC = (Get-ADRootDSE).configurationNamingContext
-        $dhcpConfig = Get-ADObject -SearchBase "CN=NetServices,CN=Services,$configNC" -Filter "objectClass -eq 'dHCPClass'" -Properties dhcpServers -ErrorAction SilentlyContinue
 
-        if ($dhcpConfig.dhcpServers) {
-            foreach($server in $dhcpConfig.dhcpServers) {
-                    if ($server -match "(\d{1, 3}\.\d{1, 3}\.\d{1, 3}\.\d{1, 3})") {
-            $rogueDetection.AuthorizedServers += @{
-                IPAddress = $matches[1]
-                            DNSName = "Unknown"
-            }
-        }
+        # Fallback: Query AD directly (Configuration Partition) if cmdlet failed or missing
+        if ($authorizedServers.Count -eq 0) {
+            Write-Host "[*] Using AD Object fallback method..." -ForegroundColor Cyan
+            $configNC = (Get-ADRootDSE).configurationNamingContext
+            $dhcpConfig = Get-ADObject -SearchBase "CN=NetServices,CN=Services,$configNC" -Filter "objectClass -eq 'dHCPClass'" -Properties dhcpServers -ErrorAction SilentlyContinue
+
+            if ($dhcpConfig.dhcpServers) {
+                foreach($server in $dhcpConfig.dhcpServers) {
+                    # Format: i<IPAddress>$<DnsName> or just IP
+                    if ($server -match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})") {
+                        $authorizedServers += @{
+                            IPAddress = $matches[1]
+                            DNSName = "Unknown (No RSAT)"
+                        }
+                    }
                 }
             }
         }
+        
+        $rogueDetection.AuthorizedServers = $authorizedServers
 
-        Write-Host "[+] Found $($rogueDetection.AuthorizedServers.Count) authorized DHCP servers" -ForegroundColor Green
 
         # Method 1: Check for DHCP servers responding on local subnet
         # Note: This requires running from a client machine, not always effective from DC
@@ -3251,7 +3262,37 @@ function Find-RogueDHCPServers {
         $dcIPs = $dcs | ForEach-Object {$_.IPv4Address}
 
         # Get DHCP servers
-        $dhcpServers = Get-DhcpServerInDC -ErrorAction SilentlyContinue
+        # Get DHCP servers with Fallback
+        $dhcpServers = @()
+        if (Get-Command "Get-DhcpServerInDC" -ErrorAction SilentlyContinue) {
+             $dhcpServers = Get-DhcpServerInDC -ErrorAction SilentlyContinue
+        }
+        
+        # If no servers found via cmdlet, try AD object fallback (only for IP list mostly)
+        if ($dhcpServers.Count -eq 0) {
+             Write-Host "[!] RSAT DHCP tools missing. Trying to identify servers via AD Config..." -ForegroundColor Yellow
+             $configNC = (Get-ADRootDSE).configurationNamingContext
+             $dhcpObjs = Get-ADObject -SearchBase "CN=NetServices,CN=Services,$configNC" -Filter "objectClass -eq 'dHCPClass'" -Properties dhcpServers -ErrorAction SilentlyContinue
+             
+             if ($dhcpObjs.dhcpServers) {
+                 foreach($srvString in $dhcpObjs.dhcpServers) {
+                     if ($srvString -match "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})") {
+                         # Create a mock object with IPAddress and DNSName properties
+                         $mockServer = "" | Select-Object DNSName, IPAddress
+                         $mockServer.IPAddress = [System.Net.IPAddress]::Parse($matches[1])
+                         
+                         # Try to resolve DNS name
+                         try {
+                              $hostEntry = [System.Net.Dns]::GetHostEntry($matches[1])
+                              $mockServer.DNSName = $hostEntry.HostName
+                         } catch {
+                              $mockServer.DNSName = $matches[1]
+                         }
+                         $dhcpServers += $mockServer
+                     }
+                 }
+             }
+        }
 
         foreach ($server in $dhcpServers) {
             Write-Host "[*] Auditing options on $($server.DNSName)..." -ForegroundColor Cyan
