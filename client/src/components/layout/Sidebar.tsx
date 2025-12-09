@@ -20,14 +20,11 @@ export const Sidebar = () => {
             {/* Logo Area */}
             <div className="flex h-24 items-center px-8">
                 <Link to="/" className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-lg shadow-primary/30">
-                        <span className="font-bold text-xl">D</span>
-                        {/* Using a 'D' or logo placeholder. If logo.png exists, better to use it but style it cleanly. 
-                 Let's stick to the text/icon for now to match the 'Donezo' clean look. 
-                 Actually, Donezo has a logo. I'll use a clean icon. */}
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-500/20">
+                        <span className="font-bold text-lg">Op</span>
                     </div>
                     <span className="font-bold text-xl tracking-tight text-foreground font-sans">
-                        AD Insight
+                        OpsIdentity
                     </span>
                 </Link>
             </div>

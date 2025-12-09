@@ -1,6 +1,5 @@
-# 🔒 AD Insight 360
-
-**Enterprise AD Security Assessment & Compliance Platform**
+# 🩺 OpsIdentity
+**Enterprise Active Directory Hygiene, Architecture & Configuration Drift Platform**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)](https://www.typescriptlang.org/)

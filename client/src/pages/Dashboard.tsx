@@ -167,9 +167,9 @@ const Dashboard = () => {
       {/* Header / Welcome */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Security Posture</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Operational Pulse</h1>
           <p className="text-muted-foreground mt-1">
-            Overview of your Active Directory security health based on latest analysis.
+            Real-time verification of Active Directory operational hygiene, architecture, and configuration drift.
           </p>
         </div>
         {latestAssessment && (
@@ -198,7 +198,7 @@ const Dashboard = () => {
               <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none" />
 
               <CardContent className="p-8 flex flex-col items-center justify-center h-full min-h-[220px]">
-                <h3 className="text-lg font-medium text-muted-foreground mb-4">Overall Security Score</h3>
+                <h3 className="text-lg font-medium text-muted-foreground mb-4">Identity Hygiene Score</h3>
                 <div className="relative flex items-center justify-center">
                   <svg className="h-40 w-40 transform -rotate-90">
                     <circle
@@ -251,7 +251,7 @@ const Dashboard = () => {
               {/* Summary Totals */}
               <Card className="col-span-1 md:col-span-3 rounded-[2rem] border-none shadow-soft bg-white p-6 flex flex-col justify-between">
                 <div className="flex items-center justify-between mb-2">
-                  <CardTitle className="text-lg font-bold">Findings Overview</CardTitle>
+                  <CardTitle className="text-lg font-bold">Operational Indicators</CardTitle>
                   <Link to="/reports">
                     <Button variant="ghost" size="sm" className="hover:bg-gray-100 rounded-xl">View Report <ArrowRight className="ml-1 h-3 w-3" /></Button>
                   </Link>
@@ -312,8 +312,8 @@ const Dashboard = () => {
               <CardHeader className="px-6 pt-6 pb-2 border-b border-gray-50">
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>Maturity & Compliance</CardTitle>
-                    <CardDescription>Security alignment with industry standards</CardDescription>
+                    <CardTitle>Architecture & Resilience</CardTitle>
+                    <CardDescription>Alignment with validated architectural blueprints</CardDescription>
                   </div>
                   <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
                     AI Analysis Models Active
@@ -352,7 +352,7 @@ const Dashboard = () => {
             <Card className="col-span-1 rounded-[2rem] border-none shadow-soft bg-white">
               <CardHeader className="px-6 pt-6 bg-red-50/50 border-b border-red-100/50 rounded-t-[2rem]">
                 <CardTitle className="text-red-700 flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5" /> Top Priority Risks
+                  <AlertTriangle className="h-5 w-5" /> Critical Operational Blockers
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">

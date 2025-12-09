@@ -19,7 +19,7 @@ services:
 
   # Application Service (Frontend + Backend)
   app:
-    image: ghcr.io/gilberth/ad-insight-360:latest
+    image: ghcr.io/gilberth/ops-identity:latest
     # build: .
     restart: always
     ports:

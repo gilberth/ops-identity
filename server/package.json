@@ -1,7 +1,7 @@
 {
-    "name": "ad-insight-360-backend",
+    "name": "ops-identity-backend",
     "version": "1.0.0",
-    "description": "Self-hosted backend for Active Scan Insight",
+    "description": "Self-hosted backend for OpsIdentity",
     "main": "server.js",
     "type": "module",
     "scripts": {
