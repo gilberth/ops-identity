@@ -27,7 +27,7 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
   useEffect(() => {
     if (isOpen) {
       fetchLogs();
-      
+
       if (autoRefresh) {
         intervalRef.current = setInterval(() => {
           fetchLogs();
@@ -55,12 +55,14 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
       // Call backend API directly for self-hosted version
       const vpsEndpoint = import.meta.env.VITE_VPS_ENDPOINT || 'http://localhost:3000';
       const response = await fetch(`${vpsEndpoint}/api/assessments/${assessmentId}/logs`);
-      
+
       if (!response.ok) throw new Error('Failed to fetch logs');
-      
+
       const data = await response.json();
 
-      if (data?.logs) {
+      if (Array.isArray(data)) {
+        setLogs(data);
+      } else if (data?.logs) {
         setLogs(data.logs);
       }
     } catch (error) {
@@ -74,7 +76,7 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
     const content = logs
       .map(log => `[${new Date(log.timestamp).toISOString()}] [${log.level}] ${log.message}`)
       .join('\n');
-    
+
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -150,14 +152,14 @@ export const AssessmentLogs = ({ assessmentId, isOpen, onClose }: AssessmentLogs
               logs.map((log, index) => (
                 <div key={index} className="flex gap-2 py-1 hover:bg-accent/50 px-2 rounded">
                   <span className="text-muted-foreground text-xs whitespace-nowrap">
-                    {new Date(log.timestamp).toLocaleTimeString('es-ES', { 
-                      hour: '2-digit', 
-                      minute: '2-digit', 
-                      second: '2-digit' 
+                    {new Date(log.timestamp).toLocaleTimeString('es-ES', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
                     })}
                   </span>
-                  <Badge 
-                    variant="outline" 
+                  <Badge
+                    variant="outline"
                     className={`${getLevelColor(log.level)} text-xs px-1 py-0`}
                   >
                     {log.level}
