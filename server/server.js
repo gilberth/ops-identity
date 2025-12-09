@@ -2794,6 +2794,10 @@ async function processAssessmentData(assessmentId, jsonData) {
     console.log(`[${timestamp()}] [PROCESS] Starting analysis for assessment ${assessmentId}`);
     await addLog(assessmentId, 'info', 'Iniciando análisis de categorías...');
 
+    // Clear existing findings to prevents duplicates/zombie data (Fix for Hallucinations persistence)
+    await pool.query('DELETE FROM findings WHERE assessment_id = $1', [assessmentId]);
+    await addLog(assessmentId, 'info', 'Limpiando hallazgos anteriores...');
+
     // Update assessment status
     await pool.query(
       'UPDATE assessments SET status = $1, analysis_progress = $2, updated_at = NOW() WHERE id = $3',
