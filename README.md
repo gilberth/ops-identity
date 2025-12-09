@@ -83,8 +83,8 @@ Sigue estos pasos para desplegar la aplicación en un servidor limpio (Ubuntu/De
 
 ### 1. Clonar el Repositorio
 ```bash
-git clone https://github.com/gilberth/ad-insight-360.git
-cd ad-insight-360
+git clone https://github.com/gilberth/ops-identity.git
+cd ops-identity
 ```
 
 ### 2. Configurar Variables de Entorno
