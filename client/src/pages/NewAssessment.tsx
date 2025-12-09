@@ -3548,6 +3548,7 @@ $collectedData.LingeringObjectsRisk = Get-LingeringObjectsRisk
 $collectedData.TrustHealth = Test-TrustRelationshipsHealth
 $collectedData.OrphanedTrusts = Find-OrphanedTrusts
 $collectedData.DNSRootHints = Test-DNSRootHints
+$collectedData.DNSRecords = Get-AllDNSRecords
 $collectedData.DNSConflicts = Find-DNSRecordConflicts
 $collectedData.DNSScavengingDetailed = Get-DNSScavengingDetailedAnalysis
 $collectedData.DHCPRogueServers = Find-RogueDHCPServers

@@ -28,8 +28,8 @@ const DNSNetwork = () => {
 
             // Attempt to find DNS data in common keys
             // Some collectors put it under 'Dns', others 'DnsRecords'
-            // The PowerShell script exports as 'DNS', so we should check that first
-            const dnsList = data.DNS || data.dns || data.Dns || data.DnsRecords || [];
+            // The PowerShell script exports as 'DNSRecords' now
+            const dnsList = data.DNSRecords || data.DNS || data.dns || data.DnsRecords || [];
             if (Array.isArray(dnsList)) {
                 setRecords(dnsList);
             } else if (typeof dnsList === 'object' && dnsList !== null) {
