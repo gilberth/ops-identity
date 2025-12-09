@@ -282,26 +282,47 @@ function Get-ADSiteTopology {
             }
         }
 
-        # Identify Sites without Subnets
-        $emptySites = @()
+        $dcs = Get-ADDomainController -Filter *
+
+        # 1. Identify Sites without Subnets
+        $sitesWithoutSubnets = @()
         foreach ($site in $sites) {
-            # Site property in Subnet is typically a DN, so we check if it contains the Site Name
             $hasSubnets = $subnets | Where-Object { $_.Site -like "*$($site.Name)*" }
             if (-not $hasSubnets) {
+                $sitesWithoutSubnets += $site.Name
+            }
+        }
+
+        # 2. Identify Subnets without Sites (Configuration Hole)
+        $subnetsWithoutSite = @()
+        foreach ($subnet in $subnets) {
+            if ([string]::IsNullOrWhiteSpace($subnet.Site)) {
+                $subnetsWithoutSite += $subnet.Name
+            }
+        }
+
+        # 3. Identify Empty Sites (No DCs)
+        $emptySites = @()
+        foreach ($site in $sites) {
+            $dcsInSite = $dcs | Where-Object { $_.Site -eq $site.Name }
+            if (-not $dcsInSite) {
+                # Only flag if it also has no subnets? No, empty site is empty site.
                 $emptySites += $site.Name
             }
         }
 
-        Write-Host "[+] Collected $($sites.Count) sites and $($subnets.Count) subnets" -ForegroundColor Green
+        Write-Host "[+] Topology: $($sites.Count) Sites, $($subnets.Count) Subnets" -ForegroundColor Green
         
-        if ($emptySites.Count -gt 0) {
-            Write-Host "[!] Found $($emptySites.Count) sites without subnets!" -ForegroundColor Yellow
-        }
+        if ($sitesWithoutSubnets.Count -gt 0) { Write-Host "[!] $($sitesWithoutSubnets.Count) Sites have NO Subnets" -ForegroundColor Yellow }
+        if ($subnetsWithoutSite.Count -gt 0) { Write-Host "[!] $($subnetsWithoutSite.Count) Subnets are NOT associated with a Site" -ForegroundColor Red }
+        if ($emptySites.Count -gt 0) { Write-Host "[!] $($emptySites.Count) Sites have NO Domain Controllers" -ForegroundColor Yellow }
 
         return @{
             Sites = $sites
             Subnets = $subnets
-            SitesWithoutSubnets = $emptySites
+            SitesWithoutSubnets = $sitesWithoutSubnets
+            SubnetsWithoutSite = $subnetsWithoutSite
+            EmptySites = $emptySites
         }
     } catch {
         Write-Host "[!] Error collecting site topology: $_" -ForegroundColor Red
@@ -399,7 +420,12 @@ function Get-AllADUsers {
         }
 
         Write-Host "[+] Collected $($users.Count) users" -ForegroundColor Green
-        return $users
+        
+        # Ensure uniqueness to prevent duplicate reporting
+        if ($users) {
+            return $users | Sort-Object SamAccountName -Unique
+        }
+        return @()
     } catch {
         Write-Host "[!] Error collecting users: $_" -ForegroundColor Red
         return @()
@@ -439,7 +465,11 @@ function Get-AllADComputers {
         }
 
         Write-Host "[+] Collected $($computers.Count) computers" -ForegroundColor Green
-        return $computers
+        
+        if ($computers) {
+            return $computers | Sort-Object Name -Unique
+        }
+        return @()
     } catch {
         Write-Host "[!] Error collecting computers: $_" -ForegroundColor Red
         return @()
@@ -598,7 +628,29 @@ function Get-GPOInventory {
                     }
                 } catch {}
 
+                # Calculate Complexity (Settings Count)
+                $totalSettings = 0
+                $computerSettings = 0
+                $userSettings = 0
+                
+                try {
+                    # Limit detailed analysis to avoid timeouts in huge environments
+                    # Parse XML to count settings elements
+                    [xml]$xmlReport = Get-GPOReport -Guid $_.Id -ReportType XML -ErrorAction SilentlyContinue
+                    
+                    if ($xmlReport.GPO.Computer.ExtensionData) {
+                        $computerSettings = ($xmlReport.GPO.Computer.ExtensionData.Extension | ForEach-Object { $_.ChildNodes.Count } | Measure-Object -Sum).Sum
+                    }
+                    if ($xmlReport.GPO.User.ExtensionData) {
+                        $userSettings = ($xmlReport.GPO.User.ExtensionData.Extension | ForEach-Object { $_.ChildNodes.Count } | Measure-Object -Sum).Sum
+                    }
+                    $totalSettings = $computerSettings + $userSettings
+                } catch {}
+
                 @{
+                    TotalSettings = $totalSettings
+                    ComputerSettingsCount = $computerSettings
+                    UserSettingsCount = $userSettings
                     DisplayName = $_.DisplayName
                     GpoId = $_.Id.ToString()
                     GpoStatus = $_.GpoStatus.ToString()
@@ -616,6 +668,8 @@ function Get-GPOInventory {
                     WmiFilterName = if ($_.WmiFilter.Name) { $_.WmiFilter.Name } else { "None" }
                 }
             }
+
+            Write-Host "[+] Collected $($gpos.Count) GPOs with detailed information" -ForegroundColor Green
             return $gpos
         } else {
             # Use AD queries as fallback

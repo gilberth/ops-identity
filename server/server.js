@@ -162,41 +162,56 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
         inactiveDate.setDate(inactiveDate.getDate() - 90);
 
         for (const u of d) {
-          if (u.PasswordNeverExpires === true || u.PasswordNeverExpires === 'true') {
-            if (u.Enabled === true || u.Enabled === 'true') passwordNeverExpires++;
-          }
-          if (u.IsPrivileged === true || u.IsPrivileged === 'true' || u.AdminCount === 1) adminCount++;
-          if (u.ServicePrincipalNames && u.ServicePrincipalNames.length > 0) kerberoastable++;
+          // Check for 'true' string or boolean true
+          const isEnabled = u.Enabled === true || u.Enabled === 'true';
+          const isPwdNeverExpires = u.PasswordNeverExpires === true || u.PasswordNeverExpires === 'true';
 
-          if (u.LastLogonDate && (u.Enabled === true || u.Enabled === 'true')) {
+          if (isEnabled && isPwdNeverExpires) {
+            passwordNeverExpires++;
+          }
+
+          if (u.IsPrivileged === true || u.IsPrivileged === 'true' || u.AdminCount === 1) {
+            adminCount++;
+          }
+
+          if (u.ServicePrincipalNames && u.ServicePrincipalNames.length > 0) {
+            kerberoastable++;
+          }
+
+          if (u.LastLogonDate && isEnabled) {
             const logonDate = new Date(u.LastLogonDate);
-            if (logonDate < inactiveDate) inactive++;
+            if (!isNaN(logonDate.getTime()) && logonDate < inactiveDate) {
+              inactive++;
+            }
           }
         }
         return `\n\nESTADÍSTICAS PRE-CALCULADAS (ÚSALAS COMO VERDAD ABSOLUTA PARA LOS CONTEOS):
 - Total Usuarios Analizados en este chunk: ${total}
-- Usuarios con PasswordNeverExpires=true: ${passwordNeverExpires}
-- Usuarios Inactivos (>90 días sin login): ${inactive}
+- Usuarios con PasswordNeverExpires=true (y Enabled): ${passwordNeverExpires}
+- Usuarios Inactivos (>90 días sin login y Enabled): ${inactive}
 - Usuarios Privilegiados (AdminCount=1 o Grupos Admin): ${adminCount}
 - Usuarios Kerberoastable (SPN presente): ${kerberoastable}`;
-      } else if (cat === 'Computers') {
+      }
+
+      if (cat === 'Computers') {
         let obsolete = 0;
         let inactiveComputers = 0;
-        let total = d.length;
-        // Patrones de OS obsoletos
-        const obsoletePatterns = [/Windows Server 2008/i, /Windows Server 2003/i, /Windows 7/i, /Windows XP/i, /Windows 2000/i, /Windows Server 2012/i];
-
+        const total = d.length;
         const inactiveDate = new Date();
         inactiveDate.setDate(inactiveDate.getDate() - 90);
 
         for (const c of d) {
-          if (c.OperatingSystem) {
-            for (const pattern of obsoletePatterns) {
-              if (pattern.test(c.OperatingSystem)) {
-                obsolete++;
-                break;
-              }
-            }
+          // Detectar OS Obsoletos
+          const os = (c.OperatingSystem || '').toLowerCase();
+          if (
+            os.includes('server 2008') ||
+            os.includes('server 2003') ||
+            os.includes('server 2012') ||
+            os.includes('windows 7') ||
+            os.includes('windows 8') ||
+            os.includes('windows xp')
+          ) {
+            obsolete++;
           }
 
           if (c.LastLogonDate) {
@@ -218,8 +233,8 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
     if (data.length > CHUNK_SIZE) {
       // Large dataset - process in chunks
       const totalChunks = Math.ceil(data.length / CHUNK_SIZE);
-      await addLog(assessmentId, 'info', `Dataset grande: ${data.length.toLocaleString()} items. Dividiendo en ${totalChunks} chunks de ${CHUNK_SIZE.toLocaleString()}`, category);
-      console.log(`[${timestamp()}] [AI] ${category}: Large dataset (${data.length} items), chunking into ${totalChunks} chunks`);
+      await addLog(assessmentId, 'info', `Dataset grande: ${data.length.toLocaleString()} items.Dividiendo en ${totalChunks} chunks de ${CHUNK_SIZE.toLocaleString()} `, category);
+      console.log(`[${timestamp()}][AI] ${category}: Large dataset(${data.length} items), chunking into ${totalChunks} chunks`);
 
       for (let i = 0; i < totalChunks; i += MAX_PARALLEL_CHUNKS) {
         const chunkPromises = [];
@@ -230,7 +245,7 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
           const end = Math.min(start + CHUNK_SIZE, data.length);
           const chunk = data.slice(start, end);
 
-          console.log(`[${timestamp()}] [AI] Processing chunk ${chunkIndex + 1}/${totalChunks} (${start}-${end})`);
+          console.log(`[${timestamp()}][AI] Processing chunk ${chunkIndex + 1}/${totalChunks} (${start}-${end})`);
 
           chunkPromises.push(
             (async () => {
@@ -513,14 +528,26 @@ function buildPrompt(cat, d) {
    - MITRE ATT&CK: T1552.006
    - Comando para buscar: Get-ChildItem "\\\\domain\\SYSVOL\\*\\Policies\\*\\Machine\\Preferences" -Recurse -Filter "*.xml" | Select-String "cpassword"
 
-4. **Configuraciones de seguridad débiles** (SOLO SI ESTÁN EN LOS DATOS):
+4. **⚠️ MEDIUM: GPOs Monolíticas (Complejidad Excesiva)**
+   - Si 'TotalSettings' > 50
+   - Riesgo: Tiempos de inicio de sesión lentos, dificultad par debugar
+   - Impacto: Higiene Operativa
+   - Recomendación: Dividir la GPO en unidades lógicas más pequeñas (ej: 'Browser Settings', 'Security Baseline')
+
+5. **⚠️ HIGH: Desajuste de Versiones (Version Mismatch)**
+   - Si 'UserDSVersion' != 'UserSysvolVersion' O 'ComputerDSVersion' != 'ComputerSysvolVersion'
+   - Riesgo: Problemas de replicación de SYSVOL (Journal Wrap, DFSR roto)
+   - Impacto: Las políticas pueden no aplicarse consistentemente en todos los DCs
+   - Recomendación: Forzar replicación de SYSVOL o investigar errores de DFSR
+
+6. **Configuraciones de seguridad débiles** (SOLO SI ESTÁN EN LOS DATOS):
    - Password policy: MinimumPasswordLength < 14 caracteres
    - Lockout threshold: LockoutThreshold < 5 intentos o 0 (deshabilitado)
    - Maximum password age: > 90 días o 0 (nunca expira)
    - Password history: PasswordHistorySize < 24
    - Comando para verificar: Get-ADDefaultDomainPasswordPolicy
 
-5. **GPOs con configuraciones conflictivas**
+7. **GPOs con configuraciones conflictivas**
    - Múltiples GPOs configurando el mismo setting
    - Comando para detectar: Get-GPOReport -Name "GPO_NAME" -ReportType HTML
 
