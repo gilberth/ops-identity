@@ -1,10 +1,12 @@
-FROM node:18-alpine
+FROM oven/bun:1-alpine
 
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install
+# Copy bun.lockb if it exists
+COPY bun.lockb* ./
+RUN bun install --production
 
 COPY server.js ./
 
-CMD ["npm", "start"]
+CMD ["bun", "start"]

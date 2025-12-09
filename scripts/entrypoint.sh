@@ -9,6 +9,6 @@ window.env = {
 };
 EOF
 
-# Start the Node server
-echo "Starting Node server..."
-exec node server.js
+# Start the Bun server
+echo "Starting Bun server..."
+exec bun server.js

@@ -25,6 +25,10 @@ const Dashboard = () => {
     high: 0,
     medium: 0,
     low: 0,
+    domainAdmins: 0,
+    hasPrivilegedFinding: false,
+    replStatus: { status: "Healthy", label: "Converged", color: "green" },
+    dcStatus: { status: "Optimized", label: "Consistent OS", color: "slate" }
   });
   const [topRisks, setTopRisks] = useState<any[]>([]);
   const [categoryScores, setCategoryScores] = useState<any[]>([]);
@@ -64,9 +68,12 @@ const Dashboard = () => {
       const findings = await api.getFindings(latest.id);
       let critical = 0, high = 0, medium = 0, low = 0;
       let risksList: any[] = [];
-      let totalGPOs = 0, modifiedGPOs = 0; // Mock or real if available
-      let domainAdmins = 0;
-      let staleAccounts = 0;
+
+      // Dynamic Metrics State
+      let domainAdminsCount = 0;
+      let hasDomainAdminFinding = false;
+      let replStatus = { status: "Healthy", label: "Converged", color: "green" };
+      let dcStatus = { status: "Optimized", label: "Consistent OS", color: "slate" };
 
       if (Array.isArray(findings)) {
         findings.forEach((f: any) => {
@@ -76,26 +83,55 @@ const Dashboard = () => {
           else if (sev === "medium") medium++;
           else low++;
 
-          // Heuristic extraction for KPIs if not directly available
-          if (f.title?.includes("Domain Admin")) domainAdmins++;
-          if (f.title?.includes("inactive") || f.title?.includes("stale")) staleAccounts++;
+          // Extract Domain Admin Count
+          // Looks for findings related to "Domain Admins" or "Administrators" group size
+          // Broadened keywords to catch Spanish "Administradores" and "detectados"
+          if (
+            (f.title?.toLowerCase().includes("domain admin") || f.title?.toLowerCase().includes("administrators") || f.title?.toLowerCase().includes("administradores") || f.title?.toLowerCase().includes("admin count")) &&
+            (f.title?.toLowerCase().includes("member") || f.title?.toLowerCase().includes("miembro") || f.title?.toLowerCase().includes("count") || f.title?.toLowerCase().includes("usuarios") || f.title?.toLowerCase().includes("detectados"))
+          ) {
+            hasDomainAdminFinding = true;
+            // Try to grab from evidence first
+            if (f.evidence?.count) {
+              domainAdminsCount = Math.max(domainAdminsCount, f.evidence.count);
+            } else if (f.affected_count) {
+              domainAdminsCount = Math.max(domainAdminsCount, f.affected_count);
+            } else {
+              // Fallback: extract number from title (e.g., "7 administradores...", "4 miembros...")
+              const match = f.title.match(/(\d+)/);
+              if (match) domainAdminsCount = Math.max(domainAdminsCount, parseInt(match[1]));
+            }
+          }
+
+          // Analyze Replication/Topology Health
+          if (f.title?.toLowerCase().includes("replication") || f.title?.toLowerCase().includes("sincronización") || f.title?.toLowerCase().includes("time")) {
+            replStatus = { status: "Issues Found", label: "Sync Errors", color: "red" };
+          }
+
+          // Analyze Domain Controller Health
+          if (f.title?.toLowerCase().includes("operating system") || f.title?.toLowerCase().includes("version") || f.title?.toLowerCase().includes("end of life")) {
+            dcStatus = { status: "Action Needed", label: "Legacy OS Found", color: "amber" };
+          }
 
           risksList.push(f);
         });
       }
 
-      // Mocking specific counts if not found in findings (for demo visual)
-      const domainInfo = rawData?.domainInfo || {};
-      const dcCount = rawData?.dcs?.length || 0;
-
+      // Calculate Debt Score
       const penalty = (critical * 15) + (high * 8) + (medium * 3) + (low * 1);
       let calculatedScore = Math.max(0, 100 - penalty);
       if (critical > 0 && calculatedScore > 80) calculatedScore = 80;
 
+      // Update Stats State
       setStats({
         score: calculatedScore,
         totalFindings: critical + high + medium + low,
-        critical, high, medium, low
+        critical, high, medium, low,
+        // Add dynamic extra stats
+        domainAdmins: hasDomainAdminFinding ? domainAdminsCount : 0,
+        hasPrivilegedFinding: hasDomainAdminFinding,
+        replStatus,
+        dcStatus
       });
 
       setAllFindings(Array.isArray(findings) ? findings : []);
@@ -192,17 +228,17 @@ const Dashboard = () => {
             />
             <MetricCard
               title="Privileged Bloat"
-              value="--"
-              subtext="Deviation from Least Privilege"
+              value={stats.hasPrivilegedFinding ? stats.domainAdmins : "OK"}
+              subtext={stats.hasPrivilegedFinding ? "High Risk Accounts" : "Least Privilege Met"}
               icon={Users}
-              color="bg-amber-500/10 text-amber-600"
+              color={stats.hasPrivilegedFinding ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600"}
             />
             <MetricCard
               title="Topology"
-              value="Healthy"
-              subtext="Replication & Sites"
+              value={stats.replStatus?.status || "Healthy"}
+              subtext={stats.replStatus?.label || "Replication"}
               icon={Globe}
-              color="bg-emerald-500/10 text-emerald-600"
+              color={stats.replStatus?.color === 'red' ? "bg-red-500/10 text-red-600" : "bg-emerald-500/10 text-emerald-600"}
             />
           </div>
 
@@ -276,30 +312,39 @@ const Dashboard = () => {
               <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white p-6">
                 <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-4">Infrastructure Status</h4>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl border border-green-100">
+                  <div className={cn("flex items-center justify-between p-3 rounded-xl border",
+                    stats.replStatus?.color === 'red' ? "bg-red-50 border-red-100" : "bg-green-50 border-green-100")}>
                     <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                      <div className={cn("h-8 w-8 rounded-full flex items-center justify-center",
+                        stats.replStatus?.color === 'red' ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600")}>
                         <Globe className="h-4 w-4" />
                       </div>
                       <div>
                         <p className="text-sm font-bold text-slate-700">Replication Topology</p>
-                        <p className="text-[10px] text-green-600 font-medium">Converged</p>
+                        <p className={cn("text-[10px] font-medium", stats.replStatus?.color === 'red' ? "text-red-600" : "text-green-600")}>
+                          {stats.replStatus?.label}
+                        </p>
                       </div>
                     </div>
-                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    {stats.replStatus?.color === 'red' ?
+                      <AlertTriangle className="h-4 w-4 text-red-500" /> :
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                    }
                   </div>
 
-                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className={cn("flex items-center justify-between p-3 rounded-xl border",
+                    stats.dcStatus?.color === 'amber' ? "bg-amber-50 border-amber-100" : "bg-slate-50 border-slate-100")}>
                     <div className="flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600">
+                      <div className={cn("h-8 w-8 rounded-full flex items-center justify-center",
+                        stats.dcStatus?.color === 'amber' ? "bg-amber-100 text-amber-600" : "bg-slate-200 text-slate-600")}>
                         <Shield className="h-4 w-4" />
                       </div>
                       <div>
                         <p className="text-sm font-bold text-slate-700">Domain Controllers</p>
-                        <p className="text-[10px] text-slate-500">Consistent OS Version</p>
+                        <p className="text-[10px] text-slate-500">{stats.dcStatus?.label}</p>
                       </div>
                     </div>
-                    <Badge variant="secondary" className="bg-white text-slate-600">Optimized</Badge>
+                    <Badge variant="secondary" className="bg-white text-slate-600">{stats.dcStatus?.status}</Badge>
                   </div>
                 </div>
               </Card>

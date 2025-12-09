@@ -1,37 +1,35 @@
 # ==========================================
 # Stage 1: Build Client (Frontend)
 # ==========================================
-FROM node:18-alpine AS client-build
+FROM oven/bun:1-alpine AS client-build
 WORKDIR /app/client
 
 # Copy client package files
-COPY client/package.json client/package-lock.json ./
-RUN npm ci
+COPY client/package.json client/bun.lockb* ./
+RUN bun install
 
 # Copy client source code
 COPY client/ ./
 
 # Build client
 # Note: VITE_VPS_ENDPOINT is NOT needed here as we use runtime config
-RUN npm run build
+RUN bun run build
 
 # ==========================================
 # Stage 2: Setup Server (Backend)
 # ==========================================
-FROM node:18-alpine AS server-build
+FROM oven/bun:1-alpine AS server-build
 WORKDIR /app/server
 
 # Copy server package files
-COPY server/package.json ./
-# If package-lock exists, copy it (it might not if we just moved files)
-COPY server/package-lock.json* ./
+COPY server/package.json server/bun.lockb* ./
 
-RUN npm install --production
+RUN bun install --production
 
 # ==========================================
 # Stage 3: Final Image
 # ==========================================
-FROM node:18-alpine
+FROM oven/bun:1-alpine
 WORKDIR /app
 
 # Install runtime dependencies if needed (e.g. for healthchecks)
