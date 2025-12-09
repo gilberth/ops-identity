@@ -1048,7 +1048,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             })
           ),
           new Paragraph({ text: "", spacing: { after: 200 } })
-        ] : [])
+        ] : []),
 
 
 
