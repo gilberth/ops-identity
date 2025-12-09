@@ -209,283 +209,268 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
 
     // CRITICAL: Prevent hallucinations on empty datasets
     if (!data || data.length === 0) {
-      console.log(`[${timestamp()}] [AI] ${category}: empty dataset (after filtering), skipping analysis to prevent hallucinations.`);
-      await addLog(assessmentId, 'info', `Skipping ${category} (no risk objects found).`, category);
-      return [];
-    }
+      // ------------------------------------------------------------------
+      // AI ORCHESTRATOR & ANALYZER
+      // ------------------------------------------------------------------
 
-    // Get AI configuration
-    const provider = (await getConfig('ai_provider')) || 'openai';
-    const model = (await getConfig('ai_model')) || 'gpt-4o-mini';
-    const apiKey = await getConfig(`${provider}_api_key`) || process.env.OPENAI_API_KEY || process.env.LOVABLE_API_KEY;
+      async function analyzeCategory(assessmentId, category, data) {
+        try {
+          const provider = process.env.AI_PROVIDER || 'anthropic';
+          const model = process.env.AI_MODEL || 'claude-3-5-sonnet-20241022';
+          const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
 
-    if (!apiKey) {
-      await addLog(assessmentId, 'warn', `No API key found for ${provider}. Skipping AI analysis.`, category);
-      return [];
-    }
-
-    if (data.length > CHUNK_SIZE) {
-      // Large dataset - process in chunks
-      const totalChunks = Math.ceil(data.length / CHUNK_SIZE);
-      await addLog(assessmentId, 'info', `Dataset grande: ${data.length.toLocaleString()} items.Dividiendo en ${totalChunks} chunks de ${CHUNK_SIZE.toLocaleString()} `, category);
-      console.log(`[${timestamp()}][AI] ${category}: Large dataset(${data.length} items), chunking into ${totalChunks} chunks`);
-
-      for (let i = 0; i < totalChunks; i += MAX_PARALLEL_CHUNKS) {
-        const chunkPromises = [];
-
-        for (let j = 0; j < MAX_PARALLEL_CHUNKS && (i + j) < totalChunks; j++) {
-          const chunkIndex = i + j;
-          const start = chunkIndex * CHUNK_SIZE;
-          const end = Math.min(start + CHUNK_SIZE, data.length);
-          const chunk = data.slice(start, end);
-
-          throw new Error('AI API Key not configured');
-        }
-
-        let allFindings = [];
-
-        // -----------------------------------------------------------------
-        // FASE 3 PILOT: Deterministic Analysis for 'Users'
-        // -----------------------------------------------------------------
-        if (category === 'Users') {
-          console.log(`[${timestamp()}] [DETERMINISTIC] Running Phase 3 Engine for ${category}...`);
-          await addLog(assessmentId, 'info', `Ejecutando análisis determinístico (Fase 3) para ${category}`, category);
-
-          // Execute Deterministic Logic
-          allFindings = analyzeUsersDeterministic(data); // This function needs to be defined elsewhere
-
-          console.log(`[${timestamp()}] [DETERMINISTIC] Found ${allFindings.length} mathematically verified findings.`);
-          await addLog(assessmentId, 'info', `Análisis determinístico completado: ${allFindings.length} hallazgos encontrados`, category);
-
-          // Save findings directly (skip AI prompt, skip validation since it is already validated code)
-          // Note: We reuse the exact same save logic below to maintain DB consistency
-        } else {
-          // -----------------------------------------------------------------
-          // FASE 2: Regular AI Analysis + Post-Validation (Legacy for other categories)
-          // -----------------------------------------------------------------
-          await addLog(assessmentId, 'info', `Starting AI analysis for ${category}...`, category);
-
-          // CRITICAL: Prevent hallucinations on empty datasets
-          if (!data || data.length === 0) {
-            console.log(`[${timestamp()}] [AI] ${category}: empty dataset (after filtering), skipping analysis to prevent hallucinations.`);
-            await addLog(assessmentId, 'info', `Skipping ${category} (no risk objects found).`, category);
-            return [];
+          if (!apiKey) {
+            throw new Error('AI API Key not configured');
           }
 
-          const MAX_CHUNK_SIZE = 40; // Reduced to improve AI focus
-          if (data.length > MAX_CHUNK_SIZE) {
-            console.log(`[${timestamp()}] [AI] ${category}: Large dataset (${data.length} items), chunking...`);
-            const chunks = chunkArray(data, MAX_CHUNK_SIZE);
-            const mergedFindingsMap = new Map();
+          let allFindings = [];
 
-            // Process chunks in parallel (limited concurrency)
-            const processChunk = async (chunk, index) => {
-              await addLog(assessmentId, 'info', `Analizando chunk ${index + 1}/${chunks.length} (${chunk.length.toLocaleString()} items)`, category);
-              const prompt = buildPrompt(category, chunk);
-              console.log(`[${timestamp()}] [AI] Chunk ${index + 1} prompt: ${prompt.length} chars`);
-              try {
-                const findings = await callAI(prompt, provider, model, apiKey);
-                console.log(`[${timestamp()}] [AI] Chunk ${index + 1} returned ${findings.length} findings`);
-                if (findings.length > 0) {
-                  await addLog(assessmentId, 'info', `Chunk ${index + 1}: ${findings.length} hallazgos encontrados`, category);
-                }
-                return findings;
-              } catch (e) {
-                console.error(`Error processing chunk ${index}:`, e);
-                await addLog(assessmentId, 'error', `Error en chunk ${index + 1}: ${e.message}`, category);
-                return [];
-              }
-            };
+          // -----------------------------------------------------------------
+          // FASE 3 PILOT: Deterministic Analysis for 'Users'
+          // -----------------------------------------------------------------
+          if (category === 'Users') {
+            console.log(`[${timestamp()}] [DETERMINISTIC] Running Phase 3 Engine for ${category}...`);
+            await addLog(assessmentId, 'info', `Ejecutando análisis determinístico (Fase 3) para ${category}`, category);
 
-            // Simple sequential for safety
-            for (let i = 0; i < chunks.length; i++) {
-              const chunkFindings = await processChunk(chunks[i], i);
-              chunkFindings.forEach(f => {
-                // Merge Logic (Same as before)
-                let key = f.type_id;
-                if (!key && f.cis_control) key = f.cis_control.split(' ')[0];
-                if (!key) key = f.title.replace(/^\d+\s+/, '');
+            // Execute Deterministic Logic
+            allFindings = analyzeUsersDeterministic(data);
 
-                if (!mergedFindingsMap.has(key)) {
-                  mergedFindingsMap.set(key, { ...f });
-                } else {
-                  // Merge counts and objects
-                  const existing = mergedFindingsMap.get(key);
-                  const existingCount = existing.affected_count || existing.evidence?.count || 0;
-                  const newCount = f.affected_count || f.evidence?.count || 0;
-                  const totalCount = existingCount + newCount;
-
-                  existing.affected_count = totalCount;
-                  if (existing.evidence) existing.evidence.count = totalCount;
-
-                  const existingObjects = existing.evidence?.affected_objects || [];
-                  const newObjects = f.evidence?.affected_objects || [];
-                  existing.evidence.affected_objects = [...new Set([...existingObjects, ...newObjects])];
-
-                  // Update title with new count
-                  if (/^\d+/.test(existing.title)) {
-                    existing.title = existing.title.replace(/^\d+/, totalCount.toString());
-                  }
-                }
-              });
-              await addLog(assessmentId, 'info', `Progreso: ${i + 1}/${chunks.length} chunks completados`, category);
-            }
-            allFindings = Array.from(mergedFindingsMap.values());
-            console.log(`[${timestamp()}] [AI] ${category}: Merged into ${allFindings.length} unique findings`);
+            console.log(`[${timestamp()}] [DETERMINISTIC] Found ${allFindings.length} mathematically verified findings.`);
+            await addLog(assessmentId, 'info', `Análisis determinístico completado: ${allFindings.length} hallazgos encontrados`, category);
 
           } else {
-            // Small dataset
-            console.log(`[${timestamp()}] [AI] ${category}: Small dataset (${data.length} items), processing in single chunk`);
-            const prompt = buildPrompt(category, data);
-            console.log(`[${timestamp()}] [AI] Analyzing ${category} with prompt length: ${prompt.length} chars`);
-            allFindings = await callAI(prompt, provider, model, apiKey);
+            // -----------------------------------------------------------------
+            // FASE 2: Regular AI Analysis + Post-Validation (Legacy for other categories)
+            // -----------------------------------------------------------------
+            await addLog(assessmentId, 'info', `Starting AI analysis for ${category}...`, category);
+
+            // CRITICAL: Prevent hallucinations on empty datasets
+            if (!data || data.length === 0) {
+              console.log(`[${timestamp()}] [AI] ${category}: empty dataset (after filtering), skipping analysis to prevent hallucinations.`);
+              await addLog(assessmentId, 'info', `Skipping ${category} (no risk objects found).`, category);
+              return [];
+            }
+
+            const MAX_CHUNK_SIZE = 40; // Reduced to improve AI focus
+            if (data.length > MAX_CHUNK_SIZE) {
+              console.log(`[${timestamp()}] [AI] ${category}: Large dataset (${data.length} items), chunking...`);
+              const chunks = chunkArray(data, MAX_CHUNK_SIZE);
+              const mergedFindingsMap = new Map();
+
+              // Process chunks in parallel (limited concurrency)
+              const processChunk = async (chunk, index) => {
+                await addLog(assessmentId, 'info', `Analizando bloque ${index + 1}/${chunks.length} (${chunk.length.toLocaleString()} items)`, category);
+                const prompt = buildPrompt(category, chunk);
+                console.log(`[${timestamp()}] [AI] Chunk ${index + 1} prompt: ${prompt.length} chars`);
+                try {
+                  // We use a small sleep to avoid rigorous rate limits
+                  await new Promise(r => setTimeout(r, 1000 * Math.random()));
+                  const findings = await callAI(prompt, provider, model, apiKey);
+                  console.log(`[${timestamp()}] [AI] Chunk ${index + 1} returned ${findings.length} findings`);
+                  if (findings.length > 0) {
+                    await addLog(assessmentId, 'info', `Bloque ${index + 1}: ${findings.length} hallazgos encontrados`, category);
+                  }
+                  return findings;
+                } catch (e) {
+                  console.error(`Error processing chunk ${index}:`, e);
+                  await addLog(assessmentId, 'error', `Error en bloque ${index + 1}: ${e.message}`, category);
+                  return [];
+                }
+              };
+
+              // Sequential Chunk Processing to be safe with limits
+              for (let i = 0; i < chunks.length; i++) {
+                const chunkFindings = await processChunk(chunks[i], i);
+                chunkFindings.forEach(f => {
+                  // Merge Logic
+                  let key = f.type_id;
+                  if (!key && f.cis_control) key = f.cis_control.split(' ')[0];
+                  if (!key) key = f.title.replace(/^\d+\s+/, '');
+
+                  if (!mergedFindingsMap.has(key)) {
+                    mergedFindingsMap.set(key, { ...f });
+                  } else {
+                    const existing = mergedFindingsMap.get(key);
+                    const existingCount = existing.affected_count || existing.evidence?.count || 0;
+                    const newCount = f.affected_count || f.evidence?.count || 0;
+                    const totalCount = existingCount + newCount;
+
+                    existing.affected_count = totalCount;
+                    if (existing.evidence) existing.evidence.count = totalCount;
+
+                    const existingObjects = existing.evidence?.affected_objects || [];
+                    const newObjects = f.evidence?.affected_objects || [];
+                    existing.evidence.affected_objects = [...new Set([...existingObjects, ...newObjects])];
+
+                    // Update title with new count
+                    if (/^\d+/.test(existing.title)) {
+                      existing.title = existing.title.replace(/^\d+/, totalCount.toString());
+                    }
+                  }
+                });
+
+                // Progress log
+                if (i % 2 === 0) {
+                  await addLog(assessmentId, 'info', `Progreso: ${i + 1}/${chunks.length} bloques procesados`, category);
+                }
+              }
+
+              allFindings = Array.from(mergedFindingsMap.values());
+              console.log(`[${timestamp()}] [AI] ${category}: Merged into ${allFindings.length} unique findings`);
+
+            } else {
+              // Small dataset
+              console.log(`[${timestamp()}] [AI] ${category}: Small dataset (${data.length} items), processing in single chunk`);
+              const prompt = buildPrompt(category, data);
+              allFindings = await callAI(prompt, provider, model, apiKey);
+            }
+
+            // POST-PROCESSING: Strict Grounding Check
+            // Only needed for AI generated findings
+            allFindings = validateFindings(allFindings, data, category);
+            console.log(`[${timestamp()}] [AI] ${category} analysis complete (validated): ${allFindings.length} findings`);
+            await addLog(assessmentId, 'info', `AI analysis complete: ${allFindings.length} verified findings`, category);
           }
 
-          // POST-PROCESSING: Strict Grounding Check
-          // Only needed for AI generated findings
-          allFindings = validateFindings(allFindings, data, category);
-          console.log(`[${timestamp()}] [AI] ${category} analysis complete (validated): ${allFindings.length} findings`);
-          await addLog(assessmentId, 'info', `AI analysis complete: ${allFindings.length} verified findings`, category);
-        }
-
-        // Save findings to database (Common path for both engines)
-        console.log(`[${timestamp()}] [DB] Saving ${allFindings.length} findings for ${category}`);
-        if (allFindings.length > 0) {
-          for (const f of allFindings) {
-            await pool.query(
-              `INSERT INTO findings (
+          // Save findings to database (Common path for both engines)
+          console.log(`[${timestamp()}] [DB] Saving ${allFindings.length} findings for ${category}`);
+          if (allFindings.length > 0) {
+            for (const f of allFindings) {
+              await pool.query(
+                `INSERT INTO findings (
             assessment_id, title, severity, description, recommendation, evidence,
             mitre_attack, cis_control, impact_business, remediation_commands,
             prerequisites, operational_impact, microsoft_docs, current_vs_recommended,
             timeline, affected_count
           )
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-              [
-                assessmentId,
-                sanitizeText(f.title || 'Security Issue'),
-                f.severity || 'medium',
-                sanitizeText(f.description || 'No description'),
-                sanitizeText(f.recommendation || 'Review finding'),
-                JSON.stringify(f.evidence || {}),
-                sanitizeText(f.mitre_attack || ''),
-                sanitizeText(f.cis_control || ''),
-                sanitizeText(f.impact_business || ''),
-                sanitizeText(f.remediation_commands || ''),
-                sanitizeText(f.prerequisites || ''),
-                sanitizeText(f.operational_impact || ''),
-                sanitizeText(f.microsoft_docs || ''),
-                sanitizeText(f.current_vs_recommended || ''),
-                sanitizeText(f.timeline || ''),
-                f.affected_count || 0
-              ]
-            );
-          }
-          await addLog(assessmentId, 'info', 'Findings saved successfully', category);
-        }
-
-        return allFindings;
-      } catch (error) {
-        console.error(`Error analyzing ${category}:`, error);
-        await addLog(assessmentId, 'error', `Analysis error: ${error.message}`, category);
-        return [];
-      }
-    }
-
-    // 🛡️ SECURITY: Grounding Verification Function
-    // Ensures AI cannot invent objects that don't exist in the input data.
-    function validateFindings(findings, data, category) {
-      if (!findings || findings.length === 0) return [];
-
-      // Create a Set of all valid object identifiers for O(1) lookup
-      const validNames = new Set();
-
-      data.forEach(item => {
-        if (item.SamAccountName) validNames.add(item.SamAccountName.toLowerCase());
-        if (item.Name) validNames.add(item.Name.toLowerCase());
-        if (item.DistinguishedName) validNames.add(item.DistinguishedName.toLowerCase());
-        if (item.DNSHostName) validNames.add(item.DNSHostName.toLowerCase());
-        if (item.DisplayName) validNames.add(item.DisplayName.toLowerCase());
-        if (item.UserPrincipalName) validNames.add(item.UserPrincipalName.toLowerCase()); // Add UPN
-        if (item.GpoId) validNames.add(item.GpoId.toLowerCase());
-        // For groups or computers sometimes just Name is used
-      });
-
-      const validatedFindings = [];
-
-      for (const finding of findings) {
-        const evidence = finding.evidence || {};
-        let affectedObjects = evidence.affected_objects || [];
-
-        // 1. GLOBAL/GENERIC CHECKS (Type II Findings)
-        // If finding has NO affected objects listed, it might be a global setting (e.g. "Complexity Enabled")
-        // We only allow this if the category supports global findings.
-        if (affectedObjects.length === 0) {
-          if (['Users', 'Computers', 'Groups'].includes(category)) {
-            // These categories SHOULD always have affected objects for specific findings.
-            // Unless it's a summary stats finding, which we discourage AI from making.
-            // We'll treat "0 objects" but "count > 0" as a hallucination for these categories.
-            if (evidence.count > 0 || finding.affected_count > 0) {
-              console.log(`[Validation] 🛑 PURGING HALLUCINATION: "${finding.title}" (Category: ${category}) claims issues but lists NO objects.`);
-              continue;
+                [
+                  assessmentId,
+                  sanitizeText(f.title || 'Security Issue'),
+                  f.severity || 'medium',
+                  sanitizeText(f.description || 'No description'),
+                  sanitizeText(f.recommendation || 'Review finding'),
+                  JSON.stringify(f.evidence || {}),
+                  sanitizeText(f.mitre_attack || ''),
+                  sanitizeText(f.cis_control || ''),
+                  sanitizeText(f.impact_business || ''),
+                  sanitizeText(f.remediation_commands || ''),
+                  sanitizeText(f.prerequisites || ''),
+                  sanitizeText(f.operational_impact || ''),
+                  sanitizeText(f.microsoft_docs || ''),
+                  sanitizeText(f.current_vs_recommended || ''),
+                  sanitizeText(f.timeline || ''),
+                  f.affected_count || 0
+                ]
+              );
             }
+            await addLog(assessmentId, 'info', 'Findings saved successfully', category);
           }
-          // For DNS, GPO, etc, global findings are okay.
-          validatedFindings.push(finding);
-          continue;
+
+          return allFindings;
+
+        } catch (error) {
+          console.error(`Error analyzing ${category}:`, error);
+          await addLog(assessmentId, 'error', `Analysis error: ${error.message}`, category);
+          return [];
         }
+      }
 
-        // 2. SPECIFIC OBJECT CHECKS (Type I Findings)
-        // Validate every single object name against the source of truth
-        const validObjects = affectedObjects.filter(objName => {
-          if (!objName) return false;
-          const lowerObj = objName.toString().toLowerCase();
-          // Clean up common prefixes
-          const cleanName = lowerObj.replace(/^(cn=|name=|user=|computer=)/, '').split(',')[0].trim();
+      // 🛡️ SECURITY: Grounding Verification Function
+      // Ensures AI cannot invent objects that don't exist in the input data.
+      function validateFindings(findings, data, category) {
+        if (!findings || findings.length === 0) return [];
 
-          // Strict Check
-          const isValid = validNames.has(cleanName) || validNames.has(lowerObj) ||
-            Array.from(validNames).some(vn => vn.includes(cleanName) || cleanName.includes(vn));
+        // Create a Set of all valid object identifiers for O(1) lookup
+        const validNames = new Set();
 
-          return isValid;
+        data.forEach(item => {
+          if (item.SamAccountName) validNames.add(item.SamAccountName.toLowerCase());
+          if (item.Name) validNames.add(item.Name.toLowerCase());
+          if (item.DistinguishedName) validNames.add(item.DistinguishedName.toLowerCase());
+          if (item.DNSHostName) validNames.add(item.DNSHostName.toLowerCase());
+          if (item.DisplayName) validNames.add(item.DisplayName.toLowerCase());
+          if (item.UserPrincipalName) validNames.add(item.UserPrincipalName.toLowerCase()); // Add UPN
+          if (item.GpoId) validNames.add(item.GpoId.toLowerCase());
+          // For groups or computers sometimes just Name is used
         });
 
-        // 3. DECISION GATES
-        if (validObjects.length === 0) {
-          console.log(`[Validation] 🛑 BLOCKING TOTAL HALLUCINATION: Finding "${finding.title}" listed ${affectedObjects.length} objects but NONE exist in real data.`);
-          continue; // DELETE FINDING
-        }
+        const validatedFindings = [];
 
-        if (validObjects.length !== affectedObjects.length) {
-          console.log(`[Validation] ⚠️ PARTIAL HALLUCINATION FIX: Finding "${finding.title}" reduced from ${affectedObjects.length} to ${validObjects.length} real objects.`);
-        }
+        for (const finding of findings) {
+          const evidence = finding.evidence || {};
+          let affectedObjects = evidence.affected_objects || [];
 
-        // 4. REWRITE REALITY
-        // Force the finding to match the verified reality
-        finding.evidence.affected_objects = validObjects;
-        finding.evidence.count = validObjects.length;
-        finding.affected_count = validObjects.length;
-
-        // Update title to be mathematically correct
-        if (/^\d+/.test(finding.title)) {
-          finding.title = finding.title.replace(/^\d+/, validObjects.length.toString());
-        } else {
-          // If title doesn't start with number but finding implies count, prepend it
-          if (!finding.title.includes(validObjects.length.toString())) {
-            finding.title = `(${validObjects.length}) ${finding.title}`;
+          // 1. GLOBAL/GENERIC CHECKS (Type II Findings)
+          // If finding has NO affected objects listed, it might be a global setting (e.g. "Complexity Enabled")
+          // We only allow this if the category supports global findings.
+          if (affectedObjects.length === 0) {
+            if (['Users', 'Computers', 'Groups'].includes(category)) {
+              // These categories SHOULD always have affected objects for specific findings.
+              // Unless it's a summary stats finding, which we discourage AI from making.
+              // We'll treat "0 objects" but "count > 0" as a hallucination for these categories.
+              if (evidence.count > 0 || finding.affected_count > 0) {
+                console.log(`[Validation] 🛑 PURGING HALLUCINATION: "${finding.title}" (Category: ${category}) claims issues but lists NO objects.`);
+                continue;
+              }
+            }
+            // For DNS, GPO, etc, global findings are okay.
+            validatedFindings.push(finding);
+            continue;
           }
+
+          // 2. SPECIFIC OBJECT CHECKS (Type I Findings)
+          // Validate every single object name against the source of truth
+          const validObjects = affectedObjects.filter(objName => {
+            if (!objName) return false;
+            const lowerObj = objName.toString().toLowerCase();
+            // Clean up common prefixes
+            const cleanName = lowerObj.replace(/^(cn=|name=|user=|computer=)/, '').split(',')[0].trim();
+
+            // Strict Check
+            const isValid = validNames.has(cleanName) || validNames.has(lowerObj) ||
+              Array.from(validNames).some(vn => vn.includes(cleanName) || cleanName.includes(vn));
+
+            return isValid;
+          });
+
+          // 3. DECISION GATES
+          if (validObjects.length === 0) {
+            console.log(`[Validation] 🛑 BLOCKING TOTAL HALLUCINATION: Finding "${finding.title}" listed ${affectedObjects.length} objects but NONE exist in real data.`);
+            continue; // DELETE FINDING
+          }
+
+          if (validObjects.length !== affectedObjects.length) {
+            console.log(`[Validation] ⚠️ PARTIAL HALLUCINATION FIX: Finding "${finding.title}" reduced from ${affectedObjects.length} to ${validObjects.length} real objects.`);
+          }
+
+          // 4. REWRITE REALITY
+          // Force the finding to match the verified reality
+          finding.evidence.affected_objects = validObjects;
+          finding.evidence.count = validObjects.length;
+          finding.affected_count = validObjects.length;
+
+          // Update title to be mathematically correct
+          if (/^\d+/.test(finding.title)) {
+            finding.title = finding.title.replace(/^\d+/, validObjects.length.toString());
+          } else {
+            // If title doesn't start with number but finding implies count, prepend it
+            if (!finding.title.includes(validObjects.length.toString())) {
+              finding.title = `(${validObjects.length}) ${finding.title}`;
+            }
+          }
+
+          validatedFindings.push(finding);
         }
 
-        validatedFindings.push(finding);
+        return validatedFindings;
       }
 
-      return validatedFindings;
-    }
+      function buildPrompt(cat, d) {
+        const str = (v, max) => JSON.stringify(v || [], null, 2).substring(0, max);
 
-    function buildPrompt(cat, d) {
-      const str = (v, max) => JSON.stringify(v || [], null, 2).substring(0, max);
-
-      const categoryInstructions = {
-        Users: `Analiza estos usuarios de Active Directory para identificar vulnerabilidades de seguridad.
+        const categoryInstructions = {
+          Users: `Analiza estos usuarios de Active Directory para identificar vulnerabilidades de seguridad.
 
 **⚠️ INSTRUCCIONES DE ANÁLISIS DE DATOS (JSON):**
 1. Recibirás una lista de objetos JSON. CADA objeto es un usuario.
@@ -603,7 +588,7 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
   * count: Número total REAL de los datos
   * details: Información específica (ej: "LastLogonDate promedio: 245 días, PasswordLastSet promedio: 18 meses")`,
 
-        GPOs: `Analiza estas Group Policy Objects para identificar configuraciones inseguras.
+          GPOs: `Analiza estas Group Policy Objects para identificar configuraciones inseguras.
 
 **⚠️ VALIDACIÓN CRÍTICA PARA GPOs:**
 - Si los datos muestran "cpassword": null o "cpassword" no aparece → NO generar finding de cpassword
@@ -671,7 +656,7 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
   
 - **Evidencia**: Nombres REALES de GPOs de los datos y sus configuraciones problemáticas con valores específicos`,
 
-        Computers: `Analiza estos equipos de Active Directory para identificar riesgos.
+          Computers: `Analiza estos equipos de Active Directory para identificar riesgos.
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **Sistemas operativos obsoletos** (Windows Server 2008/2003, Windows 7/XP/Vista)
@@ -704,7 +689,7 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
   * Comandos PowerShell para implementar
 - **Evidencia**: Lista de equipos (hostname, OS, última actividad)`,
 
-        ReplicationStatus: `Analiza la salud de la replicación de Active Directory y la topología del bosque.
+          ReplicationStatus: `Analiza la salud de la replicación de Active Directory y la topología del bosque.
 
 **⚠️ CONTEXTO CRÍTICO:**
 La replicación es el corazón de AD. Fallos aquí significan contraseñas no sincronizadas, objetos fantasma y posible corrupción de la base de datos.
@@ -738,7 +723,7 @@ Debes detectar problemas de topología, conexiones huérfanas y errores de repli
   * Pasos para limpieza de metadatos (ntdsutil).
 - **Evidencia**: Nombres de servidores origen/destino, códigos de error, fechas de último éxito.`,
 
-        Groups: `Eres un auditor de seguridad especializado en privilegios y gestión de identidades en Active Directory.
+          Groups: `Eres un auditor de seguridad especializado en privilegios y gestión de identidades en Active Directory.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 Los grupos son el mecanismo principal de asignación de permisos en AD. El exceso de privilegios es una de las vulnerabilidades más explotadas en compromisos de dominio. Debes buscar desviaciones del principio de least privilege y grupos con configuraciones que faciliten escalación de privilegios.
@@ -822,7 +807,7 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
     - Test de acceso: Validar que cuentas removidas no tienen acceso privilegiado
 - **Evidencia**: affected_objects con nombres REALES (máximo 10, luego "...y X más"), affected_count preciso, details con estadísticas (promedio LastLogonDate, distribución por OU)`,
 
-        DCHealth: `Analiza la salud y seguridad de los controladores de dominio.
+          DCHealth: `Analiza la salud y seguridad de los controladores de dominio.
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **Problemas de replicación** (ConsecutiveReplicationFailures > 0)
@@ -878,7 +863,7 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
   * Referencias a Microsoft best practices
 - **Evidencia**: Estado actual de cada DC`,
 
-        DNS: `Eres un especialista en seguridad de infraestructura DNS de Active Directory con experiencia en detección de misconfigurations y vulnerabilidades de resolución de nombres.
+          DNS: `Eres un especialista en seguridad de infraestructura DNS de Active Directory con experiencia en detección de misconfigurations y vulnerabilidades de resolución de nombres.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 DNS es crítico en AD - todos los servicios dependen de él (Kerberos, LDAP, replicación). Un DNS mal configurado puede permitir ataques de man-in-the-middle, DNS spoofing, y denial of service.
@@ -928,7 +913,7 @@ DNS es crítico en AD - todos los servicios dependen de él (Kerberos, LDAP, rep
 - **Recomendación**: Comandos PowerShell específicos para fix
 - **Evidencia**: Configuración actual, IPs de forwarders recomendados`,
 
-        DHCP: `Eres un especialista en seguridad de servicios de red Windows Server con enfoque en DHCP y detección de rogue servers.
+          DHCP: `Eres un especialista en seguridad de servicios de red Windows Server con enfoque en DHCP y detección de rogue servers.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP comprometido o rogue puede redirigir tráfico, capturar credenciales, y ejecutar man-in-the-middle attacks.
@@ -996,7 +981,7 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
 - **Recomendación**: Comandos para autorizar/remover servers, habilitar logging
 - **Evidencia**: IPs de servers, configuración actual`,
 
-        FSMORolesHealth: `Analiza la salud de los roles FSMO del dominio.
+          FSMORolesHealth: `Analiza la salud de los roles FSMO del dominio.
 
 **⚠️ CONTEXTO:**
 Los roles FSMO son críticos para la operación de AD. Si un rol no es accesible, puede causar fallos en la creación de objetos, autenticación o actualizaciones de esquema.
@@ -1026,7 +1011,7 @@ Los roles FSMO son críticos para la operación de AD. Si un rol no es accesible
 - **Descripción**: Impacto operativo específico del rol fallido.
 - **Evidencia**: Tiempos de respuesta, errores de DNS.`,
 
-        ReplicationHealthAllDCs: `Analiza la topología y salud de replicación completa.
+          ReplicationHealthAllDCs: `Analiza la topología y salud de replicación completa.
 
 **⚠️ CONTEXTO:**
 Una visión global de la replicación es vital para detectar islas de replicación o fallos sistémicos.
@@ -1049,7 +1034,7 @@ Una visión global de la replicación es vital para detectar islas de replicaci�
 - **Título**: "N DCs con fallos críticos de replicación" o "DC [NOMBRE] aislado del dominio".
 - **Recomendación**: Comandos repadmin o revisión de firewalls (puertos 135, 49152-65535, 389, 88).`,
 
-        LingeringObjectsRisk: `Analiza el riesgo de Lingering Objects (Objetos Fantasma).
+          LingeringObjectsRisk: `Analiza el riesgo de Lingering Objects (Objetos Fantasma).
 
 **⚠️ CONTEXTO:**
 Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tombstone Lifetime (180 días típica). Si se reconecta, puede reintroducir objetos borrados.
@@ -1069,7 +1054,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Descripción**: Explicar qué es un lingering object y por qué corrompe el directorio.
 - **Recomendación**: Procedimiento específico de limpieza (Strict Replication Consistency, repadmin /removelingeringobjects).`,
 
-        TrustHealth: `Analiza la salud de las relaciones de confianza (Trusts).
+          TrustHealth: `Analiza la salud de las relaciones de confianza (Trusts).
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **🔴 CRITICAL: Trust Roto o Fallido**
@@ -1090,7 +1075,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Confianza [NOMBRE] rota o degradada" o "Filtrado de SID deshabilitado en [TRUST]".
 - **Recomendación**: Reset-ComputerMachinePassword, netdom trust /verify, habilitar SID filtering (netdom trust /quarantine).`,
 
-        OrphanedTrusts: `Analiza trusts huérfanos (apuntan a dominios inexistentes).
+          OrphanedTrusts: `Analiza trusts huérfanos (apuntan a dominios inexistentes).
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **⚠️ HIGH: Trusts Huérfanos**
@@ -1105,7 +1090,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Relación de confianza huérfana detectada: [TARGET]".
 - **Recomendación**: Eliminar trusts obsoletos (Remove-ADTrust).`,
 
-        DNSRootHints: `Analiza los Root Hints de DNS.
+          DNSRootHints: `Analiza los Root Hints de DNS.
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **⚠️ MEDIUM: Root Hints Obsoletos**
@@ -1122,7 +1107,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Root Hints desactualizados en [DC]".
 - **Recomendación**: Actualizar via GUI DNS o PowerShell (Import-DnsServerRootHint).`,
 
-        DNSConflicts: `Analiza conflictos en registros DNS.
+          DNSConflicts: `Analiza conflictos en registros DNS.
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **⚠️ MEDIUM: Duplicados de Registros A**
@@ -1142,7 +1127,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Conflictos de nombres DNS detectados ([COUNT])".
 - **Recomendación**: Limpieza manual o habilitar scavenging.`,
 
-        DNSScavengingDetailed: `Analiza la configuración de limpieza (Scavenging) de DNS a fondo.
+          DNSScavengingDetailed: `Analiza la configuración de limpieza (Scavenging) de DNS a fondo.
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **🔴 CRITICAL: Mismatch de Configuración**
@@ -1158,7 +1143,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Configuración de limpieza DNS inconsistente en [DC]".
 - **Recomendación**: Set-DnsServerZoneAging.`,
 
-        DHCPRogueServers: `Analiza servidores DHCP no autorizados (Rogue).
+          DHCPRogueServers: `Analiza servidores DHCP no autorizados (Rogue).
     
 **⚠️ PRIORIDAD MÁXIMA:** Rogue DHCP es un ataque activo o un riesgo severo de disponibilidad.
 
@@ -1173,7 +1158,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Servidor DHCP no autorizado detectado: [IP]".
 - **Recomendación**: Localizar por MAC address en switch y apagar puerto. Bloquear IP.`,
 
-        DHCPOptionsAudit: `Audita opciones de ámbitos DHCP.
+          DHCPOptionsAudit: `Audita opciones de ámbitos DHCP.
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **🔴 HIGH: DNS Incorrectos en DHCP**
@@ -1194,7 +1179,7 @@ Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tomb
 - **Título**: "Configuración DNS inválida en ámbitos DHCP".
 - **Recomendación**: Corregir opciones de ámbito (Set-DhcpServerv4OptionValue).`,
 
-        Security: `Eres un experto en hardening de Active Directory con especialización en protocolos de autenticación legacy y configuraciones de seguridad avanzadas.
+          Security: `Eres un experto en hardening de Active Directory con especialización en protocolos de autenticación legacy y configuraciones de seguridad avanzadas.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 Esta categoría consolida múltiples configuraciones de seguridad críticas: NTLM, SMB, LAPS, cifrado Kerberos, y delegación. Busca configuraciones legacy que faciliten lateral movement y credential theft.
@@ -1364,7 +1349,7 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
   * affected_count: [número de DCs afectados]
   * details: "LMCompatibilityLevel actual: [valores por DC], Baseline recomendado: 5 (NTLMv2 only), Desvío: [análisis], DCs críticos afectados: [lista prioritaria]"`,
 
-        Kerberos: `Eres un especialista en protocolos de autenticación Kerberos y detección de vectores de ataque avanzados en Active Directory.
+          Kerberos: `Eres un especialista en protocolos de autenticación Kerberos y detección de vectores de ataque avanzados en Active Directory.
 
 **⚠️ VALIDACIÓN CRÍTICA PARA KERBEROS:**
 - SIEMPRE revisa KRBTGTPasswordAge - es el indicador más crítico
@@ -1515,18 +1500,18 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
   * affected_count: 1
   * details: "KRBTGTPasswordAge: [DÍAS] días ([AÑOS] años), KRBTGTPasswordLastSet: [FECHA_EXACTA], Última rotación: [FECHA_HUMANA], Desvío sobre baseline: [DÍAS-180] días, Compliance: CRÍTICO - Excede 180 días recomendados por Microsoft, CIS, NIST"`,
 
-        ADCSInventory: `Analiza la infraestructura de Certificados (ADCS) en busca de vulnerabilidades críticas.
+          ADCSInventory: `Analiza la infraestructura de Certificados (ADCS) en busca de vulnerabilidades críticas.
 **BUSCA:**
 1. **ESC1 (Vulnerable Templates)**: Plantillas que permiten al solicitante especificar el Subject Name (EnrolleeSuppliesSubject) Y permiten autenticación de cliente. Esto permite a cualquiera ser Domain Admin.
 2. **CAs en Controladores de Dominio**: Mala práctica de seguridad.
 3. **Permisos de CA**: Si usuarios autenticados tienen permisos excesivos.`,
 
-        ProtocolSecurity: `Analiza la seguridad de protocolos de red.
+          ProtocolSecurity: `Analiza la seguridad de protocolos de red.
 **BUSCA:**
 1. **LDAP Signing No Forzado**: Si 'LDAPServerIntegrity' no es 2, permite ataques de NTLM Relay a LDAP.
 2. **LDAP Channel Binding No Forzado**: Necesario para prevenir ataques de relay modernos.`,
 
-        Sites: `Eres un arquitecto de Active Directory especializado en topología de replicación y diseño de sitios.
+          Sites: `Eres un arquitecto de Active Directory especializado en topología de replicación y diseño de sitios.
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 La topología de sitios define cómo se replica el tráfico de AD y cómo los clientes encuentran los DCs más cercanos. Una mala configuración causa lentitud en logons, fallos de replicación y tráfico WAN innecesario.
@@ -1562,42 +1547,42 @@ La topología de sitios define cómo se replica el tráfico de AD y cómo los cl
 - **Descripción**: Impacto en latencia de logon y tráfico WAN.
 - **Recomendación**: Comandos para asociar subredes.
 - **Evidencia**: Lista de subredes huérfanas.`
-      };
+        };
 
-      // Map specialized categories to broader prompts
-      const promptMap = {
-        'DNSConfiguration': 'Infrastructure',
-        'DHCPConfiguration': 'Infrastructure',
-        'SiteTopology': 'Infrastructure',
-        'OUStructure': 'Infrastructure',
-        'TombstoneLifetime': 'Infrastructure',
-        'DNSScavenging': 'Infrastructure',
-        'TimeSyncConfig': 'Infrastructure',
+        // Map specialized categories to broader prompts
+        const promptMap = {
+          'DNSConfiguration': 'Infrastructure',
+          'DHCPConfiguration': 'Infrastructure',
+          'SiteTopology': 'Infrastructure',
+          'OUStructure': 'Infrastructure',
+          'TombstoneLifetime': 'Infrastructure',
+          'DNSScavenging': 'Infrastructure',
+          'TimeSyncConfig': 'Infrastructure',
 
-        'KerberosConfig': 'SecurityHardening',
-        'LAPS': 'SecurityHardening',
-        'SMBv1Status': 'SecurityHardening',
-        'NTLMSettings': 'SecurityHardening',
-        'RC4EncryptionTypes': 'SecurityHardening',
-        'BackupStatus': 'SecurityHardening',
-        'ProtectedUsers': 'SecurityHardening',
+          'KerberosConfig': 'SecurityHardening',
+          'LAPS': 'SecurityHardening',
+          'SMBv1Status': 'SecurityHardening',
+          'NTLMSettings': 'SecurityHardening',
+          'RC4EncryptionTypes': 'SecurityHardening',
+          'BackupStatus': 'SecurityHardening',
+          'ProtectedUsers': 'SecurityHardening',
 
-        'DCSyncPermissions': 'IdentityRisks',
-        'UnconstrainedDelegation': 'IdentityRisks',
-        'AdminSDHolder': 'IdentityRisks',
-        'AdminCountObjects': 'IdentityRisks',
+          'DCSyncPermissions': 'IdentityRisks',
+          'UnconstrainedDelegation': 'IdentityRisks',
+          'AdminSDHolder': 'IdentityRisks',
+          'AdminCountObjects': 'IdentityRisks',
 
-        'ADCSInventory': 'ADCSInventory',
-        'ProtocolSecurity': 'ProtocolSecurity',
+          'ADCSInventory': 'ADCSInventory',
+          'ProtocolSecurity': 'ProtocolSecurity',
 
-        'GPOPermissions': 'GPOs',
-        'DCPolicy': 'GPOs'
-      };
+          'GPOPermissions': 'GPOs',
+          'DCPolicy': 'GPOs'
+        };
 
-      const promptKey = promptMap[cat] || cat;
-      const instruction = categoryInstructions[promptKey] || categoryInstructions['DEFAULT'] || `Analiza los siguientes datos de ${cat} para vulnerabilidades de seguridad.`;
+        const promptKey = promptMap[cat] || cat;
+        const instruction = categoryInstructions[promptKey] || categoryInstructions['DEFAULT'] || `Analiza los siguientes datos de ${cat} para vulnerabilidades de seguridad.`;
 
-      return `${instruction}
+        return `${instruction}
 
 <assessment_data>
 ${str(d, 4000)}
@@ -1682,43 +1667,43 @@ Antes de generar cada finding, verifica:
 
 Primero, piensa paso a paso sobre qué hallazgos tienen evidencia sólida en los datos. Luego, genera el JSON.
 `;
-    }
-
-    async function callAI(prompt, provider, model, apiKey) {
-      try {
-        console.log(`[${timestamp()}] [${provider.toUpperCase()}] Making API call with model ${model}...`);
-
-        if (provider === 'openai') {
-          return await callOpenAI(prompt, model, apiKey);
-        } else if (provider === 'gemini') {
-          return await callGemini(prompt, model, apiKey);
-        } else if (provider === 'deepseek') {
-          return await callDeepSeek(prompt, model, apiKey);
-        } else if (provider === 'anthropic') {
-          return await callAnthropic(prompt, model, apiKey);
-        } else {
-          throw new Error(`Unknown AI provider: ${provider}`);
-        }
-      } catch (error) {
-        console.error(`[${timestamp()}] [${provider.toUpperCase()}] Call failed:`, error.message);
-        return [];
       }
-    }
 
-    async function callOpenAI(prompt, model, key) {
-      try {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: [
-              {
-                role: 'system',
-                content: `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+      async function callAI(prompt, provider, model, apiKey) {
+        try {
+          console.log(`[${timestamp()}] [${provider.toUpperCase()}] Making API call with model ${model}...`);
+
+          if (provider === 'openai') {
+            return await callOpenAI(prompt, model, apiKey);
+          } else if (provider === 'gemini') {
+            return await callGemini(prompt, model, apiKey);
+          } else if (provider === 'deepseek') {
+            return await callDeepSeek(prompt, model, apiKey);
+          } else if (provider === 'anthropic') {
+            return await callAnthropic(prompt, model, apiKey);
+          } else {
+            throw new Error(`Unknown AI provider: ${provider}`);
+          }
+        } catch (error) {
+          console.error(`[${timestamp()}] [${provider.toUpperCase()}] Call failed:`, error.message);
+          return [];
+        }
+      }
+
+      async function callOpenAI(prompt, model, key) {
+        try {
+          const res = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${key}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: [
+                {
+                  role: 'system',
+                  content: `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
 
 PRINCIPIOS FUNDAMENTALES:
 1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
@@ -1797,92 +1782,92 @@ microsoft_docs: "https://learn.microsoft.com/en-us/windows-server/security/group
 current_vs_recommended: "Actual: 8 cuentas de servicio con SPN usando contraseñas estándar (<15 caracteres), PasswordLastSet promedio: 18 meses | Recomendado: Migrar a gMSA o contraseñas >25 caracteres aleatorios, rotación automática cada 30 días (CIS Benchmark 5.2.3)"
 
 timeline: "60d - Migración gradual por aplicación, testing en QA primero"`
-              },
-              { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
-            ],
-            response_format: {
-              type: 'json_schema',
-              json_schema: {
-                name: 'security_findings',
-                strict: false,
-                schema: {
-                  type: 'object',
-                  properties: {
-                    findings: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          type_id: { type: 'string' },
-                          severity: {
-                            type: 'string',
-                            enum: ['critical', 'high', 'medium', 'low']
-                          },
-                          title: { type: 'string' },
-                          description: { type: 'string' },
-                          recommendation: { type: 'string' },
-                          mitre_attack: { type: 'string' },
-                          cis_control: { type: 'string' },
-                          impact_business: { type: 'string' },
-                          remediation_commands: { type: 'string' },
-                          prerequisites: { type: 'string' },
-                          operational_impact: { type: 'string' },
-                          microsoft_docs: { type: 'string' },
-                          current_vs_recommended: { type: 'string' },
-                          timeline: { type: 'string' },
-                          affected_count: { type: 'number' },
-                          evidence: {
-                            type: 'object',
-                            additionalProperties: false,
-                            properties: {
-                              affected_objects: { type: 'array', items: { type: 'string' } },
-                              count: { type: 'number' },
-                              details: { type: 'string' }
+                },
+                { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
+              ],
+              response_format: {
+                type: 'json_schema',
+                json_schema: {
+                  name: 'security_findings',
+                  strict: false,
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      findings: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            type_id: { type: 'string' },
+                            severity: {
+                              type: 'string',
+                              enum: ['critical', 'high', 'medium', 'low']
                             },
-                            required: ['affected_objects', 'count', 'details']
-                          }
-                        },
-                        required: ['type_id', 'severity', 'title', 'description', 'recommendation', 'evidence'],
-                        additionalProperties: false
+                            title: { type: 'string' },
+                            description: { type: 'string' },
+                            recommendation: { type: 'string' },
+                            mitre_attack: { type: 'string' },
+                            cis_control: { type: 'string' },
+                            impact_business: { type: 'string' },
+                            remediation_commands: { type: 'string' },
+                            prerequisites: { type: 'string' },
+                            operational_impact: { type: 'string' },
+                            microsoft_docs: { type: 'string' },
+                            current_vs_recommended: { type: 'string' },
+                            timeline: { type: 'string' },
+                            affected_count: { type: 'number' },
+                            evidence: {
+                              type: 'object',
+                              additionalProperties: false,
+                              properties: {
+                                affected_objects: { type: 'array', items: { type: 'string' } },
+                                count: { type: 'number' },
+                                details: { type: 'string' }
+                              },
+                              required: ['affected_objects', 'count', 'details']
+                            }
+                          },
+                          required: ['type_id', 'severity', 'title', 'description', 'recommendation', 'evidence'],
+                          additionalProperties: false
+                        }
                       }
-                    }
-                  },
-                  required: ['findings'],
-                  additionalProperties: false
+                    },
+                    required: ['findings'],
+                    additionalProperties: false
+                  }
                 }
               }
-            }
-          })
-        });
+            })
+          });
 
-        if (!res.ok) {
-          const errorText = await res.text();
-          console.error(`[${timestamp()}] [OpenAI] API error: ${res.status} - ${errorText}`);
-          throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
+          if (!res.ok) {
+            const errorText = await res.text();
+            console.error(`[${timestamp()}] [OpenAI] API error: ${res.status} - ${errorText}`);
+            throw new Error(`OpenAI API error: ${res.status} - ${errorText}`);
+          }
+
+          const result = await res.json();
+          console.log(`[${timestamp()}] [OpenAI] Response received:`, JSON.stringify(result).substring(0, 500));
+
+          const content = result.choices?.[0]?.message?.content;
+
+          if (content) {
+            const parsed = JSON.parse(content);
+            console.log(`[${timestamp()}] [OpenAI] Parsed ${parsed.findings?.length || 0} findings`);
+            return parsed.findings || [];
+          }
+
+          console.log(`[${timestamp()}] [OpenAI] No content in response`);
+          return [];
+        } catch (e) {
+          console.error(`[${timestamp()}] [OpenAI] Call failed:`, e.message);
+          console.error(`[${timestamp()}] [OpenAI] Stack:`, e.stack);
+          throw e;
         }
-
-        const result = await res.json();
-        console.log(`[${timestamp()}] [OpenAI] Response received:`, JSON.stringify(result).substring(0, 500));
-
-        const content = result.choices?.[0]?.message?.content;
-
-        if (content) {
-          const parsed = JSON.parse(content);
-          console.log(`[${timestamp()}] [OpenAI] Parsed ${parsed.findings?.length || 0} findings`);
-          return parsed.findings || [];
-        }
-
-        console.log(`[${timestamp()}] [OpenAI] No content in response`);
-        return [];
-      } catch (e) {
-        console.error(`[${timestamp()}] [OpenAI] Call failed:`, e.message);
-        console.error(`[${timestamp()}] [OpenAI] Stack:`, e.stack);
-        throw e;
       }
-    }
 
-    async function callGemini(prompt, model, key) {
-      const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+      async function callGemini(prompt, model, key) {
+        const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
 
 PRINCIPIOS FUNDAMENTALES:
 1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
@@ -1895,57 +1880,57 @@ FORMATO JSON REQUERIDO: Devuelve un objeto JSON con array "findings".
 CRÍTICO: NO INVENTES DATOS. Usa SOLO nombres que existan en el JSON. Si no hay hallazgos verificables, devuelve "findings": []. 
 NO uses ejemplos como 'user1', 'user2'.`;
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: systemPrompt + '\n\n' + prompt.substring(0, MAX_PROMPT) }]
-          }],
-          generationConfig: {
-            temperature: 0.2,
-            topP: 0.95,
-            topK: 40,
-            maxOutputTokens: 8192,
-            responseMimeType: 'application/json'
-          }
-        })
-      });
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{ text: systemPrompt + '\n\n' + prompt.substring(0, MAX_PROMPT) }]
+            }],
+            generationConfig: {
+              temperature: 0.2,
+              topP: 0.95,
+              topK: 40,
+              maxOutputTokens: 8192,
+              responseMimeType: 'application/json'
+            }
+          })
+        });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error(`[${timestamp()}] [Gemini] API error: ${res.status} - ${errorText}`);
-        throw new Error(`Gemini API error: ${res.status} - ${errorText}`);
+        if (!res.ok) {
+          const errorText = await res.text();
+          console.error(`[${timestamp()}] [Gemini] API error: ${res.status} - ${errorText}`);
+          throw new Error(`Gemini API error: ${res.status} - ${errorText}`);
+        }
+
+        const result = await res.json();
+        console.log(`[${timestamp()}] [Gemini] Response received:`, JSON.stringify(result).substring(0, 500));
+
+        const content = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (content) {
+          const parsed = JSON.parse(content);
+          console.log(`[${timestamp()}] [Gemini] Parsed ${parsed.findings?.length || 0} findings`);
+          return parsed.findings || [];
+        }
+
+        console.log(`[${timestamp()}] [Gemini] No content in response`);
+        return [];
       }
 
-      const result = await res.json();
-      console.log(`[${timestamp()}] [Gemini] Response received:`, JSON.stringify(result).substring(0, 500));
-
-      const content = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (content) {
-        const parsed = JSON.parse(content);
-        console.log(`[${timestamp()}] [Gemini] Parsed ${parsed.findings?.length || 0} findings`);
-        return parsed.findings || [];
-      }
-
-      console.log(`[${timestamp()}] [Gemini] No content in response`);
-      return [];
-    }
-
-    async function callDeepSeek(prompt, model, key) {
-      // DeepSeek usa la misma API que OpenAI
-      const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${key}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            {
-              role: 'system',
-              content: `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+      async function callDeepSeek(prompt, model, key) {
+        // DeepSeek usa la misma API que OpenAI
+        const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [
+              {
+                role: 'system',
+                content: `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
 
 PRINCIPIOS FUNDAMENTALES:
 1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
@@ -1976,36 +1961,36 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
   ]
 }
 CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay evidencia, devuelve array vacío.`
-            },
-            { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
-          ],
-          temperature: 0.2,
-          response_format: { type: 'json_object' }
-        })
-      });
+              },
+              { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
+            ],
+            temperature: 0.2,
+            response_format: { type: 'json_object' }
+          })
+        });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error(`[${timestamp()}] [DeepSeek] API error: ${res.status} - ${errorText}`);
-        throw new Error(`DeepSeek API error: ${res.status} - ${errorText}`);
+        if (!res.ok) {
+          const errorText = await res.text();
+          console.error(`[${timestamp()}] [DeepSeek] API error: ${res.status} - ${errorText}`);
+          throw new Error(`DeepSeek API error: ${res.status} - ${errorText}`);
+        }
+
+        const result = await res.json();
+        console.log(`[${timestamp()}] [DeepSeek] Response received:`, JSON.stringify(result).substring(0, 500));
+
+        const content = result.choices?.[0]?.message?.content;
+        if (content) {
+          const parsed = JSON.parse(content);
+          console.log(`[${timestamp()}] [DeepSeek] Parsed ${parsed.findings?.length || 0} findings`);
+          return parsed.findings || [];
+        }
+
+        console.log(`[${timestamp()}] [DeepSeek] No content in response`);
+        return [];
       }
 
-      const result = await res.json();
-      console.log(`[${timestamp()}] [DeepSeek] Response received:`, JSON.stringify(result).substring(0, 500));
-
-      const content = result.choices?.[0]?.message?.content;
-      if (content) {
-        const parsed = JSON.parse(content);
-        console.log(`[${timestamp()}] [DeepSeek] Parsed ${parsed.findings?.length || 0} findings`);
-        return parsed.findings || [];
-      }
-
-      console.log(`[${timestamp()}] [DeepSeek] No content in response`);
-      return [];
-    }
-
-    async function callAnthropic(prompt, model, key) {
-      const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+      async function callAnthropic(prompt, model, key) {
+        const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
 
 PRINCIPIOS FUNDAMENTALES:
 1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
@@ -2037,900 +2022,900 @@ FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
 }
 CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay evidencia, devuelve array vacío.`;
 
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: model,
-          max_tokens: 8192,
-          system: systemPrompt,
-          messages: [
-            { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
-          ]
-        })
-      });
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: model,
+            max_tokens: 8192,
+            system: systemPrompt,
+            messages: [
+              { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
+            ]
+          })
+        });
 
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error(`[${timestamp()}] [Anthropic] API error: ${res.status} - ${errorText}`);
-        throw new Error(`Anthropic API error: ${res.status} - ${errorText}`);
-      }
+        if (!res.ok) {
+          const errorText = await res.text();
+          console.error(`[${timestamp()}] [Anthropic] API error: ${res.status} - ${errorText}`);
+          throw new Error(`Anthropic API error: ${res.status} - ${errorText}`);
+        }
 
-      const result = await res.json();
-      console.log(`[${timestamp()}] [Anthropic] Response received:`, JSON.stringify(result).substring(0, 500));
+        const result = await res.json();
+        console.log(`[${timestamp()}] [Anthropic] Response received:`, JSON.stringify(result).substring(0, 500));
 
-      const content = result.content?.[0]?.text;
-      if (content) {
-        // Anthropic might wrap JSON in markdown blocks, clean it up
-        const cleanContent = content.replace(/```json\n?|\n?```/g, '').trim();
-        try {
-          const parsed = JSON.parse(cleanContent);
-          console.log(`[${timestamp()}] [Anthropic] Parsed ${parsed.findings?.length || 0} findings`);
-          return parsed.findings || [];
-        } catch (e) {
-          console.error(`[${timestamp()}] [Anthropic] Error parsing JSON:`, e.message);
-          // Try to find JSON object if mixed with text
-          const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]);
-              return parsed.findings || [];
-            } catch (e2) {
-              console.error(`[${timestamp()}] [Anthropic] Error parsing extracted JSON:`, e2.message);
+        const content = result.content?.[0]?.text;
+        if (content) {
+          // Anthropic might wrap JSON in markdown blocks, clean it up
+          const cleanContent = content.replace(/```json\n?|\n?```/g, '').trim();
+          try {
+            const parsed = JSON.parse(cleanContent);
+            console.log(`[${timestamp()}] [Anthropic] Parsed ${parsed.findings?.length || 0} findings`);
+            return parsed.findings || [];
+          } catch (e) {
+            console.error(`[${timestamp()}] [Anthropic] Error parsing JSON:`, e.message);
+            // Try to find JSON object if mixed with text
+            const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return parsed.findings || [];
+              } catch (e2) {
+                console.error(`[${timestamp()}] [Anthropic] Error parsing extracted JSON:`, e2.message);
+              }
             }
           }
         }
+
+        console.log(`[${timestamp()}] [Anthropic] No valid content in response`);
+        return [];
       }
 
-      console.log(`[${timestamp()}] [Anthropic] No valid content in response`);
-      return [];
-    }
+      // Main Processing Function
+      async function processAssessment(assessmentId, jsonData) {
+        try {
+          await addLog(assessmentId, 'info', '🚀 Starting processing on Self-Hosted VPS');
 
-    // Main Processing Function
-    async function processAssessment(assessmentId, jsonData) {
-      try {
-        await addLog(assessmentId, 'info', '🚀 Starting processing on Self-Hosted VPS');
+          // 1. Store Raw Data (JSONB handles storage efficiently)
+          // const jsonString = JSON.stringify(jsonData);
+          // const compressed = zlib.gzipSync(jsonString);
+          // const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
+          // console.log(`[${timestamp()}] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
 
-        // 1. Store Raw Data (JSONB handles storage efficiently)
-        // const jsonString = JSON.stringify(jsonData);
-        // const compressed = zlib.gzipSync(jsonString);
-        // const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
-        // console.log(`[${timestamp()}] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
-
-        await pool.query(
-          'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2)',
-          [assessmentId, jsonData]
-        );
-        await addLog(assessmentId, 'info', `✅ Raw data stored successfully`);
-
-        // 2. Identify Categories
-        const availableCategories = [];
-        for (const category of CATEGORIES) {
-          const data = extractCategoryData(jsonData, category);
-          if (data && data.length > 0) {
-            availableCategories.push({ id: category, count: data.length, data });
-          }
-        }
-
-        if (availableCategories.length === 0) {
-          throw new Error('No valid categories found');
-        }
-
-        // 3. Update Status to Analyzing
-        const progressData = availableCategories.reduce((acc, cat) => {
-          acc[cat.id] = { status: 'pending', progress: 0, count: cat.count };
-          return acc;
-        }, {});
-
-        await pool.query(
-          'UPDATE assessments SET status = $1, analysis_progress = $2 WHERE id = $3',
-          ['analyzing', progressData, assessmentId]
-        );
-
-        // 4. Process Categories
-        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-        for (const categoryInfo of availableCategories) {
-          const { id: category, data } = categoryInfo;
-
-          progressData[category].status = 'processing';
-          await pool.query('UPDATE assessments SET analysis_progress = $1 WHERE id = $2', [progressData, assessmentId]);
-
-          await analyzeCategory(assessmentId, category, data);
-
-          progressData[category].status = 'completed';
-          progressData[category].progress = 100;
-          await pool.query('UPDATE assessments SET analysis_progress = $1 WHERE id = $2', [progressData, assessmentId]);
-
-          // Rate limit protection: Wait 20 seconds between categories
-          console.log(`[${timestamp()}] Waiting 20s to respect API rate limits...`);
-          await sleep(20000);
-        }
-
-        // 5. Finish
-        await pool.query(
-          'UPDATE assessments SET status = $1, completed_at = NOW() WHERE id = $2',
-          ['completed', assessmentId]
-        );
-        await addLog(assessmentId, 'info', '🎉 Analysis completed successfully');
-
-      } catch (error) {
-        console.error('Fatal processing error:', error);
-        await addLog(assessmentId, 'error', `Fatal error: ${error.message}`);
-        await pool.query('UPDATE assessments SET status = $1 WHERE id = $2', ['failed', assessmentId]);
-      }
-    }
-
-    // API Endpoint
-    app.post('/api/process-assessment', async (req, res) => {
-      try {
-        const { assessmentId, jsonData, domainName } = req.body;
-
-        if (!jsonData) return res.status(400).json({ error: 'Missing jsonData' });
-
-        // Create assessment if ID not provided (or if it doesn't exist)
-        let finalAssessmentId = assessmentId;
-        if (!finalAssessmentId) {
-          const result = await pool.query(
-            'INSERT INTO assessments (domain, status) VALUES ($1, $2) RETURNING id',
-            [domainName || 'Unknown Domain', 'analyzing']
+          await pool.query(
+            'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2)',
+            [assessmentId, jsonData]
           );
-          finalAssessmentId = result.rows[0].id;
-        } else {
-          // Check if exists, if not create
-          const check = await pool.query('SELECT id FROM assessments WHERE id = $1', [assessmentId]);
-          if (check.rows.length === 0) {
-            await pool.query(
-              'INSERT INTO assessments (id, domain, status) VALUES ($1, $2, $3)',
-              [assessmentId, domainName || 'Unknown Domain', 'analyzing']
+          await addLog(assessmentId, 'info', `✅ Raw data stored successfully`);
+
+          // 2. Identify Categories
+          const availableCategories = [];
+          for (const category of CATEGORIES) {
+            const data = extractCategoryData(jsonData, category);
+            if (data && data.length > 0) {
+              availableCategories.push({ id: category, count: data.length, data });
+            }
+          }
+
+          if (availableCategories.length === 0) {
+            throw new Error('No valid categories found');
+          }
+
+          // 3. Update Status to Analyzing
+          const progressData = availableCategories.reduce((acc, cat) => {
+            acc[cat.id] = { status: 'pending', progress: 0, count: cat.count };
+            return acc;
+          }, {});
+
+          await pool.query(
+            'UPDATE assessments SET status = $1, analysis_progress = $2 WHERE id = $3',
+            ['analyzing', progressData, assessmentId]
+          );
+
+          // 4. Process Categories
+          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+          for (const categoryInfo of availableCategories) {
+            const { id: category, data } = categoryInfo;
+
+            progressData[category].status = 'processing';
+            await pool.query('UPDATE assessments SET analysis_progress = $1 WHERE id = $2', [progressData, assessmentId]);
+
+            await analyzeCategory(assessmentId, category, data);
+
+            progressData[category].status = 'completed';
+            progressData[category].progress = 100;
+            await pool.query('UPDATE assessments SET analysis_progress = $1 WHERE id = $2', [progressData, assessmentId]);
+
+            // Rate limit protection: Wait 20 seconds between categories
+            console.log(`[${timestamp()}] Waiting 20s to respect API rate limits...`);
+            await sleep(20000);
+          }
+
+          // 5. Finish
+          await pool.query(
+            'UPDATE assessments SET status = $1, completed_at = NOW() WHERE id = $2',
+            ['completed', assessmentId]
+          );
+          await addLog(assessmentId, 'info', '🎉 Analysis completed successfully');
+
+        } catch (error) {
+          console.error('Fatal processing error:', error);
+          await addLog(assessmentId, 'error', `Fatal error: ${error.message}`);
+          await pool.query('UPDATE assessments SET status = $1 WHERE id = $2', ['failed', assessmentId]);
+        }
+      }
+
+      // API Endpoint
+      app.post('/api/process-assessment', async (req, res) => {
+        try {
+          const { assessmentId, jsonData, domainName } = req.body;
+
+          if (!jsonData) return res.status(400).json({ error: 'Missing jsonData' });
+
+          // Create assessment if ID not provided (or if it doesn't exist)
+          let finalAssessmentId = assessmentId;
+          if (!finalAssessmentId) {
+            const result = await pool.query(
+              'INSERT INTO assessments (domain, status) VALUES ($1, $2) RETURNING id',
+              [domainName || 'Unknown Domain', 'analyzing']
             );
+            finalAssessmentId = result.rows[0].id;
+          } else {
+            // Check if exists, if not create
+            const check = await pool.query('SELECT id FROM assessments WHERE id = $1', [assessmentId]);
+            if (check.rows.length === 0) {
+              await pool.query(
+                'INSERT INTO assessments (id, domain, status) VALUES ($1, $2, $3)',
+                [assessmentId, domainName || 'Unknown Domain', 'analyzing']
+              );
+            }
           }
+
+          // Start processing in background
+          processAssessment(finalAssessmentId, jsonData).catch(err => console.error('Background error:', err));
+
+          res.json({ success: true, assessmentId: finalAssessmentId, message: 'Processing started' });
+
+        } catch (error) {
+          console.error('API Error:', error);
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        // Start processing in background
-        processAssessment(finalAssessmentId, jsonData).catch(err => console.error('Background error:', err));
+      app.get('/health', async (req, res) => {
+        try {
+          await pool.query('SELECT 1');
+          res.json({ status: 'ok', db: 'connected' });
+        } catch (e) {
+          res.status(500).json({ status: 'error', db: e.message });
+        }
+      });
 
-        res.json({ success: true, assessmentId: finalAssessmentId, message: 'Processing started' });
+      // GET /api/config/ai - Get AI configuration
+      app.get('/api/config/ai', async (req, res) => {
+        try {
+          const provider = (await getConfig('ai_provider')) || 'openai';
+          const model = (await getConfig('ai_model')) || 'gpt-4o-mini';
+          const hasOpenAIKey = !!(await getConfig('openai_api_key') || process.env.OPENAI_API_KEY);
+          const hasGeminiKey = !!await getConfig('gemini_api_key');
+          const hasDeepSeekKey = !!await getConfig('deepseek_api_key');
+          const hasAnthropicKey = !!await getConfig('anthropic_api_key');
 
-      } catch (error) {
-        console.error('API Error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
+          res.json({
+            provider,
+            model,
+            available_providers: {
+              openai: hasOpenAIKey,
+              gemini: hasGeminiKey,
+              deepseek: hasDeepSeekKey,
+              anthropic: hasAnthropicKey
+            },
+            models: {
+              openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
+              gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'],
+              deepseek: ['deepseek-chat', 'deepseek-coder'],
+              anthropic: ['claude-sonnet-4-5-20250929', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620', 'claude-3-opus-20240229']
+            }
+          });
+        } catch (error) {
+          console.error('Error fetching AI config:', error);
+          res.status(500).json({ error: error.message });
+        }
+      });
 
-    app.get('/health', async (req, res) => {
-      try {
-        await pool.query('SELECT 1');
-        res.json({ status: 'ok', db: 'connected' });
-      } catch (e) {
-        res.status(500).json({ status: 'error', db: e.message });
-      }
-    });
+      // POST /api/config/ai - Update AI configuration
+      app.post('/api/config/ai', async (req, res) => {
+        try {
+          const { provider, model, api_keys } = req.body;
 
-    // GET /api/config/ai - Get AI configuration
-    app.get('/api/config/ai', async (req, res) => {
-      try {
-        const provider = (await getConfig('ai_provider')) || 'openai';
-        const model = (await getConfig('ai_model')) || 'gpt-4o-mini';
-        const hasOpenAIKey = !!(await getConfig('openai_api_key') || process.env.OPENAI_API_KEY);
-        const hasGeminiKey = !!await getConfig('gemini_api_key');
-        const hasDeepSeekKey = !!await getConfig('deepseek_api_key');
-        const hasAnthropicKey = !!await getConfig('anthropic_api_key');
-
-        res.json({
-          provider,
-          model,
-          available_providers: {
-            openai: hasOpenAIKey,
-            gemini: hasGeminiKey,
-            deepseek: hasDeepSeekKey,
-            anthropic: hasAnthropicKey
-          },
-          models: {
-            openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
-            gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'],
-            deepseek: ['deepseek-chat', 'deepseek-coder'],
-            anthropic: ['claude-sonnet-4-5-20250929', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620', 'claude-3-opus-20240229']
+          if (provider) {
+            await setConfig('ai_provider', provider);
           }
-        });
-      } catch (error) {
-        console.error('Error fetching AI config:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
 
-    // POST /api/config/ai - Update AI configuration
-    app.post('/api/config/ai', async (req, res) => {
-      try {
-        const { provider, model, api_keys } = req.body;
+          if (model) {
+            await setConfig('ai_model', model);
+          }
 
-        if (provider) {
-          await setConfig('ai_provider', provider);
+          if (api_keys) {
+            if (api_keys.openai) await setConfig('openai_api_key', api_keys.openai);
+            if (api_keys.gemini) await setConfig('gemini_api_key', api_keys.gemini);
+            if (api_keys.deepseek) await setConfig('deepseek_api_key', api_keys.deepseek);
+            if (api_keys.anthropic) await setConfig('anthropic_api_key', api_keys.anthropic);
+          }
+
+          res.json({ success: true, message: 'AI configuration updated' });
+        } catch (error) {
+          console.error('Error updating AI config:', error);
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // POST /api/clients - Create a new client
+      app.post('/api/clients', async (req, res) => {
+        const { name, contact_email } = req.body;
+        if (!name) return res.status(400).json({ error: 'Client Name is required' });
+
+        try {
+          const result = await pool.query(
+            'INSERT INTO clients (name, contact_email) VALUES ($1, $2) RETURNING *',
+            [name, contact_email]
+          );
+          res.json(result.rows[0]);
+        } catch (error) {
+          console.error('Error creating client:', error);
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // GET /api/clients - List all clients
+      app.get('/api/clients', async (req, res) => {
+        try {
+          const result = await pool.query(
+            'SELECT * FROM clients ORDER BY name ASC'
+          );
+          res.json(result.rows);
+        } catch (error) {
+          console.error('Error fetching clients:', error);
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // POST /api/assessments - Create a new assessment
+      app.post('/api/assessments', async (req, res) => {
+        const { domain, client_id } = req.body;
+        if (!domain) {
+          return res.status(400).json({ error: 'Domain is required' });
         }
 
-        if (model) {
-          await setConfig('ai_model', model);
+        try {
+          const result = await pool.query(
+            'INSERT INTO assessments (domain, client_id, status) VALUES ($1, $2, $3) RETURNING *',
+            [domain, client_id || null, 'pending']
+          );
+          res.json(result.rows[0]);
+        } catch (error) {
+          console.error('Error creating assessment:', error);
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        if (api_keys) {
-          if (api_keys.openai) await setConfig('openai_api_key', api_keys.openai);
-          if (api_keys.gemini) await setConfig('gemini_api_key', api_keys.gemini);
-          if (api_keys.deepseek) await setConfig('deepseek_api_key', api_keys.deepseek);
-          if (api_keys.anthropic) await setConfig('anthropic_api_key', api_keys.anthropic);
+      // GET /api/assessments - List all assessments (optionally filtered by client)
+      app.get('/api/assessments', async (req, res) => {
+        const { clientId } = req.query;
+        try {
+          let query = 'SELECT * FROM assessments';
+          let params = [];
+
+          if (clientId) {
+            query += ' WHERE client_id = $1';
+            params.push(clientId);
+          }
+
+          query += ' ORDER BY created_at DESC';
+
+          const result = await pool.query(query, params);
+          res.json(result.rows);
+        } catch (error) {
+          console.error('Error fetching assessments:', error);
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        res.json({ success: true, message: 'AI configuration updated' });
-      } catch (error) {
-        console.error('Error updating AI config:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // POST /api/clients - Create a new client
-    app.post('/api/clients', async (req, res) => {
-      const { name, contact_email } = req.body;
-      if (!name) return res.status(400).json({ error: 'Client Name is required' });
-
-      try {
-        const result = await pool.query(
-          'INSERT INTO clients (name, contact_email) VALUES ($1, $2) RETURNING *',
-          [name, contact_email]
-        );
-        res.json(result.rows[0]);
-      } catch (error) {
-        console.error('Error creating client:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // GET /api/clients - List all clients
-    app.get('/api/clients', async (req, res) => {
-      try {
-        const result = await pool.query(
-          'SELECT * FROM clients ORDER BY name ASC'
-        );
-        res.json(result.rows);
-      } catch (error) {
-        console.error('Error fetching clients:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // POST /api/assessments - Create a new assessment
-    app.post('/api/assessments', async (req, res) => {
-      const { domain, client_id } = req.body;
-      if (!domain) {
-        return res.status(400).json({ error: 'Domain is required' });
-      }
-
-      try {
-        const result = await pool.query(
-          'INSERT INTO assessments (domain, client_id, status) VALUES ($1, $2, $3) RETURNING *',
-          [domain, client_id || null, 'pending']
-        );
-        res.json(result.rows[0]);
-      } catch (error) {
-        console.error('Error creating assessment:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // GET /api/assessments - List all assessments (optionally filtered by client)
-    app.get('/api/assessments', async (req, res) => {
-      const { clientId } = req.query;
-      try {
-        let query = 'SELECT * FROM assessments';
-        let params = [];
-
-        if (clientId) {
-          query += ' WHERE client_id = $1';
-          params.push(clientId);
+      // GET /api/assessments/:id - Get single assessment
+      app.get('/api/assessments/:id', async (req, res) => {
+        const { id } = req.params;
+        try {
+          const result = await pool.query(
+            'SELECT * FROM assessments WHERE id = $1',
+            [id]
+          );
+          if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Assessment not found' });
+          }
+          res.json(result.rows[0]);
+        } catch (error) {
+          console.error('Error fetching assessment:', error);
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        query += ' ORDER BY created_at DESC';
-
-        const result = await pool.query(query, params);
-        res.json(result.rows);
-      } catch (error) {
-        console.error('Error fetching assessments:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // GET /api/assessments/:id - Get single assessment
-    app.get('/api/assessments/:id', async (req, res) => {
-      const { id } = req.params;
-      try {
-        const result = await pool.query(
-          'SELECT * FROM assessments WHERE id = $1',
-          [id]
-        );
-        if (result.rows.length === 0) {
-          return res.status(404).json({ error: 'Assessment not found' });
+      // GET /api/assessments/:id/findings - Get findings for an assessment
+      app.get('/api/assessments/:id/findings', async (req, res) => {
+        const { id } = req.params;
+        try {
+          const result = await pool.query(
+            'SELECT * FROM findings WHERE assessment_id = $1 ORDER BY CASE severity WHEN \'critical\' THEN 1 WHEN \'high\' THEN 2 WHEN \'medium\' THEN 3 WHEN \'low\' THEN 4 ELSE 5 END',
+            [id]
+          );
+          res.json(result.rows);
+        } catch (error) {
+          console.error('Error fetching findings:', error);
+          res.status(500).json({ error: error.message });
         }
-        res.json(result.rows[0]);
-      } catch (error) {
-        console.error('Error fetching assessment:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
+      });
 
-    // GET /api/assessments/:id/findings - Get findings for an assessment
-    app.get('/api/assessments/:id/findings', async (req, res) => {
-      const { id } = req.params;
-      try {
-        const result = await pool.query(
-          'SELECT * FROM findings WHERE assessment_id = $1 ORDER BY CASE severity WHEN \'critical\' THEN 1 WHEN \'high\' THEN 2 WHEN \'medium\' THEN 3 WHEN \'low\' THEN 4 ELSE 5 END',
-          [id]
-        );
-        res.json(result.rows);
-      } catch (error) {
-        console.error('Error fetching findings:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // GET /api/assessments/:id/logs - Get logs for an assessment
-    app.get('/api/assessments/:id/logs', async (req, res) => {
-      const { id } = req.params;
-      try {
-        const result = await pool.query(
-          'SELECT * FROM assessment_logs WHERE assessment_id = $1 ORDER BY created_at ASC',
-          [id]
-        );
-        res.json(result.rows);
-      } catch (error) {
-        console.error('Error fetching logs:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // GET /api/assessments/:id/data - Get raw data for an assessment
-    app.get('/api/assessments/:id/data', async (req, res) => {
-      const { id } = req.params;
-      console.log(`[${timestamp()}] [API] Fetching raw data for assessment ${id}`);
-      try {
-        const result = await pool.query(
-          'SELECT data FROM assessment_data WHERE assessment_id = $1',
-          [id]
-        );
-
-        if (result.rows.length === 0) {
-          console.log(`[${timestamp()}] [API] No raw data found for assessment ${id}`);
-          return res.status(404).json({ error: 'Assessment data not found' });
+      // GET /api/assessments/:id/logs - Get logs for an assessment
+      app.get('/api/assessments/:id/logs', async (req, res) => {
+        const { id } = req.params;
+        try {
+          const result = await pool.query(
+            'SELECT * FROM assessment_logs WHERE assessment_id = $1 ORDER BY created_at ASC',
+            [id]
+          );
+          res.json(result.rows);
+        } catch (error) {
+          console.error('Error fetching logs:', error);
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        // Check if data is compressed (Buffer) or raw JSON (Object from JSONB)
-        const rawData = result.rows[0].data;
+      // GET /api/assessments/:id/data - Get raw data for an assessment
+      app.get('/api/assessments/:id/data', async (req, res) => {
+        const { id } = req.params;
+        console.log(`[${timestamp()}] [API] Fetching raw data for assessment ${id}`);
+        try {
+          const result = await pool.query(
+            'SELECT data FROM assessment_data WHERE assessment_id = $1',
+            [id]
+          );
 
-        if (Buffer.isBuffer(rawData)) {
-          // Legacy: Compressed data
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Content-Encoding', 'gzip');
-          console.log(`[${timestamp()}] [API] Sending compressed raw data for assessment ${id} (${Math.round(rawData.length / 1024 / 1024)} MB)`);
-          res.send(rawData);
-        } else {
-          // New: JSONB data (already parsed by pg)
-          console.log(`[${timestamp()}] [API] Sending JSON raw data for assessment ${id}`);
-          res.json(rawData);
+          if (result.rows.length === 0) {
+            console.log(`[${timestamp()}] [API] No raw data found for assessment ${id}`);
+            return res.status(404).json({ error: 'Assessment data not found' });
+          }
+
+          // Check if data is compressed (Buffer) or raw JSON (Object from JSONB)
+          const rawData = result.rows[0].data;
+
+          if (Buffer.isBuffer(rawData)) {
+            // Legacy: Compressed data
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Encoding', 'gzip');
+            console.log(`[${timestamp()}] [API] Sending compressed raw data for assessment ${id} (${Math.round(rawData.length / 1024 / 1024)} MB)`);
+            res.send(rawData);
+          } else {
+            // New: JSONB data (already parsed by pg)
+            console.log(`[${timestamp()}] [API] Sending JSON raw data for assessment ${id}`);
+            res.json(rawData);
+          }
+        } catch (error) {
+          console.error(`[${timestamp()}] [API] Error fetching assessment data:`, error);
+          res.status(500).json({ error: error.message });
         }
-      } catch (error) {
-        console.error(`[${timestamp()}] [API] Error fetching assessment data:`, error);
-        res.status(500).json({ error: error.message });
-      }
-    });
+      });
 
-    // DELETE /api/assessments/:id - Delete an assessment
-    app.delete('/api/assessments/:id', async (req, res) => {
-      const { id } = req.params;
-      try {
-        // Cascading delete should handle related data if configured, 
-        // but let's be safe and delete related data first if needed.
-        // Our schema uses ON DELETE CASCADE so deleting assessment is enough.
+      // DELETE /api/assessments/:id - Delete an assessment
+      app.delete('/api/assessments/:id', async (req, res) => {
+        const { id } = req.params;
+        try {
+          // Cascading delete should handle related data if configured, 
+          // but let's be safe and delete related data first if needed.
+          // Our schema uses ON DELETE CASCADE so deleting assessment is enough.
 
-        const result = await pool.query(
-          'DELETE FROM assessments WHERE id = $1 RETURNING *',
-          [id]
-        );
+          const result = await pool.query(
+            'DELETE FROM assessments WHERE id = $1 RETURNING *',
+            [id]
+          );
 
-        if (result.rows.length === 0) {
-          return res.status(404).json({ error: 'Assessment not found' });
+          if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Assessment not found' });
+          }
+
+          res.json({ message: 'Assessment deleted successfully' });
+        } catch (error) {
+          console.error('Error deleting assessment:', error);
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        res.json({ message: 'Assessment deleted successfully' });
-      } catch (error) {
-        console.error('Error deleting assessment:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
+      // POST /api/assessments/:id/reset - Reset an assessment
+      app.post('/api/assessments/:id/reset', async (req, res) => {
+        const { id } = req.params;
+        try {
+          // Delete findings
+          await pool.query('DELETE FROM findings WHERE assessment_id = $1', [id]);
 
-    // POST /api/assessments/:id/reset - Reset an assessment
-    app.post('/api/assessments/:id/reset', async (req, res) => {
-      const { id } = req.params;
-      try {
-        // Delete findings
-        await pool.query('DELETE FROM findings WHERE assessment_id = $1', [id]);
-
-        // Reset assessment status
-        const result = await pool.query(
-          `UPDATE assessments 
+          // Reset assessment status
+          const result = await pool.query(
+            `UPDATE assessments 
        SET status = 'pending', 
            analysis_progress = '{"total": 0, "current": null, "completed": 0, "categories": []}',
            completed_at = NULL,
            updated_at = NOW()
        WHERE id = $1 RETURNING *`,
-          [id]
-        );
+            [id]
+          );
 
-        if (result.rows.length === 0) {
-          return res.status(404).json({ error: 'Assessment not found' });
-        }
-
-        res.json(result.rows[0]);
-      } catch (error) {
-        console.error('Error resetting assessment:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // POST /api/upload-large-file - Handle large file uploads (.json or .zip)
-    const upload = multer({
-      dest: '/tmp/uploads/',
-      limits: {
-        fileSize: 5 * 1024 * 1024 * 1024 // 5GB max file size
-      }
-    });
-
-    app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
-      const { assessmentId } = req.body;
-      const filePath = req.file?.path;
-
-      if (!assessmentId || !filePath) {
-        return res.status(400).json({ error: 'Missing assessmentId or file' });
-      }
-
-      try {
-        console.log(`[${timestamp()}] [UPLOAD] Processing file: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
-        await addLog(assessmentId, 'info', `Archivo recibido: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
-
-        let jsonData;
-        const isZip = req.file.originalname.endsWith('.zip');
-
-        if (isZip) {
-          // Decompress ZIP file
-          await addLog(assessmentId, 'info', 'Descomprimiendo archivo ZIP...');
-          console.log(`[${timestamp()}] [UPLOAD] Decompressing ZIP file...`);
-
-          const zip = new AdmZip(filePath);
-          const entries = zip.getEntries();
-
-          // Find the JSON file inside ZIP
-          const jsonEntry = entries.find(e => e.entryName.endsWith('.json') && !e.isDirectory);
-
-          if (!jsonEntry) {
-            await addLog(assessmentId, 'error', 'No se encontró archivo JSON dentro del ZIP');
-            return res.status(400).json({ error: 'No JSON file found in ZIP' });
+          if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Assessment not found' });
           }
 
-          console.log(`[${timestamp()}] [UPLOAD] Found JSON entry: ${jsonEntry.entryName}`);
-          let jsonContent = zip.readAsText(jsonEntry);
+          res.json(result.rows[0]);
+        } catch (error) {
+          console.error('Error resetting assessment:', error);
+          res.status(500).json({ error: error.message });
+        }
+      });
 
-          // Remove BOM (Byte Order Mark) if present
-          if (jsonContent.charCodeAt(0) === 0xFEFF) {
-            console.log(`[${timestamp()}] [UPLOAD] Removing BOM from JSON content`);
-            jsonContent = jsonContent.substring(1);
+      // POST /api/upload-large-file - Handle large file uploads (.json or .zip)
+      const upload = multer({
+        dest: '/tmp/uploads/',
+        limits: {
+          fileSize: 5 * 1024 * 1024 * 1024 // 5GB max file size
+        }
+      });
+
+      app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
+        const { assessmentId } = req.body;
+        const filePath = req.file?.path;
+
+        if (!assessmentId || !filePath) {
+          return res.status(400).json({ error: 'Missing assessmentId or file' });
+        }
+
+        try {
+          console.log(`[${timestamp()}] [UPLOAD] Processing file: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+          await addLog(assessmentId, 'info', `Archivo recibido: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+
+          let jsonData;
+          const isZip = req.file.originalname.endsWith('.zip');
+
+          if (isZip) {
+            // Decompress ZIP file
+            await addLog(assessmentId, 'info', 'Descomprimiendo archivo ZIP...');
+            console.log(`[${timestamp()}] [UPLOAD] Decompressing ZIP file...`);
+
+            const zip = new AdmZip(filePath);
+            const entries = zip.getEntries();
+
+            // Find the JSON file inside ZIP
+            const jsonEntry = entries.find(e => e.entryName.endsWith('.json') && !e.isDirectory);
+
+            if (!jsonEntry) {
+              await addLog(assessmentId, 'error', 'No se encontró archivo JSON dentro del ZIP');
+              return res.status(400).json({ error: 'No JSON file found in ZIP' });
+            }
+
+            console.log(`[${timestamp()}] [UPLOAD] Found JSON entry: ${jsonEntry.entryName}`);
+            let jsonContent = zip.readAsText(jsonEntry);
+
+            // Remove BOM (Byte Order Mark) if present
+            if (jsonContent.charCodeAt(0) === 0xFEFF) {
+              console.log(`[${timestamp()}] [UPLOAD] Removing BOM from JSON content`);
+              jsonContent = jsonContent.substring(1);
+            }
+
+            jsonData = JSON.parse(jsonContent);
+
+            await addLog(assessmentId, 'info', `Archivo descomprimido: ${jsonEntry.entryName}`);
+          } else {
+            // Read JSON directly
+            console.log(`[${timestamp()}] [UPLOAD] Reading JSON file...`);
+            let jsonContent = fs.readFileSync(filePath, 'utf8');
+
+            // Remove BOM (Byte Order Mark) if present
+            if (jsonContent.charCodeAt(0) === 0xFEFF) {
+              console.log(`[${timestamp()}] [UPLOAD] Removing BOM from JSON content`);
+              jsonContent = jsonContent.substring(1);
+            }
+
+            jsonData = JSON.parse(jsonContent);
           }
 
-          jsonData = JSON.parse(jsonContent);
+          console.log(`[${timestamp()}] [UPLOAD] JSON parsed successfully`);
+          await addLog(assessmentId, 'info', 'Datos JSON procesados correctamente');
 
-          await addLog(assessmentId, 'info', `Archivo descomprimido: ${jsonEntry.entryName}`);
-        } else {
-          // Read JSON directly
-          console.log(`[${timestamp()}] [UPLOAD] Reading JSON file...`);
-          let jsonContent = fs.readFileSync(filePath, 'utf8');
+          // Compress JSON before storing
+          const jsonString = JSON.stringify(jsonData);
+          const compressed = zlib.gzipSync(jsonString);
+          const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
+          console.log(`[${timestamp()}] [UPLOAD] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
+          console.log(`[${timestamp()}] [UPLOAD] Compressed data type: ${typeof compressed}, isBuffer: ${Buffer.isBuffer(compressed)}`);
+          await addLog(assessmentId, 'info', `Comprimiendo datos (${compressionRatio}% reducción)...`);
 
-          // Remove BOM (Byte Order Mark) if present
-          if (jsonContent.charCodeAt(0) === 0xFEFF) {
-            console.log(`[${timestamp()}] [UPLOAD] Removing BOM from JSON content`);
-            jsonContent = jsonContent.substring(1);
-          }
+          // Store compressed data in assessment_data table (Buffer is automatically converted to bytea by pg driver)
+          await addLog(assessmentId, 'info', 'Guardando datos comprimidos en la base de datos...');
+          await pool.query(
+            'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2) ON CONFLICT (assessment_id) DO UPDATE SET data = $2',
+            [assessmentId, compressed]
+          );
 
-          jsonData = JSON.parse(jsonContent);
-        }
+          // Update assessment status
+          await pool.query(
+            'UPDATE assessments SET status = $1, updated_at = NOW() WHERE id = $2',
+            ['uploaded', assessmentId]
+          );
 
-        console.log(`[${timestamp()}] [UPLOAD] JSON parsed successfully`);
-        await addLog(assessmentId, 'info', 'Datos JSON procesados correctamente');
+          console.log(`[${timestamp()}] [UPLOAD] Data stored in database`);
+          await addLog(assessmentId, 'info', 'Datos guardados. Iniciando análisis...');
 
-        // Compress JSON before storing
-        const jsonString = JSON.stringify(jsonData);
-        const compressed = zlib.gzipSync(jsonString);
-        const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
-        console.log(`[${timestamp()}] [UPLOAD] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
-        console.log(`[${timestamp()}] [UPLOAD] Compressed data type: ${typeof compressed}, isBuffer: ${Buffer.isBuffer(compressed)}`);
-        await addLog(assessmentId, 'info', `Comprimiendo datos (${compressionRatio}% reducción)...`);
+          // Start analysis process (async, don't wait)
+          processAssessmentData(assessmentId, jsonData).catch(err => {
+            console.error(`[${timestamp()}] [UPLOAD] Background analysis error:`, err);
+            addLog(assessmentId, 'error', `Error en análisis: ${err.message}`);
+          });
 
-        // Store compressed data in assessment_data table (Buffer is automatically converted to bytea by pg driver)
-        await addLog(assessmentId, 'info', 'Guardando datos comprimidos en la base de datos...');
-        await pool.query(
-          'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2) ON CONFLICT (assessment_id) DO UPDATE SET data = $2',
-          [assessmentId, compressed]
-        );
+          // Return success immediately
+          res.json({
+            success: true,
+            message: 'Archivo procesado correctamente',
+            status: 'analyzing',
+            fileType: isZip ? 'zip' : 'json',
+            originalSize: req.file.size
+          });
 
-        // Update assessment status
-        await pool.query(
-          'UPDATE assessments SET status = $1, updated_at = NOW() WHERE id = $2',
-          ['uploaded', assessmentId]
-        );
+        } catch (error) {
+          console.error(`[${timestamp()}] [UPLOAD] Error processing file:`, error);
+          await addLog(assessmentId, 'error', `Error procesando archivo: ${error.message}`);
 
-        console.log(`[${timestamp()}] [UPLOAD] Data stored in database`);
-        await addLog(assessmentId, 'info', 'Datos guardados. Iniciando análisis...');
-
-        // Start analysis process (async, don't wait)
-        processAssessmentData(assessmentId, jsonData).catch(err => {
-          console.error(`[${timestamp()}] [UPLOAD] Background analysis error:`, err);
-          addLog(assessmentId, 'error', `Error en análisis: ${err.message}`);
-        });
-
-        // Return success immediately
-        res.json({
-          success: true,
-          message: 'Archivo procesado correctamente',
-          status: 'analyzing',
-          fileType: isZip ? 'zip' : 'json',
-          originalSize: req.file.size
-        });
-
-      } catch (error) {
-        console.error(`[${timestamp()}] [UPLOAD] Error processing file:`, error);
-        await addLog(assessmentId, 'error', `Error procesando archivo: ${error.message}`);
-
-        res.status(500).json({
-          error: 'Error processing file',
-          details: error.message
-        });
-      } finally {
-        // Clean up temporary file
-        if (filePath && fs.existsSync(filePath)) {
-          try {
-            fs.unlinkSync(filePath);
-            console.log(`[${timestamp()}] [UPLOAD] Temporary file deleted: ${filePath}`);
-          } catch (cleanupError) {
-            console.error(`[${timestamp()}] [UPLOAD] Error deleting temp file:`, cleanupError);
+          res.status(500).json({
+            error: 'Error processing file',
+            details: error.message
+          });
+        } finally {
+          // Clean up temporary file
+          if (filePath && fs.existsSync(filePath)) {
+            try {
+              fs.unlinkSync(filePath);
+              console.log(`[${timestamp()}] [UPLOAD] Temporary file deleted: ${filePath}`);
+            } catch (cleanupError) {
+              console.error(`[${timestamp()}] [UPLOAD] Error deleting temp file:`, cleanupError);
+            }
           }
         }
-      }
-    });
+      });
 
-    // DEBUG ENDPOINTS
-    // ------------------------------------------------------------------
+      // DEBUG ENDPOINTS
+      // ------------------------------------------------------------------
 
-    // 1. Generate/Trigger Assessment Analysis (Manual Trigger)
-    app.post('/api/debug/assessments/:id/analyze', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const result = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+      // 1. Generate/Trigger Assessment Analysis (Manual Trigger)
+      app.post('/api/debug/assessments/:id/analyze', async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
 
-        if (result.rows.length === 0) {
-          return res.status(404).json({ error: 'Assessment data not found' });
-        }
-
-        let jsonData;
-        const rawData = result.rows[0].data;
-
-        // Handle compressed data
-        if (Buffer.isBuffer(rawData)) {
-          try {
-            const decompressed = zlib.gunzipSync(rawData);
-            jsonData = JSON.parse(decompressed.toString());
-          } catch (e) {
-            // Fallback if not compressed (legacy)
-            jsonData = JSON.parse(rawData.toString());
+          if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Assessment data not found' });
           }
-        } else {
-          jsonData = rawData; // Already JSON
-        }
 
-        // Trigger analysis in background
-        processAssessmentData(id, jsonData).catch(err => console.error('Manual trigger error:', err));
+          let jsonData;
+          const rawData = result.rows[0].data;
 
-        res.json({ message: 'Analysis triggered manually', assessmentId: id });
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // 2. Validate Assessment Quality (Check findings vs Data)
-    app.get('/api/debug/assessments/:id/validate', async (req, res) => {
-      try {
-        const { id } = req.params;
-
-        // Get findings
-        const findingsRes = await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id]);
-        const findings = findingsRes.rows;
-
-        // Get raw data
-        const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
-        if (dataRes.rows.length === 0) return res.status(404).json({ error: 'No data' });
-
-        let rawData;
-        // Decompress if needed
-        if (Buffer.isBuffer(dataRes.rows[0].data)) {
-          rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
-        } else {
-          rawData = dataRes.rows[0].data;
-        }
-
-        const validationReport = {
-          totalFindings: findings.length,
-          hallucinationsDetected: [],
-          validFindings: 0
-        };
-
-        // Build Valid Names Set
-        const validNames = new Set();
-        const categories = ['Users', 'Computers', 'Groups', 'GPOs', 'DNSConfiguration'];
-
-        // Naive extraction for validation
-        const extractNames = (obj) => {
-          if (!obj) return;
-          if (obj.SamAccountName) validNames.add(obj.SamAccountName.toLowerCase());
-          if (obj.Name) validNames.add(obj.Name.toLowerCase());
-          if (obj.DNSHostName) validNames.add(obj.DNSHostName.toLowerCase());
-          if (obj.DistinguishedName) validNames.add(obj.DistinguishedName.toLowerCase());
-        };
-
-        categories.forEach(cat => {
-          const catData = extractCategoryData(rawData, cat);
-          if (catData) catData.forEach(extractNames);
-        });
-
-        // Validating Findings
-        findings.forEach(f => {
-          const evidence = f.evidence || {};
-          const affected = evidence.affected_objects || [];
-
-          if (affected.length > 0) {
-            const invalidObjects = affected.filter(obj => {
-              const clean = obj.replace(/^CN=|,.*/g, '').trim().toLowerCase();
-              return !validNames.has(clean) && !validNames.has(obj.toLowerCase());
-            });
-
-            if (invalidObjects.length > 0) {
-              validationReport.hallucinationsDetected.push({
-                findingId: f.id,
-                title: f.title,
-                invalidObjects: invalidObjects
-              });
-            } else {
-              validationReport.validFindings++;
+          // Handle compressed data
+          if (Buffer.isBuffer(rawData)) {
+            try {
+              const decompressed = zlib.gunzipSync(rawData);
+              jsonData = JSON.parse(decompressed.toString());
+            } catch (e) {
+              // Fallback if not compressed (legacy)
+              jsonData = JSON.parse(rawData.toString());
             }
           } else {
-            // Global findings
-            validationReport.validFindings++;
+            jsonData = rawData; // Already JSON
           }
-        });
 
-        res.json(validationReport);
+          // Trigger analysis in background
+          processAssessmentData(id, jsonData).catch(err => console.error('Manual trigger error:', err));
 
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // 3. View Raw Uploaded JSON (Decompressed)
-    app.get('/api/debug/assessments/:id/json', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const result = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
-
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-
-        let jsonData;
-        if (Buffer.isBuffer(result.rows[0].data)) {
-          jsonData = JSON.parse(zlib.gunzipSync(result.rows[0].data).toString());
-        } else {
-          jsonData = result.rows[0].data;
+          res.json({ message: 'Analysis triggered manually', assessmentId: id });
+        } catch (error) {
+          res.status(500).json({ error: error.message });
         }
+      });
 
-        res.json(jsonData);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
+      // 2. Validate Assessment Quality (Check findings vs Data)
+      app.get('/api/debug/assessments/:id/validate', async (req, res) => {
+        try {
+          const { id } = req.params;
 
-    // 4. Word Report Data Preview
-    app.get('/api/debug/assessments/:id/word-data', async (req, res) => {
-      try {
-        const { id } = req.params;
-        // Simulate what goes into the word report
-        const assessment = (await pool.query('SELECT * FROM assessments WHERE id = $1', [id])).rows[0];
-        const findings = (await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id])).rows;
-        // Retrieve raw data
-        const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
-        let rawData = {};
-        if (dataRes.rows.length > 0) {
+          // Get findings
+          const findingsRes = await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id]);
+          const findings = findingsRes.rows;
+
+          // Get raw data
+          const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+          if (dataRes.rows.length === 0) return res.status(404).json({ error: 'No data' });
+
+          let rawData;
+          // Decompress if needed
           if (Buffer.isBuffer(dataRes.rows[0].data)) {
             rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
           } else {
             rawData = dataRes.rows[0].data;
           }
-        }
 
-        const reportPayload = {
-          assessment: assessment,
-          findingsCount: findings.length,
-          findingsPreview: findings.map(f => ({ title: f.title, risk: f.severity })),
-          keyMetrics: {
-            users: rawData.Users ? (rawData.Users.Data ? rawData.Users.Data.length : rawData.Users.length) : 0,
-            computers: rawData.Computers ? (rawData.Computers.Data ? rawData.Computers.Data.length : rawData.Computers.length) : 0,
-          }
-        };
+          const validationReport = {
+            totalFindings: findings.length,
+            hallucinationsDetected: [],
+            validFindings: 0
+          };
 
-        res.json(reportPayload);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
+          // Build Valid Names Set
+          const validNames = new Set();
+          const categories = ['Users', 'Computers', 'Groups', 'GPOs', 'DNSConfiguration'];
 
-    // 5. Dashboard Data Debug
-    app.get('/api/debug/assessments/:id/dashboard-data', async (req, res) => {
-      // This mimics the dashboard data loading logic
-      try {
-        const { id } = req.params;
-        const findings = (await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id])).rows;
+          // Naive extraction for validation
+          const extractNames = (obj) => {
+            if (!obj) return;
+            if (obj.SamAccountName) validNames.add(obj.SamAccountName.toLowerCase());
+            if (obj.Name) validNames.add(obj.Name.toLowerCase());
+            if (obj.DNSHostName) validNames.add(obj.DNSHostName.toLowerCase());
+            if (obj.DistinguishedName) validNames.add(obj.DistinguishedName.toLowerCase());
+          };
 
-        // Calculate Dashboard Metrics
-        const criticalCount = findings.filter(f => f.severity === 'critical').length;
-        const highCount = findings.filter(f => f.severity === 'high').length;
+          categories.forEach(cat => {
+            const catData = extractCategoryData(rawData, cat);
+            if (catData) catData.forEach(extractNames);
+          });
 
-        const dashboardDebug = {
-          scorecard: {
-            critical: criticalCount,
-            high: highCount,
-            total: findings.length
-          },
-          topRisks: findings.filter(f => f.severity === 'critical').map(f => f.title)
-        };
+          // Validating Findings
+          findings.forEach(f => {
+            const evidence = f.evidence || {};
+            const affected = evidence.affected_objects || [];
 
-        res.json(dashboardDebug);
-      } catch (error) {
-        res.status(500).json({ error: error.message });
-      }
-    });
+            if (affected.length > 0) {
+              const invalidObjects = affected.filter(obj => {
+                const clean = obj.replace(/^CN=|,.*/g, '').trim().toLowerCase();
+                return !validNames.has(clean) && !validNames.has(obj.toLowerCase());
+              });
 
-    // Helper function to process assessment data
-    async function processAssessmentData(assessmentId, jsonData) {
-      try {
-        console.log(`[${timestamp()}] [PROCESS] Starting analysis for assessment ${assessmentId}`);
-        await addLog(assessmentId, 'info', 'Iniciando análisis de categorías...');
-
-        // Clear existing findings to prevents duplicates/zombie data (Fix for Hallucinations persistence)
-        await pool.query('DELETE FROM findings WHERE assessment_id = $1', [assessmentId]);
-        await addLog(assessmentId, 'info', 'Limpiando hallazgos anteriores...');
-
-        // Update assessment status
-        await pool.query(
-          'UPDATE assessments SET status = $1, analysis_progress = $2, updated_at = NOW() WHERE id = $3',
-          ['analyzing', JSON.stringify({ total: CATEGORIES.length, completed: 0, current: null }), assessmentId]
-        );
-
-        let completedCategories = 0;
-
-        // Process each category
-        for (const category of CATEGORIES) {
-          try {
-            await addLog(assessmentId, 'info', `Analizando categoría: ${category}`, category);
-
-            const categoryData = extractCategoryData(jsonData, category);
-
-            if (!categoryData || categoryData.length === 0) {
-              await addLog(assessmentId, 'info', `Categoría ${category} sin datos, omitiendo`, category);
-              completedCategories++;
-              continue;
-            }
-
-            await addLog(assessmentId, 'info', `Procesando ${categoryData.length} elementos de ${category}`, category);
-
-            // Analyze with AI
-            const findings = await analyzeCategory(assessmentId, category, categoryData);
-
-            if (findings && findings.length > 0) {
-              await addLog(assessmentId, 'info', `${findings.length} hallazgos encontrados en ${category}`, category);
+              if (invalidObjects.length > 0) {
+                validationReport.hallucinationsDetected.push({
+                  findingId: f.id,
+                  title: f.title,
+                  invalidObjects: invalidObjects
+                });
+              } else {
+                validationReport.validFindings++;
+              }
             } else {
-              await addLog(assessmentId, 'info', `No se encontraron hallazgos en ${category}`, category);
+              // Global findings
+              validationReport.validFindings++;
             }
-
-            completedCategories++;
-
-            // Update progress
-            await pool.query(
-              'UPDATE assessments SET analysis_progress = $1, updated_at = NOW() WHERE id = $2',
-              [JSON.stringify({ total: CATEGORIES.length, completed: completedCategories, current: category }), assessmentId]
-            );
-
-          } catch (categoryError) {
-            console.error(`[${timestamp()}] [PROCESS] Error analyzing ${category}:`, categoryError);
-            await addLog(assessmentId, 'error', `Error en categoría ${category}: ${categoryError.message}`, category);
-          }
-        }
-
-        // Mark as completed
-        await pool.query(
-          'UPDATE assessments SET status = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2',
-          ['completed', assessmentId]
-        );
-
-        await addLog(assessmentId, 'info', 'Análisis completado exitosamente');
-        console.log(`[${timestamp()}] [PROCESS] Analysis completed for assessment ${assessmentId}`);
-
-      } catch (error) {
-        console.error(`[${timestamp()}] [PROCESS] Fatal error processing assessment:`, error);
-        await addLog(assessmentId, 'error', `Error crítico: ${error.message}`);
-        await pool.query(
-          'UPDATE assessments SET status = $1, updated_at = NOW() WHERE id = $2',
-          ['failed', assessmentId]
-        );
-      }
-    }
-
-    import { WebAuthentikSetup } from './authentik-setup.js';
-
-    // Authentik Setup Endpoint
-    app.post('/api/setup', async (req, res) => {
-      try {
-        const { authentik_url, api_token, app_url } = req.body;
-
-        if (!authentik_url || !api_token || !app_url) {
-          return res.status(400).json({ success: false, error: 'All fields are required' });
-        }
-
-        const setup = new WebAuthentikSetup(authentik_url, api_token, app_url);
-        const result = await setup.setup();
-
-        if (result.success) {
-          res.json({
-            success: true,
-            message: 'Configuration completed successfully!',
-            client_id: result.client_id,
-            redirect_uri: result.redirect_uri,
-            next_step: 'Restart the application to apply changes'
           });
-        } else {
-          res.status(400).json({
-            success: false,
-            error: result.error || 'Unknown error',
-            step: result.step
-          });
-        }
-      } catch (error) {
-        console.error('Setup error:', error);
-        res.status(500).json({ success: false, error: `Setup failed: ${error.message}` });
-      }
-    });
 
-    // Health Check
-    app.get('/api/health', (req, res) => {
-      res.json({
-        status: 'online',
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV
+          res.json(validationReport);
+
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
       });
-    });
 
-    // Serve static files from 'public' directory
-    app.use(express.static(path.join(__dirname, 'public')));
+      // 3. View Raw Uploaded JSON (Decompressed)
+      app.get('/api/debug/assessments/:id/json', async (req, res) => {
+        try {
+          const { id } = req.params;
+          const result = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
 
-    // Handle React routing, return all requests to React app
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, 'public', 'index.html'));
-    });
+          if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
 
-    // Start Server
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    });
+          let jsonData;
+          if (Buffer.isBuffer(result.rows[0].data)) {
+            jsonData = JSON.parse(zlib.gunzipSync(result.rows[0].data).toString());
+          } else {
+            jsonData = result.rows[0].data;
+          }
+
+          res.json(jsonData);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // 4. Word Report Data Preview
+      app.get('/api/debug/assessments/:id/word-data', async (req, res) => {
+        try {
+          const { id } = req.params;
+          // Simulate what goes into the word report
+          const assessment = (await pool.query('SELECT * FROM assessments WHERE id = $1', [id])).rows[0];
+          const findings = (await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id])).rows;
+          // Retrieve raw data
+          const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+          let rawData = {};
+          if (dataRes.rows.length > 0) {
+            if (Buffer.isBuffer(dataRes.rows[0].data)) {
+              rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
+            } else {
+              rawData = dataRes.rows[0].data;
+            }
+          }
+
+          const reportPayload = {
+            assessment: assessment,
+            findingsCount: findings.length,
+            findingsPreview: findings.map(f => ({ title: f.title, risk: f.severity })),
+            keyMetrics: {
+              users: rawData.Users ? (rawData.Users.Data ? rawData.Users.Data.length : rawData.Users.length) : 0,
+              computers: rawData.Computers ? (rawData.Computers.Data ? rawData.Computers.Data.length : rawData.Computers.length) : 0,
+            }
+          };
+
+          res.json(reportPayload);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // 5. Dashboard Data Debug
+      app.get('/api/debug/assessments/:id/dashboard-data', async (req, res) => {
+        // This mimics the dashboard data loading logic
+        try {
+          const { id } = req.params;
+          const findings = (await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id])).rows;
+
+          // Calculate Dashboard Metrics
+          const criticalCount = findings.filter(f => f.severity === 'critical').length;
+          const highCount = findings.filter(f => f.severity === 'high').length;
+
+          const dashboardDebug = {
+            scorecard: {
+              critical: criticalCount,
+              high: highCount,
+              total: findings.length
+            },
+            topRisks: findings.filter(f => f.severity === 'critical').map(f => f.title)
+          };
+
+          res.json(dashboardDebug);
+        } catch (error) {
+          res.status(500).json({ error: error.message });
+        }
+      });
+
+      // Helper function to process assessment data
+      async function processAssessmentData(assessmentId, jsonData) {
+        try {
+          console.log(`[${timestamp()}] [PROCESS] Starting analysis for assessment ${assessmentId}`);
+          await addLog(assessmentId, 'info', 'Iniciando análisis de categorías...');
+
+          // Clear existing findings to prevents duplicates/zombie data (Fix for Hallucinations persistence)
+          await pool.query('DELETE FROM findings WHERE assessment_id = $1', [assessmentId]);
+          await addLog(assessmentId, 'info', 'Limpiando hallazgos anteriores...');
+
+          // Update assessment status
+          await pool.query(
+            'UPDATE assessments SET status = $1, analysis_progress = $2, updated_at = NOW() WHERE id = $3',
+            ['analyzing', JSON.stringify({ total: CATEGORIES.length, completed: 0, current: null }), assessmentId]
+          );
+
+          let completedCategories = 0;
+
+          // Process each category
+          for (const category of CATEGORIES) {
+            try {
+              await addLog(assessmentId, 'info', `Analizando categoría: ${category}`, category);
+
+              const categoryData = extractCategoryData(jsonData, category);
+
+              if (!categoryData || categoryData.length === 0) {
+                await addLog(assessmentId, 'info', `Categoría ${category} sin datos, omitiendo`, category);
+                completedCategories++;
+                continue;
+              }
+
+              await addLog(assessmentId, 'info', `Procesando ${categoryData.length} elementos de ${category}`, category);
+
+              // Analyze with AI
+              const findings = await analyzeCategory(assessmentId, category, categoryData);
+
+              if (findings && findings.length > 0) {
+                await addLog(assessmentId, 'info', `${findings.length} hallazgos encontrados en ${category}`, category);
+              } else {
+                await addLog(assessmentId, 'info', `No se encontraron hallazgos en ${category}`, category);
+              }
+
+              completedCategories++;
+
+              // Update progress
+              await pool.query(
+                'UPDATE assessments SET analysis_progress = $1, updated_at = NOW() WHERE id = $2',
+                [JSON.stringify({ total: CATEGORIES.length, completed: completedCategories, current: category }), assessmentId]
+              );
+
+            } catch (categoryError) {
+              console.error(`[${timestamp()}] [PROCESS] Error analyzing ${category}:`, categoryError);
+              await addLog(assessmentId, 'error', `Error en categoría ${category}: ${categoryError.message}`, category);
+            }
+          }
+
+          // Mark as completed
+          await pool.query(
+            'UPDATE assessments SET status = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2',
+            ['completed', assessmentId]
+          );
+
+          await addLog(assessmentId, 'info', 'Análisis completado exitosamente');
+          console.log(`[${timestamp()}] [PROCESS] Analysis completed for assessment ${assessmentId}`);
+
+        } catch (error) {
+          console.error(`[${timestamp()}] [PROCESS] Fatal error processing assessment:`, error);
+          await addLog(assessmentId, 'error', `Error crítico: ${error.message}`);
+          await pool.query(
+            'UPDATE assessments SET status = $1, updated_at = NOW() WHERE id = $2',
+            ['failed', assessmentId]
+          );
+        }
+      }
+
+      import { WebAuthentikSetup } from './authentik-setup.js';
+
+      // Authentik Setup Endpoint
+      app.post('/api/setup', async (req, res) => {
+        try {
+          const { authentik_url, api_token, app_url } = req.body;
+
+          if (!authentik_url || !api_token || !app_url) {
+            return res.status(400).json({ success: false, error: 'All fields are required' });
+          }
+
+          const setup = new WebAuthentikSetup(authentik_url, api_token, app_url);
+          const result = await setup.setup();
+
+          if (result.success) {
+            res.json({
+              success: true,
+              message: 'Configuration completed successfully!',
+              client_id: result.client_id,
+              redirect_uri: result.redirect_uri,
+              next_step: 'Restart the application to apply changes'
+            });
+          } else {
+            res.status(400).json({
+              success: false,
+              error: result.error || 'Unknown error',
+              step: result.step
+            });
+          }
+        } catch (error) {
+          console.error('Setup error:', error);
+          res.status(500).json({ success: false, error: `Setup failed: ${error.message}` });
+        }
+      });
+
+      // Health Check
+      app.get('/api/health', (req, res) => {
+        res.json({
+          status: 'online',
+          timestamp: new Date().toISOString(),
+          environment: process.env.NODE_ENV
+        });
+      });
+
+      // Serve static files from 'public' directory
+      app.use(express.static(path.join(__dirname, 'public')));
+
+      // Handle React routing, return all requests to React app
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+      });
+
+      // Start Server
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Server running on port ${PORT}`);
+        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      });
