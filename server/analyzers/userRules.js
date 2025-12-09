@@ -139,4 +139,4 @@ function analyzeUsersDeterministic(users) {
     return findings;
 }
 
-module.exports = { analyzeUsersDeterministic };
+export { analyzeUsersDeterministic };
