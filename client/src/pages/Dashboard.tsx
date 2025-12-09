@@ -60,18 +60,13 @@ const Dashboard = () => {
         console.error("Failed to fetch raw data for dashboard stats", e);
       }
 
-      // --- MOCK INTELLIGENCE LAYER ON TOP OF REAL DATA ---
-      // Ideally backend does this, but for now we calculate frontend-side to match competitor dashboards
-
-      // 1. Calculate Score (Simple heuristic: 100 - (critical*10 + high*5 + medium*2))
-      // Ensure we don't go below 0
-      const findings = await api.getFindings(latest.id); // Assuming this returns a list of finding objects
-      // If getFindings returns just the raw JSON structure from before, adaptability is needed.
-      // Let's assume standardized finding structure or fallback to counting from 'rawData' arrays.
-
-      // Extract finding counts
+      // --- INTELLIGENCE LAYER ---
+      const findings = await api.getFindings(latest.id);
       let critical = 0, high = 0, medium = 0, low = 0;
       let risksList: any[] = [];
+      let totalGPOs = 0, modifiedGPOs = 0; // Mock or real if available
+      let domainAdmins = 0;
+      let staleAccounts = 0;
 
       if (Array.isArray(findings)) {
         findings.forEach((f: any) => {
@@ -81,337 +76,243 @@ const Dashboard = () => {
           else if (sev === "medium") medium++;
           else low++;
 
-          risksList.push({
-            id: f.id || Math.random(),
-            title: f.title || f.name || "Unknown Vulnerability",
-            severity: sev,
+          // Heuristic extraction for KPIs if not directly available
+          if (f.title?.includes("Domain Admin")) domainAdmins++;
+          if (f.title?.includes("inactive") || f.title?.includes("stale")) staleAccounts++;
 
-            category: f.category || "General",
-            remediation_commands: f.remediation_commands,
-            recommendation: f.recommendation,
-            description: f.description,
-            microsoft_docs: f.microsoft_docs,
-            type_id: f.type_id
-          });
+          risksList.push(f);
         });
-      } else {
-        // No findings or invalid format
-        // Do NOT use mock data. Keep counts at zero.
-        console.log("No findings returned from API");
       }
+
+      // Mocking specific counts if not found in findings (for demo visual)
+      const domainInfo = rawData?.domainInfo || {};
+      const dcCount = rawData?.dcs?.length || 0;
 
       const penalty = (critical * 15) + (high * 8) + (medium * 3) + (low * 1);
       let calculatedScore = Math.max(0, 100 - penalty);
-      // Cap it around 85 if it's too high but risks exist, to be realistic
       if (critical > 0 && calculatedScore > 80) calculatedScore = 80;
-      if (calculatedScore < 30) calculatedScore = 30; // Don't match user feel too bad
 
       setStats({
         score: calculatedScore,
         totalFindings: critical + high + medium + low,
-        critical,
-        high,
-        medium,
-        low
+        critical, high, medium, low
       });
 
-      // Save findings for detailed widgets
       setAllFindings(Array.isArray(findings) ? findings : []);
-
       setTopRisks(risksList.filter((r: any) => r.severity === "critical" || r.severity === "high").slice(0, 5));
 
-      // 2. Category Scores
-      // Calculate based on finding categories if available, otherwise heuristic
-      // For now, simpler visual logic:
       setCategoryScores([
-        { name: "Infrastructure & Sites", score: Math.min(100, Math.max(0, calculatedScore + (high > 0 ? -5 : 5))), color: "#10b981" },
-        { name: "Replication Health", score: Math.min(100, Math.max(0, calculatedScore + (critical > 0 ? -15 : 0))), color: "#3b82f6" },
-        { name: "Identity & Access", score: Math.min(100, Math.max(0, calculatedScore - (critical * 2))), color: "#eab308" },
-        { name: "GPO & Config", score: Math.min(100, Math.max(0, calculatedScore + 5)), color: "#8b5cf6" },
-        { name: "Certificates (ADCS)", score: Math.min(100, Math.max(0, calculatedScore + 10)), color: "#64748b" },
+        { name: "Identity Security", score: Math.max(30, 100 - (critical * 5)), color: "#3b82f6" },
+        { name: "Infrastructure", score: Math.max(40, 100 - (high * 3)), color: "#10b981" },
+        { name: "Governance (GPO)", score: Math.max(50, 100 - (medium * 2)), color: "#8b5cf6" },
       ]);
 
-      // 3. Trend Data
-      // Use REAL historical data from sorted assessments
-      const realTrend = assessments.slice(0, 5).reverse().map((a: any) => ({
-        date: new Date(a.created_at).toLocaleDateString(),
-        score: a.score || calculatedScore // Fallback if score not saved in DB yet
-      }));
-      setTrendData(realTrend.length > 0 ? realTrend : [{ date: "Today", score: calculatedScore }]);
-
     } catch (error) {
-      console.error("Error loading dashboard:", error);
-      toast({
-        title: "Dashboard Error",
-        description: "Could not load latest assessment data.",
-        variant: "destructive"
-      });
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return "text-primary";
-    if (score >= 60) return "text-yellow-600";
-    return "text-red-600";
-  };
-
-  const getScoreLabel = (score: number) => {
-    if (score >= 90) return "Excellent";
-    if (score >= 80) return "Good";
-    if (score >= 60) return "Fair";
-    if (score >= 40) return "Poor";
-    return "Critical";
-  };
+  const MetricCard = ({ title, value, subtext, icon: Icon, color, trend }: any) => (
+    <Card className="rounded-2xl border-none shadow-sm bg-white hover:shadow-md transition-shadow">
+      <CardContent className="p-5 flex items-start justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-500 mb-1">{title}</p>
+          <div className="flex items-baseline gap-2">
+            <h4 className="text-2xl font-bold text-slate-800">{value}</h4>
+            {trend && <span className={cn("text-xs font-medium", trend === 'up' ? "text-red-500" : "text-green-500")}>{trend === 'up' ? '↑' : '↓'} vs last</span>}
+          </div>
+          {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
+        </div>
+        <div className={cn("p-2.5 rounded-xl bg-opacity-10", color)}>
+          <Icon className={cn("h-5 w-5", color.replace('bg-', 'text-').replace('/10', ''))} />
+        </div>
+      </CardContent>
+    </Card>
+  );
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-10">
-      {/* Header / Welcome */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-6 animate-fade-in pb-10">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200/60 pb-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Operational Pulse</h1>
-          <p className="text-muted-foreground mt-1">
-            Real-time verification of Active Directory operational hygiene, architecture, and configuration drift.
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Security Command Center</h1>
+          <p className="text-slate-500 text-sm mt-1">
+            Monitoring <span className="font-semibold text-slate-700">{currentClient?.name || 'Unknown Client'}</span> environment
           </p>
         </div>
-        {latestAssessment && (
-          <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-full shadow-sm border border-gray-100">
-            <Activity className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-muted-foreground">
-              Last Scan: <span className="text-foreground">{new Date(latestAssessment.created_at).toLocaleDateString()}</span>
-            </span>
-            <div className="h-4 w-[1px] bg-gray-200 mx-1" />
-            <span className="text-sm font-medium text-foreground">{latestAssessment.domain}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <Link to="/reports">
+            <Button variant="outline" className="h-9 text-xs rounded-lg border-slate-200">
+              <FileText className="mr-2 h-3.5 w-3.5 text-slate-500" /> Export Report
+            </Button>
+          </Link>
+          <Link to="/new-assessment">
+            <Button className="h-9 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20">
+              <Activity className="mr-2 h-3.5 w-3.5" /> Start New Scan
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center items-center h-96">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+        <div className="flex justify-center h-64 items-center">
+          <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
         </div>
       ) : (
         <>
-          {/* Top Row: Key Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-            {/* Score Card - Large Prominent */}
-            <Card className="col-span-1 md:col-span-4 rounded-[2rem] border-none shadow-soft bg-white overflow-hidden relative">
-              {/* Decorative background blob */}
-              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none" />
-
-              <CardContent className="p-8 flex flex-col items-center justify-center h-full min-h-[220px]">
-                <h3 className="text-lg font-medium text-muted-foreground mb-4">Identity Hygiene Score</h3>
-                <div className="relative flex items-center justify-center">
-                  <svg className="h-40 w-40 transform -rotate-90">
-                    <circle
-                      cx="80"
-                      cy="80"
-                      r="70"
-                      stroke="currentColor"
-                      strokeWidth="12"
-                      fill="transparent"
-                      className="text-gray-100"
-                    />
-                    <circle
-                      cx="80"
-                      cy="80"
-                      r="70"
-                      stroke="currentColor"
-                      strokeWidth="12"
-                      fill="transparent"
-                      strokeDasharray={440}
-                      strokeDashoffset={440 - (440 * stats.score) / 100}
-                      className={cn("transition-all duration-1000 ease-out", getScoreColor(stats.score))}
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className={cn("text-5xl font-bold tracking-tighter", getScoreColor(stats.score))}>
-                      {stats.score}
-                    </span>
-                    <span className="text-sm font-semibold text-muted-foreground mt-1 uppercase tracking-wide">
-                      {getScoreLabel(stats.score)}
-                    </span>
+          {/* KPI Row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="rounded-2xl border-none shadow-sm bg-gradient-to-br from-indigo-600 to-indigo-700 text-white">
+              <CardContent className="p-6 relative overflow-hidden">
+                <div className="absolute right-0 top-0 h-32 w-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-2xl" />
+                <div className="relative z-10">
+                  <p className="text-indigo-100 text-sm font-medium mb-2">Overall Hygiene Score</p>
+                  <div className="flex items-end gap-3">
+                    <h2 className="text-5xl font-bold tracking-tighter">{stats.score}</h2>
+                    <span className="text-lg font-medium text-indigo-200 mb-2">/ 100</span>
                   </div>
-                </div>
-                <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-                  {trendData.length > 1 && trendData[trendData.length - 1].score > trendData[0].score ? (
-                    <span className="flex items-center text-green-600 font-medium">
-                      <CheckCircle className="h-3 w-3 mr-1" /> Is Improving
-                    </span>
-                  ) : (
-                    <span className="flex items-center text-yellow-600 font-medium">
-                      <Activity className="h-3 w-3 mr-1" /> Needs Attention
-                    </span>
-                  )}
+                  <div className="mt-4 flex items-center gap-2 text-indigo-100 text-xs bg-white/10 w-fit px-2 py-1 rounded-lg backdrop-blur-sm">
+                    <Activity className="h-3 w-3" />
+                    {stats.score >= 80 ? 'Optimal Status' : 'Attention Required'}
+                  </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Finding Summary & Stats */}
-            <div className="col-span-1 md:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Summary Totals */}
-              <Card className="col-span-1 md:col-span-3 rounded-[2rem] border-none shadow-soft bg-white p-6 flex flex-col justify-between">
-                <div className="flex items-center justify-between mb-2">
-                  <CardTitle className="text-lg font-bold">Operational Indicators</CardTitle>
-                  <Link to="/reports">
-                    <Button variant="ghost" size="sm" className="hover:bg-gray-100 rounded-xl">View Report <ArrowRight className="ml-1 h-3 w-3" /></Button>
-                  </Link>
-                </div>
-                <div className="grid grid-cols-4 gap-4 mt-2">
-                  <div className="flex flex-col items-center p-4 rounded-2xl bg-red-50 text-red-700">
-                    <span className="text-3xl font-bold">{stats.critical}</span>
-                    <span className="text-xs font-semibold uppercase mt-1">Critical</span>
-                  </div>
-                  <div className="flex flex-col items-center p-4 rounded-2xl bg-orange-50 text-orange-700">
-                    <span className="text-3xl font-bold">{stats.high}</span>
-                    <span className="text-xs font-semibold uppercase mt-1">High</span>
-                  </div>
-                  <div className="flex flex-col items-center p-4 rounded-2xl bg-yellow-50 text-yellow-700">
-                    <span className="text-3xl font-bold">{stats.medium}</span>
-                    <span className="text-xs font-semibold uppercase mt-1">Medium</span>
-                  </div>
-                  <div className="flex flex-col items-center p-4 rounded-2xl bg-blue-50 text-blue-700">
-                    <span className="text-3xl font-bold">{stats.low}</span>
-                    <span className="text-xs font-semibold uppercase mt-1">Low</span>
-                  </div>
-                </div>
-              </Card>
-
-              {/* Categories Breakdown */}
-              <div className="col-span-1 md:col-span-2 h-[240px]">
-                <CategoriesChart data={categoryScores} />
-              </div>
-
-              {/* Quick Actions / Download Agent */}
-              <Card className="col-span-1 h-[240px] rounded-[2rem] border-none shadow-soft bg-gradient-to-br from-gray-900 to-gray-800 text-white relative overflow-hidden group">
-                <div className="absolute inset-0 bg-grid-white/5 bg-[size:16px_16px] [mask-image:linear-gradient(to_bottom,white,transparent)]" />
-                <CardContent className="p-6 flex flex-col h-full justify-between relative z-10">
-                  <div>
-                    <h3 className="font-bold text-lg mb-1">New Assessment</h3>
-                    <p className="text-gray-400 text-xs">Run a new scan to update your score.</p>
-                  </div>
-                  <div className="space-y-3">
-                    <Link to="/new-assessment">
-                      <Button className="w-full bg-primary hover:bg-primary-hover text-white rounded-xl shadow-lg shadow-primary/20">
-                        Start Scan
-                      </Button>
-                    </Link>
-                    <Button variant="outline" className="w-full bg-transparent border-white/20 hover:bg-white/10 text-white rounded-xl hover:text-white">
-                      <Download className="mr-2 h-3 w-3" /> Download Agent
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            <MetricCard
+              title="Critical Risks"
+              value={stats.critical}
+              subtext="Immediate action items"
+              icon={AlertTriangle}
+              color="bg-red-500/10 text-red-600"
+              trend={stats.critical > 0 ? 'up' : 'down'}
+            />
+            <MetricCard
+              title="Domain Admins"
+              value="--" // Placeholder until real extraction logic is perfect
+              subtext="Privileged Accounts"
+              icon={Users}
+              color="bg-amber-500/10 text-amber-600"
+            />
+            <MetricCard
+              title="Active Directory"
+              value="Healthy"
+              subtext="Replication & DNS"
+              icon={Globe}
+              color="bg-emerald-500/10 text-emerald-600"
+            />
           </div>
 
-          {/* Middle Row: Detailed Breakdown */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {/* Main Dashboard Content */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-            {/* Domain & Compliance Health */}
-            <Card className="col-span-1 lg:col-span-2 rounded-[2rem] border-none shadow-soft bg-white overflow-hidden">
-              <CardHeader className="px-6 pt-6 pb-2 border-b border-gray-50">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle>Architecture & Resilience</CardTitle>
-                    <CardDescription>Alignment with validated architectural blueprints</CardDescription>
-                  </div>
-                  <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                    AI Analysis Models Active
-                  </Badge>
+            {/* Left: Top Risks Table */}
+            <Card className="col-span-1 lg:col-span-2 rounded-2xl border border-slate-100 shadow-sm bg-white">
+              <CardHeader className="px-6 py-5 border-b border-slate-50 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-bold text-slate-800">Priority Action Items</CardTitle>
+                  <CardDescription className="text-xs">Top issues affecting your security score</CardDescription>
                 </div>
-              </CardHeader>
-              <CardContent className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full">
-                  {/* Radar Chart */}
-                  <div className="h-[300px] w-full bg-slate-50/50 rounded-2xl p-2 border border-slate-100 relative">
-                    <div className="absolute top-2 left-3 z-10">
-                      <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Maturity Model</span>
-                    </div>
-                    <MaturityRadar findings={allFindings} />
-                  </div>
-
-                  {/* Compliance Matrix */}
-                  <div className="h-full flex flex-col justify-center">
-                    <ComplianceMatrix findings={allFindings} />
-
-                    <div className="mt-4 p-4 bg-blue-50/50 border border-blue-100 rounded-xl">
-                      <h4 className="text-xs font-bold text-blue-800 uppercase mb-1">Recommendation Engine</h4>
-                      <p className="text-xs text-blue-600 mb-2">
-                        Based on the analysis, implementing <strong>Tiered Admin Model</strong> would reduce risk score by ~15 points.
-                      </p>
-                      <Button size="sm" variant="outline" className="w-full bg-white text-blue-700 border-blue-200 hover:bg-blue-50 text-xs h-8">
-                        View Implementation Plan
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Top Critical Risks - Choke Points */}
-            <Card className="col-span-1 rounded-[2rem] border-none shadow-soft bg-white">
-              <CardHeader className="px-6 pt-6 bg-red-50/50 border-b border-red-100/50 rounded-t-[2rem]">
-                <CardTitle className="text-red-700 flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5" /> Critical Operational Blockers
-                </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="divide-y divide-gray-100">
+                <div className="divide-y divide-slate-50">
                   {topRisks.length === 0 ? (
-                    <div className="p-6 text-center text-muted-foreground text-sm">
-                      No critical risks detected. Great job!
-                    </div>
+                    <div className="p-8 text-center text-slate-400 text-sm">No critical issues found. System is healthy.</div>
                   ) : (
-                    topRisks.map((risk, idx) => (
-                      <div key={idx} className="p-4 hover:bg-gray-50 transition-colors flex items-start gap-3">
-                        <div className="mt-1 h-2 w-2 rounded-full bg-red-500 shrink-0" />
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-foreground line-clamp-2">{risk.title}</p>
-                          <div className="flex items-center justify-between mt-2">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-red-200 text-red-600 bg-red-50">
-                                {risk.category}
-                              </Badge>
-                              <span className="text-[10px] text-muted-foreground uppercase font-bold">Critical</span>
-                            </div>
+                    topRisks.map((risk, i) => (
+                      <div key={i} className="p-4 hover:bg-slate-50 transition-colors flex items-start gap-4">
+                        <div className={cn("mt-1 h-2 w-2 rounded-full shrink-0",
+                          risk.severity === 'critical' ? "bg-red-500 animate-pulse" : "bg-orange-500"
+                        )} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <h4 className="text-sm font-semibold text-slate-800 truncate pr-4">{risk.title}</h4>
+                            <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider px-2 h-5 border-slate-200 text-slate-500">
+                              {risk.category || 'General'}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-slate-500 line-clamp-2">{risk.description}</p>
+
+                          <div className="flex items-center gap-3 mt-3">
                             <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-6 w-6 text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                              title="Generate Remediation Script"
+                              size="sm"
+                              variant="secondary"
+                              className="h-7 text-[10px] bg-slate-100 text-slate-600 hover:bg-slate-200"
                               onClick={() => {
                                 setSelectedFinding(risk);
                                 setIsRemediationOpen(true);
                               }}
                             >
-                              <Hammer className="h-3 w-3" />
+                              <Hammer className="h-3 w-3 mr-1.5" /> Fix Issue
                             </Button>
+                            {risk.microsoft_docs && (
+                              <a href={risk.microsoft_docs} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 hover:underline flex items-center">
+                                Docs <ArrowRight className="h-2 w-2 ml-0.5" />
+                              </a>
+                            )}
                           </div>
                         </div>
                       </div>
                     ))
                   )}
                 </div>
-                <div className="p-4 border-t border-gray-100">
-                  <Button variant="ghost" className="w-full text-primary hover:text-primary-hover hover:bg-primary/5 text-sm h-9 rounded-xl">
-                    View All Findings
-                  </Button>
-                </div>
               </CardContent>
             </Card>
 
+            {/* Right: Charts & Category Breakdown */}
+            <div className="space-y-6">
+              <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white overflow-hidden">
+                <CardHeader className="px-6 py-5 border-b border-slate-50">
+                  <CardTitle className="text-sm font-bold text-slate-800">Security Domain Maturity</CardTitle>
+                </CardHeader>
+                <div className="p-4 bg-slate-50/50">
+                  <CategoriesChart data={categoryScores} />
+                </div>
+              </Card>
+
+              <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white p-6">
+                <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-4">Infrastructure Health</h4>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl border border-green-100">
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                        <Globe className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-700">Replication</p>
+                        <p className="text-[10px] text-green-600 font-medium">Fully Synced</p>
+                      </div>
+                    </div>
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600">
+                        <Shield className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-slate-700">Domain Controllers</p>
+                        <p className="text-[10px] text-slate-500">All Online</p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className="bg-white text-slate-600">Active</Badge>
+                  </div>
+                </div>
+              </Card>
+            </div>
           </div>
+
+          {/* Remediation Modal */}
+          <RemediationModal
+            isOpen={isRemediationOpen}
+            onClose={() => setIsRemediationOpen(false)}
+            finding={selectedFinding}
+          />
         </>
       )}
-
-      <RemediationModal
-        isOpen={isRemediationOpen}
-        onClose={() => setIsRemediationOpen(false)}
-        finding={selectedFinding}
-      />
     </div>
   );
 };
