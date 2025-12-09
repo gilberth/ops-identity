@@ -2853,62 +2853,63 @@ async function processAssessmentData(assessmentId, jsonData) {
       ['failed', assessmentId]
     );
   }
+}
 
 
 
 
-  // Authentik Setup Endpoint
-  app.post('/api/setup', async (req, res) => {
-    try {
-      const { authentik_url, api_token, app_url } = req.body;
+// Authentik Setup Endpoint
+app.post('/api/setup', async (req, res) => {
+  try {
+    const { authentik_url, api_token, app_url } = req.body;
 
-      if (!authentik_url || !api_token || !app_url) {
-        return res.status(400).json({ success: false, error: 'All fields are required' });
-      }
-
-      const setup = new WebAuthentikSetup(authentik_url, api_token, app_url);
-      const result = await setup.setup();
-
-      if (result.success) {
-        res.json({
-          success: true,
-          message: 'Configuration completed successfully!',
-          client_id: result.client_id,
-          redirect_uri: result.redirect_uri,
-          next_step: 'Restart the application to apply changes'
-        });
-      } else {
-        res.status(400).json({
-          success: false,
-          error: result.error || 'Unknown error',
-          step: result.step
-        });
-      }
-    } catch (error) {
-      console.error('Setup error:', error);
-      res.status(500).json({ success: false, error: `Setup failed: ${error.message}` });
+    if (!authentik_url || !api_token || !app_url) {
+      return res.status(400).json({ success: false, error: 'All fields are required' });
     }
-  });
 
-  // Health Check
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'online',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV
-    });
-  });
+    const setup = new WebAuthentikSetup(authentik_url, api_token, app_url);
+    const result = await setup.setup();
 
-  // Serve static files from 'public' directory
-  app.use(express.static(path.join(__dirname, 'public')));
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Configuration completed successfully!',
+        client_id: result.client_id,
+        redirect_uri: result.redirect_uri,
+        next_step: 'Restart the application to apply changes'
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || 'Unknown error',
+        step: result.step
+      });
+    }
+  } catch (error) {
+    console.error('Setup error:', error);
+    res.status(500).json({ success: false, error: `Setup failed: ${error.message}` });
+  }
+});
 
-  // Handle React routing, return all requests to React app
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Health Check
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'online',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV
   });
+});
 
-  // Start Server
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
+// Serve static files from 'public' directory
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Handle React routing, return all requests to React app
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Start Server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
