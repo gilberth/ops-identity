@@ -385,7 +385,11 @@ function validateFindings(findings, data, category) {
     if (item.DisplayName) validNames.add(item.DisplayName.toLowerCase());
     if (item.UserPrincipalName) validNames.add(item.UserPrincipalName.toLowerCase()); // Add UPN
     if (item.GpoId) validNames.add(item.GpoId.toLowerCase());
-    // For groups or computers sometimes just Name is used
+    // Extended keys for other categories (Replication, DNS, ACLs, etc)
+    const extraKeys = ['Source', 'Destination', 'Partner', 'Server', 'HostName', 'Id', 'ZoneName', 'Identity', 'Group', 'Account', 'Principal', 'cn', 'CN', 'name'];
+    extraKeys.forEach(k => {
+      if (item[k]) validNames.add(item[k].toString().toLowerCase());
+    });
   });
 
   const validatedFindings = [];
