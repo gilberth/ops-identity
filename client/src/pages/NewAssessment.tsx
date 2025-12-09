@@ -3491,6 +3491,61 @@ function Find-RogueDHCPServers {
     }
 }
 
+function Get-AllDNSRecords {
+    Write-Host "\`n[*] Collecting All DNS Records..." -ForegroundColor Green
+    $allRecords = @()
+
+    if (-not (Get-Module -ListAvailable -Name DnsServer)) {
+        Write-Host "[!] DnsServer module not available. Skipping detailed record collection." -ForegroundColor Yellow
+        return @()
+    }
+
+    try {
+        $zones = Get-DnsServerZone -ComputerName $env:COMPUTERNAME -ErrorAction SilentlyContinue
+        
+        foreach ($zone in $zones) {
+            Write-Host "    Processing zone: $($zone.ZoneName)" -ForegroundColor Gray
+            try {
+                $records = Get-DnsServerResourceRecord -ComputerName $env:COMPUTERNAME -ZoneName $zone.ZoneName -ErrorAction SilentlyContinue
+                foreach ($record in $records) {
+                    $recordData = @{
+                        Zone = $zone.ZoneName
+                        HostName = $record.HostName
+                        Type = $record.RecordType
+                        Data = $null
+                        Timestamp = if ($record.Timestamp) { $record.Timestamp } else { $null }
+                        TTL = $record.TimeToLive
+                    }
+
+                    # Extract data based on record type
+                    if ($record.RecordData.IPv4Address) { $recordData.Data = $record.RecordData.IPv4Address.IPAddressToString }
+                    elseif ($record.RecordData.NameServer) { $recordData.Data = $record.RecordData.NameServer }
+                    elseif ($record.RecordData.MailExchange) { $recordData.Data = $record.RecordData.MailExchange }
+                    elseif ($record.RecordData.PtrDomainName) { $recordData.Data = $record.RecordData.PtrDomainName }
+                    elseif ($record.RecordData.Cname) { $recordData.Data = $record.RecordData.Cname }
+                    elseif ($record.RecordData.Txt) { $recordData.Data = $record.RecordData.Txt }
+                    else { 
+                        # Fallback for other types
+                        if ($record.RecordData) {
+                            $recordData.Data = $record.RecordData.ToString() 
+                        }
+                    }
+
+                    $allRecords += $recordData
+                }
+            } catch {
+                Write-Host "[!] Error listing records for zone $($zone.ZoneName): $_" -ForegroundColor DarkGray
+            }
+        }
+
+        Write-Host "[+] Collected $($allRecords.Count) DNS records across $($zones.Count) zones" -ForegroundColor Green
+        return $allRecords
+    } catch {
+        Write-Host "[!] Error collecting DNS records: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
         # =============================================================================
         # MAIN DATA COLLECTION
         # =============================================================================
