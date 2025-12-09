@@ -206,6 +206,13 @@ async function analyzeCategory(assessmentId, category, data, provider, model, ap
   try {
     await addLog(assessmentId, 'info', `Starting AI analysis for ${category}...`, category);
 
+    // CRITICAL: Prevent hallucinations on empty datasets
+    if (!data || data.length === 0) {
+      console.log(`[${timestamp()}] [AI] ${category}: empty dataset (after filtering), skipping analysis to prevent hallucinations.`);
+      await addLog(assessmentId, 'info', `Skipping ${category} (no risk objects found).`, category);
+      return [];
+    }
+
     // Get AI configuration
     const provider = (await getConfig('ai_provider')) || 'openai';
     const model = (await getConfig('ai_model')) || 'gpt-4o-mini';
