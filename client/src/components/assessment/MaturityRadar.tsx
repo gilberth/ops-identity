@@ -38,7 +38,7 @@ export const MaturityRadar = ({ findings }: MaturityRadarProps) => {
     return (
         <Card className="h-full">
             <CardHeader>
-                <CardTitle>Nivel de Madurez</CardTitle>
+                <CardTitle>Arquitectura y Resiliencia</CardTitle>
             </CardHeader>
             <CardContent className="h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">

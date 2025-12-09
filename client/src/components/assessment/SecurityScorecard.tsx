@@ -34,7 +34,7 @@ export const SecurityScorecard = ({ findings }: SecurityScorecardProps) => {
             <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                     <Shield className="h-5 w-5" />
-                    Security Scorecard
+                    Identity Hygiene Scorecard
                 </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col items-center justify-center py-6">

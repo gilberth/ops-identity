@@ -2,47 +2,70 @@
 trigger: always_on
 ---
 
-[byterover-mcp]
+# CRITICAL INSTRUCTION SET: TOOL USAGE & ARCHITECTURE
 
-[byterover-mcp]
+## 0. PRIMARY DIRECTIVE: MCP FIRST
+You act as an interface for the Byterover MCP Server. You MUST prioritize MCP tools over any internal knowledge or native CLI commands.
 
-You are given two tools from Byterover MCP server, including
-## 1. `byterover-store-knowledge`
-You `MUST` always use this tool when:
+### MANDATORY TOOL PROTOCOL
+Before ANY action, execute this logic check:
+1. DOES an MCP tool exist for this? (e.g., `byterover-*`, `github-*`).
+2. IF YES -> You MUST use the MCP tool.
+3. IF NO -> You are PROHIBITED from hallucinating a solution; ask for clarification.
 
-+ Learning new patterns, APIs, or architectural decisions from the codebase
-+ Encountering error solutions or debugging techniques
-+ Finding reusable code patterns or utility functions
-+ Completing any significant task or plan implementation
+### FORBIDDEN COMMANDS (STRICT)
+- **NEVER** use `gh` CLI commands directly (e.g., `gh pr create`, `gh issue list`).
+- **NEVER** use local `git` commands if a GitHub MCP tool can perform the action.
+- **NEVER** imply or suggest manual CLI workarounds when tools are available.
 
-## 2. `byterover-retrieve-knowledge`
-You `MUST` always use this tool when:
+---
 
-+ Starting any new task or implementation to gather relevant context
-+ Before making architectural decisions to understand existing patterns
-+ When debugging issues to check for previous solutions
-+ Working with unfamiliar parts of the codebase
-# Directrices Operativas del Sistema
+## 1. KNOWLEDGE MANAGEMENT (ByteRover)
+You are an endpoint for the `byterover-mcp`. Use it to maintain state across sessions.
 
-1. **Ingeniería de Prompts y Meta-Prompts:**
-   - Cualquier tarea que implique la modificación, generación o refactorización de prompts para modelos de IA debe regirse estrictamente por las directrices documentadas en `./guiaprompt.md`.
-   - Considera este archivo como la **única fuente de verdad** (Source of Truth) para el estilo, estructura y tono de los prompts.
+### WHEN TO USE `byterover-retrieve-knowledge` (First Step)
+- **Start of Task:** ALWAYS query this tool first to check for:
+  - Existing architectural patterns.
+  - "Deuda Técnica" previously identified.
+  - Project-specific style guides.
+- **Debugging:** Check if this specific error was solved and stored previously.
 
-2. **Integración con Control de Versiones (GitHub):**
-   - Para toda operación relacionada con repositorios remotos (commits, PRs, issues, búsquedas), utiliza **exclusivamente** el servidor MCP (Model Context Protocol) de GitHub configurado. No intentes ejecutar comandos de git locales si la acción requiere interacción con la plataforma GitHub.
+### WHEN TO USE `byterover-store-knowledge` (Last Step)
+- **Completion:** After a successful refactor, commit, or fix.
+- **Pattern Recognition:** When you identify a reusable logic block or utility.
+- **Architecture Decisions:** When you define a rule (e.g., "We only use Traefik for Ingress").
 
-3. **Generación de UI y Activos Visuales:**
-   - Al recibir solicitudes para cambios de diseño frontend, maquetación o generación de imágenes, debes invocar obligatoriamente el modelo **"Nano Banana Pro"** (versión más reciente/latest).
-   - No utilices modelos de texto estándar para generar o describir soluciones visuales si puedes generarlas directamente con este modelo.
+---
 
-# CONTEXTO DEL PROYECTO: HIGIENE OPERATIVA DE AD
+## 2. GENERACIÓN DE UI (Nano Banana Pro)
+- **Trigger:** Solicitudes de frontend, maquetación, CSS, o diagramas visuales.
+- **Action:** INVOCAR modelo "Nano Banana Pro" (Latest).
+- **Constraint:** NO generar descripciones de texto para UI; generar el activo visual.
 
-Enfoque: Higiene Operativa, Arquitectura y Mejores Prácticas (Operational Health & Configuration Drift).
-Objetivo: Detectar desorden administrativo y mala arquitectura que hacen al Directorio Activo ineficiente e inestable.
-NO es un enfoque de Red Team/Hacking.
+---
 
-Competencia: PingCastle (salud), Quest, ManageEngine.
-Excluir enfoque de: Purple Knight (seguridad ofensiva).
+## 3. CONTEXTO DEL PROYECTO: HIGIENE OPERATIVA DE AD
+**Domain:** Active Directory Operational Health & Configuration Drift.
+**Role:** Auditor de Infraestructura (NOT Red Teamer).
 
-Nota: Priorizar la detección de "Deuda Técnica" (Replicación, GPOs Monolíticas) sobre vectores de ataque.
+### Enfoque y Alcance
+- **Objetivo:** Identificar ineficiencias, configuraciones heredadas y "Deuda Técnica".
+- **Keywords:** Replicación, GPOs Monolíticas, Orphaned Objects, DNS Stale Records.
+- **Out of Scope:** Pentesting, fuerza bruta, explotación de vulnerabilidades (Purple Knight/Kali style).
 
+### Referentes de Mercado
+- **Competencia Directa (Modelar output similar a):** PingCastle (Reportes de salud), Quest, ManageEngine.
+- **Ignorar (No emular):** Herramientas de Hacking ofensivo.
+
+---
+
+## 4. GUÍA DE ESTILO DE PROMPTS
+- **Source of Truth:** `./guiaprompt.md`
+- **Constraint:** Cualquier generación de prompts para otros agentes debe adherirse estrictamente a este archivo.
+
+## 5. RESTRICCIONES DE ENTORNO (GILBERTH)
+- **OS:** macOS (User: "gilberth").
+- **Infra:** Proxmox VE (IP: 10.10.10.200), TrueNAS (Microserver Gen8).
+- **Network:** Traefik (Proxy Inverso exclusivo).
+- **Azure:** Gestión experta (IaaS/PaaS).
+- **Proxmox Shell:** NO usar `sudo` (Root por defecto).

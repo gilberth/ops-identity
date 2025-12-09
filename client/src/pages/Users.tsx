@@ -36,7 +36,8 @@ const Users = () => {
             // Expected structure: data.users or data.Identity info. 
             // Depending on the collector script, it might be in different keys.
             // We will look for common keys.
-            const userList = data.users || data.Users || [];
+            // The PowerShell script exports as 'Users'
+            const userList = data.Users || data.users || [];
 
             // If raw data is flat or different, we might need to adjust.
             // Assuming standard AD Collector format.

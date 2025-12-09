@@ -29,7 +29,8 @@ const GPOAnalysis = () => {
             const data = await api.getAssessmentData(latestId);
 
             // Attempt to find GPO data in common keys
-            const gpoList = data.gpos || data.Gpo || data.GroupPolicy || [];
+            // The PowerShell script exports as 'GPOs', so we should check that first
+            const gpoList = data.GPOs || data.gpos || data.Gpo || data.GroupPolicy || [];
             setGpos(Array.isArray(gpoList) ? gpoList : []);
 
         } catch (error) {
@@ -50,10 +51,18 @@ const GPOAnalysis = () => {
 
     // Calculate stats
     const totalGpos = gpos.length;
-    // Heuristic: if filtering implies links check for LinkedOUs or similar
-    const unlinkedGpos = gpos.filter(g => !g.LinkedOUs || g.LinkedOUs.length === 0).length;
-    // Heuristic: check for some 'status' or 'consistency' field if available, or just mock it for now if data is missing
-    const complianceIssues = gpos.filter(g => g.Status === "Disabled" || g.sysvol === "Orphaned").length;
+    // Heuristic: check for Links (NewAssessment.tsx) or LinkedOUs (legacy) to determine unlinked status
+    const unlinkedGpos = gpos.filter(g => {
+        const links = g.Links || g.LinkedOUs || [];
+        return links.length === 0;
+    }).length;
+
+    // Heuristic: check for disabled status or version mismatch
+    const complianceIssues = gpos.filter(g => {
+        const status = g.GpoStatus || g.Status || "";
+        const isMismatch = (g.UserVersionDS && g.UserVersionSysvol && g.UserVersionDS !== g.UserVersionSysvol);
+        return status === "Disabled" || status === "AllSettingsDisabled" || isMismatch;
+    }).length;
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -131,8 +140,8 @@ const GPOAnalysis = () => {
                                     <TableHead className="pl-8 h-12">GPO Name</TableHead>
                                     <TableHead>Status</TableHead>
                                     <TableHead>Linked OUs</TableHead>
-                                    <TableHead>Version</TableHead>
-                                    <TableHead>Sysvol Status</TableHead>
+                                    <TableHead>Version (DS)</TableHead>
+                                    <TableHead>Replication Status</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -147,13 +156,15 @@ const GPOAnalysis = () => {
                                                 {gpo.GpoStatus || gpo.status || "Unknown"}
                                             </Badge>
                                         </TableCell>
-                                        <TableCell>{gpo.LinkedOUs ? gpo.LinkedOUs.length : (gpo.linkedOUs || 0)}</TableCell>
-                                        <TableCell>{gpo.UserVersion?.Version || gpo.version || "-"}</TableCell>
+                                        <TableCell>{(gpo.Links || gpo.LinkedOUs || []).length}</TableCell>
+                                        <TableCell>{gpo.UserVersionDS || gpo.version || "-"}</TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-2">
-                                                {/* Mocking sysvol status if not present, as it's complex to check remotely without specific data */}
-                                                <CheckCircle className="h-4 w-4 text-green-500" />
-                                                Synced
+                                                {(gpo.UserVersionDS && gpo.UserVersionSysvol && gpo.UserVersionDS !== gpo.UserVersionSysvol) ? (
+                                                    <span className="text-red-500 flex items-center gap-1 text-sm font-medium"><AlertTriangle className="h-3 w-3" /> Mismatch</span>
+                                                ) : (
+                                                    <span className="text-green-600 flex items-center gap-1 text-sm font-medium"><CheckCircle className="h-3 w-3" /> Synced</span>
+                                                )}
                                             </div>
                                         </TableCell>
                                     </TableRow>
