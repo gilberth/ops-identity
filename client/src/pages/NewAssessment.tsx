@@ -2644,8 +2644,8 @@ function Test-TrustRelationshipsHealth {
             # Test 2: Test-ADTrust (if available and direction allows)
             if ($trust.Direction -in @('Outbound', 'Bidirectional') -and $trustStatus.ValidationTests.DNSResolution -eq "OK") {
                 try {
-                    # This validates the trust password and connectivity
-                    $testResult = Test-ADTrust -Identity $trust.Target -ErrorAction Stop
+                    # This validates the trust password and connectivity using secure channel
+                    $testResult = Test-ComputerSecureChannel -Server $trust.Target -ErrorAction Stop
                     $trustStatus.ValidationTests.TrustValidation = "OK"
                 } catch {
                     $trustStatus.ValidationTests.TrustValidation = "FAILED"
@@ -2794,7 +2794,7 @@ function Find-OrphanedTrusts {
             # Step 3: Trust Validation (if outbound)
             if ($trust.Direction -in @('Outbound', 'Bidirectional') -and $dnsResolved) {
                 try {
-                    $testTrust = Test-ADTrust -Identity $trust.Target -ErrorAction Stop
+                    $testTrust = Test-ComputerSecureChannel -Server $trust.Target -ErrorAction Stop
                     $trustValidation.ValidationSteps += @{
                         Step = "Trust Validation"
                         Result = "OK"
