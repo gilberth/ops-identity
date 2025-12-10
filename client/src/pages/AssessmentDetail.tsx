@@ -368,8 +368,14 @@ const AssessmentDetail = () => {
       try {
         rawDataResult = await api.getAssessmentData(id);
         setRawData(rawDataResult);
-      } catch (error) {
-        console.log('No raw data yet - file not uploaded or processed');
+      } catch (error: any) {
+        // 404 is expected for new assessments without uploaded data
+        if (error.message?.includes('404') || error.status === 404) {
+          console.log('[INFO] Waiting for data upload... (404 expected)');
+        } else {
+          console.warn('Error fetching raw data:', error);
+        }
+        setRawData(null); // Ensure rawData is null if fetch fails
       }
 
       // Load findings
