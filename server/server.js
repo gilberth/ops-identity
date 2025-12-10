@@ -2651,13 +2651,15 @@ app.get('/api/debug/assessments/:id/validate', async (req, res) => {
     const validNames = new Set();
     const categories = ['Users', 'Computers', 'Groups', 'GPOs', 'DNSConfiguration'];
 
-    // Naive extraction for validation
+    // Deep Grounding Extraction (Matches main app logic)
     const extractNames = (obj) => {
       if (!obj) return;
-      if (obj.SamAccountName) validNames.add(obj.SamAccountName.toLowerCase());
-      if (obj.Name) validNames.add(obj.Name.toLowerCase());
-      if (obj.DNSHostName) validNames.add(obj.DNSHostName.toLowerCase());
-      if (obj.DistinguishedName) validNames.add(obj.DistinguishedName.toLowerCase());
+      // Add ALL string values to allowlist
+      Object.values(obj).forEach(val => {
+        if (typeof val === 'string' && val.length > 2 && val.length < 100) {
+          validNames.add(val.toLowerCase());
+        }
+      });
     };
 
     categories.forEach(cat => {
