@@ -128,6 +128,8 @@ $ErrorActionPreference = "Continue"
 
 # Force TLS 1.2 (Crucial for older Windows Servers)
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# Ignore SSL Certificate Errors (Self-Signed / Private CA fix)
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
 
 # Check PowerShell version
 Write-Host "[*] Checking PowerShell version..." -ForegroundColor Green
@@ -1353,7 +1355,7 @@ function Get-DNSScavengingStatus {
                     $checkMethod = "Unknown"
 
                     if ($dnsModuleAvailable) {
-                        $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                        $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
                         if ($dnsServer) {
                             $scavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
                             $scavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
@@ -1804,7 +1806,7 @@ function Get-DNSConfiguration {
         } else {
                         # MODERN POWERSHELL (RSAT)
                         # Get DNS Server Settings
-            $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+            $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
 
             if ($dnsServer) {
                         # Global DNS Server Settings
@@ -1987,8 +1989,8 @@ function Get-DNSConfiguration {
                         
                         # Check DNS cache
                 try {
-                    $cacheStats = Get-DnsServerStatistics -ComputerName $dc.HostName -ErrorAction SilentlyContinue
-                    if ($cacheStats) {
+                    $cacheStats = Get-DnsServerStatistics -ComputerName $dc.HostName -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+                    if ($cacheStats -and $dnsInfo.GlobalSettings.Count -gt 0) {
                         $dnsInfo.GlobalSettings[-1].CacheStats = @{
                             CacheHits = $cacheStats.CacheHits
                                     CacheMisses = $cacheStats.CacheMisses
@@ -2528,7 +2530,7 @@ function Get-LingeringObjectsRisk {
         foreach ($dc in $allDCs) {
             try {
                 $rootDSE = Get-ADRootDSE -Server $dc.HostName
-                $usnValues += @{
+                $usnValues += [PSCustomObject]@{
                     DC = $dc.Name
                     HighestUSN = [int64]$rootDSE.highestCommittedUSN
                 }
