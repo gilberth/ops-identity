@@ -108,7 +108,9 @@ Write-Host ""
 if (-not $OfflineMode) {
     Write-Host "[*] Testing connectivity to API..." -ForegroundColor Cyan
     try {
-        $test = Invoke-WebRequest -Uri "$ApiEndpoint" -Method Options -TimeoutSec 5 -ErrorAction SilentlyContinue
+        # Test connectivity to the base domain (more reliable than API OPTIONS)
+        $baseUri = $ApiEndpoint -replace "/api/.*", ""
+        $test = Invoke-WebRequest -Uri "$baseUri" -Method Head -TimeoutSec 5 -ErrorAction SilentlyContinue
         Write-Host "[+] Connection successful" -ForegroundColor Green
     } catch {
         Write-Host "[!] WARNING: Could not connect to API endpoint ($ApiEndpoint)" -ForegroundColor Yellow
