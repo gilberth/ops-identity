@@ -7,7 +7,7 @@ import { ArrowLeft, Download, Shield, Users, FileText, AlertTriangle, RefreshCw,
 import SeverityBadge from "@/components/assessment/SeverityBadge";
 import AnalysisProgress from "@/components/assessment/AnalysisProgress";
 import { AssessmentLogs } from "@/components/assessment/AssessmentLogs";
-import { api } from "@/utils/api";
+import { api, getApiEndpoint } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
 import { generateRawDataPdf } from "@/lib/rawDataPdfGenerator";
 import { generateReport } from "@/lib/reportGenerator";
@@ -129,7 +129,7 @@ const AssessmentDetail = () => {
         formData.append('file', file);
         formData.append('assessmentId', id);
 
-        const response = await fetch(`${vpsUrl}/api/upload-large-file`, {
+        const response = await fetch(`${getApiEndpoint()}/api/upload-large-file`, {
           method: 'POST',
           body: formData,
         });
@@ -171,7 +171,7 @@ const AssessmentDetail = () => {
             console.log(`[UPLOAD] Sending ${fileSizeMB.toFixed(2)}MB to VPS...`);
 
             // Send directly to VPS
-            const response = await fetch(`${vpsUrl}/api/process-assessment`, {
+            const response = await fetch(`${getApiEndpoint()}/api/process-assessment`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
