@@ -45,6 +45,9 @@ const App = () => (
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
+            <div className="fixed bottom-0 right-0 p-2 text-xs text-muted-foreground bg-background/80 backdrop-blur-sm border-t border-l rounded-tl-md z-50">
+              v1.3.0 (Build {new Date().toLocaleDateString()})
+            </div>
           </BrowserRouter>
         </TooltipProvider>
       </ClientProvider>
