@@ -1823,7 +1823,7 @@ function Get-DNSConfiguration {
                             AddressAnswerLimit = $dnsServer.ServerSetting.AddressAnswerLimit
                             AllowUpdate = $dnsServer.ServerSetting.AllowUpdate
                             AutoCacheUpdate = $dnsServer.ServerSetting.AutoCacheUpdate
-                            BootMethod = $dnsServer.ServerSetting.BootMethod.ToString()
+                            BootMethod = "$($dnsServer.ServerSetting.BootMethod)"
                             DefaultAgingState = $dnsServer.ServerSetting.DefaultAgingState
                             DefaultNoRefreshInterval = $dnsServer.ServerSetting.DefaultNoRefreshInterval
                             DefaultRefreshInterval = $dnsServer.ServerSetting.DefaultRefreshInterval
