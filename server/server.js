@@ -88,6 +88,15 @@ function sanitizeText(text) {
   return str.replace(/\x00/g, '').replace(/[\x01-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
 }
 
+// Helper: Chunk array
+function chunkArray(array, size) {
+  const result = [];
+  for (let i = 0; i < array.length; i += size) {
+    result.push(array.slice(i, i + size));
+  }
+  return result;
+}
+
 // Helper: Get system configuration
 // Helper: Get system configuration with Env Fallback
 async function getConfig(key) {
@@ -377,15 +386,30 @@ function validateFindings(findings, data, category) {
   // Create a Set of all valid object identifiers for O(1) lookup
   const validNames = new Set();
 
-  data.forEach(item => {
-    // DEEP GROUNDING: Add ALL string values from the object to the allowlist
-    // This is more robust than guessing specific keys (DisplayName vs Name vs GpoName...)
-    Object.values(item).forEach(val => {
-      if (typeof val === 'string' && val.length > 2 && val.length < 100) {
-        validNames.add(val.toLowerCase());
-      }
-    });
-  });
+  // Recursive function to extract all strings from an object
+  const extractStrings = (obj) => {
+    if (!obj) return;
+
+    if (typeof obj === 'string') {
+      if (obj.length > 2 && obj.length < 100) validNames.add(obj.toLowerCase());
+      return;
+    }
+
+    if (Array.isArray(obj)) {
+      obj.forEach(item => extractStrings(item));
+      return;
+    }
+
+    if (typeof obj === 'object') {
+      Object.keys(obj).forEach(key => {
+        // Add keys as well, as they often contain DC names or hostnames
+        if (key.length > 2 && key.length < 100) validNames.add(key.toLowerCase());
+        extractStrings(obj[key]);
+      });
+    }
+  };
+
+  data.forEach(item => extractStrings(item));
 
   const validatedFindings = [];
 
@@ -2652,14 +2676,26 @@ app.get('/api/debug/assessments/:id/validate', async (req, res) => {
     const categories = ['Users', 'Computers', 'Groups', 'GPOs', 'DNSConfiguration'];
 
     // Deep Grounding Extraction (Matches main app logic)
+    // Recursive Deep Grounding Extraction
     const extractNames = (obj) => {
       if (!obj) return;
-      // Add ALL string values to allowlist
-      Object.values(obj).forEach(val => {
-        if (typeof val === 'string' && val.length > 2 && val.length < 100) {
-          validNames.add(val.toLowerCase());
-        }
-      });
+
+      if (typeof obj === 'string') {
+        if (obj.length > 2 && obj.length < 100) validNames.add(obj.toLowerCase());
+        return;
+      }
+
+      if (Array.isArray(obj)) {
+        obj.forEach(item => extractNames(item));
+        return;
+      }
+
+      if (typeof obj === 'object') {
+        Object.keys(obj).forEach(key => {
+          if (key.length > 2 && key.length < 100) validNames.add(key.toLowerCase());
+          extractNames(obj[key]);
+        });
+      }
     };
 
     categories.forEach(cat => {
