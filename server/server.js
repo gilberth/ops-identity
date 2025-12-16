@@ -208,27 +208,40 @@ function extractCategoryData(jsonData, categoryName) {
     }
   }
 
+  // =============================================================================
+  // SMART FILTERING v1.6.0 - Based on Industry Standards (CIS, PingCastle, Microsoft)
+  // =============================================================================
+
   // Smart Filtering for GPOs (Focus on Problematic GPOs)
+  // Source: CIS Benchmark, PingCastle, Microsoft Best Practices
   if (categoryName.toLowerCase() === 'gpos' && result.length > 0) {
     const originalCount = result.length;
     result = result.filter(gpo => {
-      // Count settings if available
+      // Threshold: CIS recommends keeping GPOs focused and small
       const settingsCount = gpo.SettingsCount || gpo.TotalSettings || 0;
       const hasNoLinks = !gpo.Links || gpo.Links.length === 0 || gpo.LinksTo?.length === 0;
       const isDisabled = gpo.GpoStatus === 'AllSettingsDisabled' || gpo.GpoStatus === 'UserSettingsDisabled' || gpo.GpoStatus === 'ComputerSettingsDisabled';
       const hasVersionMismatch = gpo.UserVersionDS !== gpo.UserVersionSysvol || gpo.ComputerVersionDS !== gpo.ComputerVersionSysvol;
-      const isMonolithic = settingsCount > 50; // GPOs con más de 50 settings son problemáticas
+      // CIS: GPOs should be small and focused, >30 settings indicates sprawl
+      const isMonolithic = settingsCount > 30;
+      // PingCastle: Check for non-admin users with GPO edit permissions
       const hasDangerousPermissions = gpo.Permissions?.some(p =>
         p.Permission === 'GpoEditDeleteModifySecurity' &&
-        !['Domain Admins', 'Enterprise Admins', 'Admins. del dominio', 'Administradores de empresas'].includes(p.Trustee)
+        !['Domain Admins', 'Enterprise Admins', 'Admins. del dominio', 'Administradores de empresas', 'SYSTEM'].includes(p.Trustee)
       );
+      // NEW: GPO has WMI filter (complexity indicator)
+      const hasWMIFilter = gpo.WmiFilter && gpo.WmiFilter !== '';
+      // NEW: GPO modified recently but not linked (potential test GPO left behind)
+      const isRecentlyModified = gpo.ModificationTime && (Date.now() - new Date(gpo.ModificationTime).getTime()) < 30 * 24 * 60 * 60 * 1000;
+      const isOrphanedRecent = hasNoLinks && isRecentlyModified;
 
       return (
-        hasNoLinks || // GPOs huérfanas
+        hasNoLinks || // GPOs huérfanas (PingCastle rule)
         isDisabled || // GPOs deshabilitadas
         hasVersionMismatch || // Problemas de replicación SYSVOL
-        isMonolithic || // GPOs monolíticas
-        hasDangerousPermissions // Permisos peligrosos
+        isMonolithic || // GPOs monolíticas (CIS)
+        hasDangerousPermissions || // Permisos peligrosos (PingCastle)
+        isOrphanedRecent // Recently created but not linked
       );
     });
 
@@ -238,16 +251,19 @@ function extractCategoryData(jsonData, categoryName) {
   }
 
   // Smart Filtering for DNS (Focus on Issues)
+  // Source: Microsoft DNS Best Practices, CIS
   if (categoryName.toLowerCase() === 'dns' && result.length > 0) {
-    // For DNS, we keep the full config but filter security issues if there's a SecurityIssues array
-    // DNS data structure is different, so we handle it specially
-    if (result[0]?.SecurityIssues) {
-      // Keep only if there are security issues
+    if (result[0]?.SecurityIssues || result[0]?.ScavengingEnabled !== undefined) {
       const originalCount = result.length;
       result = result.filter(item =>
         (item.SecurityIssues && item.SecurityIssues.length > 0) ||
-        item.ScavengingEnabled === false ||
-        item.DynamicUpdate === 'NonsecureAndSecure' // Insecure dynamic updates
+        item.ScavengingEnabled === false || // CIS: Scavenging should be enabled
+        item.DynamicUpdate === 'NonsecureAndSecure' || // Microsoft: Insecure dynamic updates
+        item.DynamicUpdate === 'Nonsecure' ||
+        // NEW: Public DNS forwarders without conditional
+        (item.Forwarders && item.Forwarders.some(f => f.includes('8.8.8.8') || f.includes('1.1.1.1'))) ||
+        // NEW: Zone transfer to any
+        item.ZoneTransfer === 'Any'
       );
       if (originalCount !== result.length) {
         console.log(`[SmartFilter] 'DNS' category reduced from ${originalCount} to ${result.length} items`);
@@ -256,6 +272,7 @@ function extractCategoryData(jsonData, categoryName) {
   }
 
   // Smart Filtering for DCHealth (Focus on Unhealthy DCs)
+  // Source: Microsoft TechNet, Quest AD Health
   if (categoryName.toLowerCase() === 'dchealth' && result.length > 0) {
     const originalCount = result.length;
     result = result.filter(dc => {
@@ -263,13 +280,18 @@ function extractCategoryData(jsonData, categoryName) {
       const hasWarnings = dc.Warnings && dc.Warnings.length > 0;
       const isUnhealthy = dc.OverallHealth === 'Critical' || dc.OverallHealth === 'Warning' || dc.Health === 'Unhealthy';
       const hasServiceIssues = dc.ServicesStatus && Object.values(dc.ServicesStatus).some(s => s !== 'Running');
-      const hasLowDiskSpace = dc.FreeDiskSpaceGB && dc.FreeDiskSpaceGB < 10;
-      const hasHighLatency = dc.ADResponseTimeMs && dc.ADResponseTimeMs > 500;
+      // Adjusted: 5GB is more critical threshold for DC (SYSVOL needs space)
+      const hasLowDiskSpace = dc.FreeDiskSpaceGB && dc.FreeDiskSpaceGB < 5;
+      // NEW: DC uptime issues (too short = instability, too long = missing patches)
+      const hasUptimeIssue = (dc.UptimeDays && dc.UptimeDays < 1) || (dc.UptimeDays && dc.UptimeDays > 90);
+      // NEW: DC running legacy OS (EOL)
+      const isLegacyOS = dc.OperatingSystem && (dc.OperatingSystem.includes('2008') || dc.OperatingSystem.includes('2012'));
+      // NEW: DC not a Global Catalog in multi-domain
+      const notGC = dc.IsGlobalCatalog === false;
 
-      return hasErrors || hasWarnings || isUnhealthy || hasServiceIssues || hasLowDiskSpace || hasHighLatency;
+      return hasErrors || hasWarnings || isUnhealthy || hasServiceIssues || hasLowDiskSpace || hasUptimeIssue || isLegacyOS || notGC;
     });
 
-    // If filter removes ALL DCs, keep original (means all healthy - still valuable data)
     if (result.length === 0 && originalCount > 0) {
       result = [{ Summary: 'All Domain Controllers are healthy', HealthyCount: originalCount }];
     }
@@ -280,6 +302,7 @@ function extractCategoryData(jsonData, categoryName) {
   }
 
   // Smart Filtering for Replication (Focus on Failures)
+  // Source: Microsoft TechNet replication best practices
   const replicationCategories = ['replicationhealthalldcs', 'replicationstatus'];
   if (replicationCategories.includes(categoryName.toLowerCase()) && result.length > 0) {
     const originalCount = result.length;
@@ -287,9 +310,15 @@ function extractCategoryData(jsonData, categoryName) {
       const hasFailed = rep.LastReplicationResult !== 0 && rep.LastReplicationResult !== undefined;
       const hasError = rep.Status === 'Failed' || rep.Status === 'Error';
       const isStale = rep.ConsecutiveFailures > 0;
-      const hasHighLatency = rep.LatencyMinutes && rep.LatencyMinutes > 15;
+      // Microsoft: Intrasite should replicate within 5 minutes, intersite within schedule
+      // Using 60 minutes as universal threshold for "concerning" latency
+      const hasHighLatency = rep.LatencyMinutes && rep.LatencyMinutes > 60;
+      // NEW: Replication never succeeded
+      const neverReplicated = rep.LastReplicationSuccess === null || rep.LastReplicationSuccess === undefined;
+      // NEW: USN Rollback detection (critical - Microsoft)
+      const hasUSNRollback = rep.USNRollbackDetected === true;
 
-      return hasFailed || hasError || isStale || hasHighLatency;
+      return hasFailed || hasError || isStale || hasHighLatency || neverReplicated || hasUSNRollback;
     });
 
     if (originalCount !== result.length) {
@@ -298,17 +327,24 @@ function extractCategoryData(jsonData, categoryName) {
   }
 
   // Smart Filtering for Trusts (Focus on Broken/Risky Trusts)
+  // Source: Microsoft Trust Security, PingCastle
   const trustCategories = ['trusthealth', 'orphanedtrusts'];
   if (trustCategories.includes(categoryName.toLowerCase()) && result.length > 0) {
     const originalCount = result.length;
     result = result.filter(trust => {
       const isBroken = trust.ValidationStatus !== 'Healthy' && trust.ValidationStatus !== undefined;
       const hasIssues = trust.Issues && trust.Issues.length > 0;
+      // Microsoft: SID Filtering prevents SID History injection attacks
       const noSIDFiltering = trust.SIDFilteringEnabled === false || trust.SIDFilteringQuarantined === false;
       const isOrphaned = trust.Status === 'ORPHANED' || trust.Status === 'SUSPICIOUS';
+      // Trust password should rotate automatically; >180 days indicates issue
       const oldPassword = trust.PasswordAgeDays && trust.PasswordAgeDays > 180;
+      // NEW: Selective Authentication not enabled (PingCastle P-TrustLogin)
+      const noSelectiveAuth = trust.SelectiveAuthentication === false && trust.TrustType === 'Forest';
+      // NEW: External trust (higher risk than forest trust)
+      const isExternalTrust = trust.TrustType === 'External';
 
-      return isBroken || hasIssues || noSIDFiltering || isOrphaned || oldPassword;
+      return isBroken || hasIssues || noSIDFiltering || isOrphaned || oldPassword || noSelectiveAuth || isExternalTrust;
     });
 
     if (originalCount !== result.length) {
@@ -317,16 +353,24 @@ function extractCategoryData(jsonData, categoryName) {
   }
 
   // Smart Filtering for FSMO Roles (Focus on Issues)
+  // Source: Microsoft FSMO Best Practices, PingCastle
   if (categoryName.toLowerCase() === 'fsmoroleshealth' && result.length > 0) {
     const originalCount = result.length;
     result = result.filter(fsmo => {
       const hasIssues = fsmo.Issues && fsmo.Issues.length > 0;
       const isUnhealthy = fsmo.Health !== 'Healthy' && fsmo.Health !== undefined;
+      // Single Point of Failure (Quest, Microsoft)
       const allOnSingleDC = fsmo.AllFSMOOnSingleDC === true;
-      const hasVMTimeSync = fsmo.PDCTimeSyncSource && (fsmo.PDCTimeSyncSource.includes('VM IC') || fsmo.PDCTimeSyncSource.includes('Hyper-V'));
+      // PingCastle: PDC should sync with external NTP, not VM host
+      const hasVMTimeSync = fsmo.PDCTimeSyncSource && (fsmo.PDCTimeSyncSource.includes('VM IC') || fsmo.PDCTimeSyncSource.includes('Hyper-V') || fsmo.PDCTimeSyncSource.includes('Local CMOS'));
+      // Microsoft: RID Pool exhaustion is critical
       const ridPoolLow = fsmo.RIDPoolStatus?.PercentUsed > 80;
+      // NEW: FSMO holder is not reachable
+      const fsmoUnreachable = fsmo.Reachable === false;
+      // NEW: Infrastructure Master on GC in multi-domain (Microsoft KB)
+      const infraOnGC = fsmo.InfrastructureMasterOnGC === true && fsmo.IsMultiDomain === true;
 
-      return hasIssues || isUnhealthy || allOnSingleDC || hasVMTimeSync || ridPoolLow;
+      return hasIssues || isUnhealthy || allOnSingleDC || hasVMTimeSync || ridPoolLow || fsmoUnreachable || infraOnGC;
     });
 
     if (originalCount !== result.length) {
@@ -335,19 +379,99 @@ function extractCategoryData(jsonData, categoryName) {
   }
 
   // Smart Filtering for Sites (Focus on Topology Issues)
+  // Source: PingCastle S-DC-SubnetMissing, Microsoft AD Sites
   if (categoryName.toLowerCase() === 'sites' && result.length > 0) {
     const originalCount = result.length;
     result = result.filter(site => {
+      // PingCastle S-DC-SubnetMissing
       const hasNoSubnets = !site.Subnets || site.Subnets.length === 0;
+      // DCs should not remain in default site
       const isDefaultSite = site.Name === 'Default-First-Site-Name';
+      // Site without DC is orphaned
       const hasNoDC = !site.DomainControllers || site.DomainControllers.length === 0;
       const hasIssues = site.Issues && site.Issues.length > 0;
+      // NEW: Site link cost issues (very high cost = suboptimal routing)
+      const hasHighCost = site.SiteLinkCost && site.SiteLinkCost > 500;
+      // NEW: Manual bridgehead server (potential SPOF)
+      const hasManualBridgehead = site.HasManualBridgehead === true;
 
-      return hasNoSubnets || isDefaultSite || hasNoDC || hasIssues;
+      return hasNoSubnets || isDefaultSite || hasNoDC || hasIssues || hasHighCost || hasManualBridgehead;
     });
 
     if (originalCount !== result.length) {
       console.log(`[SmartFilter] 'Sites' category reduced from ${originalCount} to ${result.length} items (keeping only problematic sites)`);
+    }
+  }
+
+  // NEW: Smart Filtering for Kerberos (Focus on Security Issues)
+  // Source: MITRE ATT&CK, Microsoft Kerberos Security
+  if (categoryName.toLowerCase() === 'kerberos' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(item => {
+      // MITRE: Weak encryption types enable credential theft
+      const hasWeakEncryption = item.SupportedETypes?.includes('RC4') || item.SupportedETypes?.includes('DES');
+      // CIS: Kerberos delegation issues
+      const hasDelegationIssues = item.DelegationIssues && item.DelegationIssues.length > 0;
+      // Microsoft: TGT lifetime too long
+      const longTGTLifetime = item.MaxTicketAge && item.MaxTicketAge > 10;
+      // NEW: Pre-authentication disabled (AS-REP roasting)
+      const preAuthDisabled = item.PreAuthNotRequired === true;
+
+      return hasWeakEncryption || hasDelegationIssues || longTGTLifetime || preAuthDisabled;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Kerberos' category reduced from ${originalCount} to ${result.length} items`);
+    }
+  }
+
+  // NEW: Smart Filtering for Security category
+  // Source: CIS Benchmark, Microsoft Security Baseline
+  if (categoryName.toLowerCase() === 'security' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(item => {
+      // CIS: Password policy issues
+      const weakPasswordPolicy = item.MinPasswordLength && item.MinPasswordLength < 14;
+      const noPasswordExpiration = item.MaxPasswordAge === 0;
+      // Microsoft: LDAP signing not enforced
+      const noLDAPSigning = item.LDAPSigning === 'None' || item.LDAPSigning === false;
+      // SMBv1 enabled (CVE-2017-0144 EternalBlue)
+      const smbV1Enabled = item.SMBv1Enabled === true;
+      // NTLM not restricted
+      const ntlmNotRestricted = item.NTLMRestriction === 'None' || item.NTLMRestriction === false;
+      // NEW: Audit policy not configured
+      const noAuditPolicy = item.AuditPolicyConfigured === false;
+      // NEW: LAPS not deployed
+      const noLAPS = item.LAPSDeployed === false;
+      // NEW: Credential Guard not enabled
+      const noCredentialGuard = item.CredentialGuardEnabled === false;
+
+      return weakPasswordPolicy || noPasswordExpiration || noLDAPSigning || smbV1Enabled || ntlmNotRestricted || noAuditPolicy || noLAPS || noCredentialGuard;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Security' category reduced from ${originalCount} to ${result.length} items`);
+    }
+  }
+
+  // NEW: Smart Filtering for OUs (Focus on Hygiene Issues)
+  if (categoryName.toLowerCase() === 'ous' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(ou => {
+      // Empty OUs (hygiene)
+      const isEmpty = ou.ObjectCount === 0 || (ou.ChildCount === 0 && ou.ObjectCount === 0);
+      // OU blocking inheritance (shadow IT)
+      const blocksInheritance = ou.BlockInheritance === true;
+      // OU with no GPO linked (potential orphaned OU)
+      const noGPOLinked = !ou.LinkedGPOs || ou.LinkedGPOs.length === 0;
+      // Deep nesting (>5 levels creates complexity)
+      const deepNesting = ou.NestingLevel && ou.NestingLevel > 5;
+
+      return isEmpty || blocksInheritance || deepNesting;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'OUs' category reduced from ${originalCount} to ${result.length} items`);
     }
   }
 
