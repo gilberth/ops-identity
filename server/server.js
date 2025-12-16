@@ -208,6 +208,149 @@ function extractCategoryData(jsonData, categoryName) {
     }
   }
 
+  // Smart Filtering for GPOs (Focus on Problematic GPOs)
+  if (categoryName.toLowerCase() === 'gpos' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(gpo => {
+      // Count settings if available
+      const settingsCount = gpo.SettingsCount || gpo.TotalSettings || 0;
+      const hasNoLinks = !gpo.Links || gpo.Links.length === 0 || gpo.LinksTo?.length === 0;
+      const isDisabled = gpo.GpoStatus === 'AllSettingsDisabled' || gpo.GpoStatus === 'UserSettingsDisabled' || gpo.GpoStatus === 'ComputerSettingsDisabled';
+      const hasVersionMismatch = gpo.UserVersionDS !== gpo.UserVersionSysvol || gpo.ComputerVersionDS !== gpo.ComputerVersionSysvol;
+      const isMonolithic = settingsCount > 50; // GPOs con más de 50 settings son problemáticas
+      const hasDangerousPermissions = gpo.Permissions?.some(p =>
+        p.Permission === 'GpoEditDeleteModifySecurity' &&
+        !['Domain Admins', 'Enterprise Admins', 'Admins. del dominio', 'Administradores de empresas'].includes(p.Trustee)
+      );
+
+      return (
+        hasNoLinks || // GPOs huérfanas
+        isDisabled || // GPOs deshabilitadas
+        hasVersionMismatch || // Problemas de replicación SYSVOL
+        isMonolithic || // GPOs monolíticas
+        hasDangerousPermissions // Permisos peligrosos
+      );
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'GPOs' category reduced from ${originalCount} to ${result.length} items (keeping only problematic GPOs)`);
+    }
+  }
+
+  // Smart Filtering for DNS (Focus on Issues)
+  if (categoryName.toLowerCase() === 'dns' && result.length > 0) {
+    // For DNS, we keep the full config but filter security issues if there's a SecurityIssues array
+    // DNS data structure is different, so we handle it specially
+    if (result[0]?.SecurityIssues) {
+      // Keep only if there are security issues
+      const originalCount = result.length;
+      result = result.filter(item =>
+        (item.SecurityIssues && item.SecurityIssues.length > 0) ||
+        item.ScavengingEnabled === false ||
+        item.DynamicUpdate === 'NonsecureAndSecure' // Insecure dynamic updates
+      );
+      if (originalCount !== result.length) {
+        console.log(`[SmartFilter] 'DNS' category reduced from ${originalCount} to ${result.length} items`);
+      }
+    }
+  }
+
+  // Smart Filtering for DCHealth (Focus on Unhealthy DCs)
+  if (categoryName.toLowerCase() === 'dchealth' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(dc => {
+      const hasErrors = dc.Errors && dc.Errors.length > 0;
+      const hasWarnings = dc.Warnings && dc.Warnings.length > 0;
+      const isUnhealthy = dc.OverallHealth === 'Critical' || dc.OverallHealth === 'Warning' || dc.Health === 'Unhealthy';
+      const hasServiceIssues = dc.ServicesStatus && Object.values(dc.ServicesStatus).some(s => s !== 'Running');
+      const hasLowDiskSpace = dc.FreeDiskSpaceGB && dc.FreeDiskSpaceGB < 10;
+      const hasHighLatency = dc.ADResponseTimeMs && dc.ADResponseTimeMs > 500;
+
+      return hasErrors || hasWarnings || isUnhealthy || hasServiceIssues || hasLowDiskSpace || hasHighLatency;
+    });
+
+    // If filter removes ALL DCs, keep original (means all healthy - still valuable data)
+    if (result.length === 0 && originalCount > 0) {
+      result = [{ Summary: 'All Domain Controllers are healthy', HealthyCount: originalCount }];
+    }
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'DCHealth' category reduced from ${originalCount} to ${result.length} items (keeping only unhealthy DCs)`);
+    }
+  }
+
+  // Smart Filtering for Replication (Focus on Failures)
+  const replicationCategories = ['replicationhealthalldcs', 'replicationstatus'];
+  if (replicationCategories.includes(categoryName.toLowerCase()) && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(rep => {
+      const hasFailed = rep.LastReplicationResult !== 0 && rep.LastReplicationResult !== undefined;
+      const hasError = rep.Status === 'Failed' || rep.Status === 'Error';
+      const isStale = rep.ConsecutiveFailures > 0;
+      const hasHighLatency = rep.LatencyMinutes && rep.LatencyMinutes > 15;
+
+      return hasFailed || hasError || isStale || hasHighLatency;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Replication' category reduced from ${originalCount} to ${result.length} items (keeping only failures)`);
+    }
+  }
+
+  // Smart Filtering for Trusts (Focus on Broken/Risky Trusts)
+  const trustCategories = ['trusthealth', 'orphanedtrusts'];
+  if (trustCategories.includes(categoryName.toLowerCase()) && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(trust => {
+      const isBroken = trust.ValidationStatus !== 'Healthy' && trust.ValidationStatus !== undefined;
+      const hasIssues = trust.Issues && trust.Issues.length > 0;
+      const noSIDFiltering = trust.SIDFilteringEnabled === false || trust.SIDFilteringQuarantined === false;
+      const isOrphaned = trust.Status === 'ORPHANED' || trust.Status === 'SUSPICIOUS';
+      const oldPassword = trust.PasswordAgeDays && trust.PasswordAgeDays > 180;
+
+      return isBroken || hasIssues || noSIDFiltering || isOrphaned || oldPassword;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Trusts' category reduced from ${originalCount} to ${result.length} items (keeping only problematic trusts)`);
+    }
+  }
+
+  // Smart Filtering for FSMO Roles (Focus on Issues)
+  if (categoryName.toLowerCase() === 'fsmoroleshealth' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(fsmo => {
+      const hasIssues = fsmo.Issues && fsmo.Issues.length > 0;
+      const isUnhealthy = fsmo.Health !== 'Healthy' && fsmo.Health !== undefined;
+      const allOnSingleDC = fsmo.AllFSMOOnSingleDC === true;
+      const hasVMTimeSync = fsmo.PDCTimeSyncSource && (fsmo.PDCTimeSyncSource.includes('VM IC') || fsmo.PDCTimeSyncSource.includes('Hyper-V'));
+      const ridPoolLow = fsmo.RIDPoolStatus?.PercentUsed > 80;
+
+      return hasIssues || isUnhealthy || allOnSingleDC || hasVMTimeSync || ridPoolLow;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'FSMORolesHealth' category reduced from ${originalCount} to ${result.length} items`);
+    }
+  }
+
+  // Smart Filtering for Sites (Focus on Topology Issues)
+  if (categoryName.toLowerCase() === 'sites' && result.length > 0) {
+    const originalCount = result.length;
+    result = result.filter(site => {
+      const hasNoSubnets = !site.Subnets || site.Subnets.length === 0;
+      const isDefaultSite = site.Name === 'Default-First-Site-Name';
+      const hasNoDC = !site.DomainControllers || site.DomainControllers.length === 0;
+      const hasIssues = site.Issues && site.Issues.length > 0;
+
+      return hasNoSubnets || isDefaultSite || hasNoDC || hasIssues;
+    });
+
+    if (originalCount !== result.length) {
+      console.log(`[SmartFilter] 'Sites' category reduced from ${originalCount} to ${result.length} items (keeping only problematic sites)`);
+    }
+  }
+
   return result;
 }
 
