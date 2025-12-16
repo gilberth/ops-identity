@@ -1719,85 +1719,48 @@ async function callOpenAI(prompt, model, key) {
         messages: [
           {
             role: 'system',
-            content: `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+            content: `Eres un analista senior de seguridad de Active Directory.
 
-PRINCIPIOS FUNDAMENTALES:
-1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
-2. EVIDENCIA PRIMERO - Si no hay evidencia concreta (count > 0, nombres específicos), NO generes finding
-3. COMANDOS RELEVANTES - Cada comando PowerShell debe estar directamente relacionado con el problema específico
-4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
-5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
+⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
+Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
+El sistema VALIDA y RECHAZA automáticamente cualquier nombre inventado.
+Si inventas nombres como "user1", "test", "ejemplo" → Tu finding será ELIMINADO.
 
-PROCESO DE VALIDACIÓN ANTES DE REPORTAR:
-✓ ¿Los datos muestran el problema claramente?
-✓ ¿El count es > 0 con objetos reales identificados?
-✓ ¿Los comandos PowerShell son específicos y ejecutables?
-✓ ¿La severidad está justificada por el impacto real?
-✓ ¿El finding ayuda al administrador a mejorar la seguridad?
+PRINCIPIOS:
+1. SOLO reporta problemas que existan en los datos proporcionados
+2. Si count = 0 o no hay objetos reales → NO generes finding
+3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
+4. Todo en español excepto comandos técnicos
 
-Si cualquier respuesta es NO, descarta el finding.
-
-FORMATO DE SALIDA JSON OBLIGATORIO:
-Cada finding DEBE incluir estos campos para personal de TI:
-
+FORMATO JSON:
 {
   "findings": [
     {
-      "type_id": "STRING_ID_CONSTANTE (ej: PASSWORD_NEVER_EXPIRES)",
-      "title": "Título específico con número de afectados",
+      "type_id": "PASSWORD_NEVER_EXPIRES",
+      "title": "X usuarios con contraseña que nunca expira",
       "severity": "critical|high|medium|low",
-      "description": "Descripción técnica detallada",
-      "recommendation": "Pasos de remediación ejecutables",
-      "mitre_attack": "T1558.003 - Kerberoasting | T1078 - Valid Accounts | etc",
-      "cis_control": "5.2.1 - Ensure password expiration | CIS Control específico",
-      "impact_business": "Impacto financiero, regulatorio, reputacional específico",
-      "remediation_commands": "Comandos PowerShell copy-paste ready con nombres reales de objetos",
-      "prerequisites": "Requisitos antes de remediar (backups, testing, coordinación)",
-      "operational_impact": "Impacto en producción (reinicio servicios, usuarios afectados, downtime)",
-      "microsoft_docs": "https://learn.microsoft.com/... URLs oficiales de Microsoft Docs",
-      "current_vs_recommended": "Valor Actual: X | Recomendado: Y según CIS/NIST",
-      "timeline": "24h - Inmediato | 7d | 30d | 60d | 90d",
-      "affected_count": 15,
+      "description": "Descripción técnica",
+      "recommendation": "Pasos de remediación",
+      "mitre_attack": "T1078 - Valid Accounts",
+      "cis_control": "5.2.1",
+      "impact_business": "Impacto en el negocio",
+      "remediation_commands": "Comandos PowerShell específicos",
+      "prerequisites": "Requisitos previos",
+      "operational_impact": "Impacto operativo",
+      "microsoft_docs": "URL de documentación",
+      "current_vs_recommended": "Actual vs Recomendado",
+      "timeline": "24h|7d|30d|60d",
+      "affected_count": 0,
       "evidence": {
-        "affected_objects": ["CN=Administrator", "CN=JSmith"],
-        "count": 15,
-        "details": "Detalles técnicos específicos tomados EXACTAMENTE de los datos"
+        "affected_objects": ["<NOMBRES_REALES_DEL_JSON>"],
+        "count": 0,
+        "details": "Datos EXACTOS del JSON de entrada"
       }
     }
   ]
 }
 
-CRÍTICO:
-- NO INVENTES NOMBRES (user1, user2, test...). Usa SOLO los nombres reales presentes en el JSON.
-- Si count = 0, NO generes el finding.
-- Si no hay evidencia clara, devuelve "findings": []
-
-EJEMPLOS DE CAMPOS TÉCNICOS:
-
-mitre_attack: "T1558.003 - Kerberoasting: Permite extracción de TGS y crackeo offline de contraseñas"
-
-remediation_commands: 
-"# Listar usuarios afectados
-Get-ADUser -Filter {ServicePrincipalName -like '*'} -Properties ServicePrincipalName, PasswordLastSet | Format-Table Name, PasswordLastSet
-
-# Remediar (opción 1): Migrar a gMSA
-New-ADServiceAccount -Name svc_app_gMSA -DNSHostName app.domain.com -PrincipalsAllowedToRetrieveManagedPassword 'APP_SERVERS$'
-
-# Remediar (opción 2): Passwords complejas > 25 caracteres
-Set-ADAccountPassword -Identity 'svc_app' -Reset -NewPassword (ConvertTo-SecureString -AsPlainText 'ComplexP@ssw0rd!25Chars+' -Force)
-
-# Verificación
-Get-ADServiceAccount -Identity svc_app_gMSA -Properties * | Select Name, Enabled, PrincipalsAllowedToRetrieveManagedPassword"
-
-prerequisites: "✓ Backup de AD antes de cambios | ✓ Validar compatibilidad de aplicaciones con gMSA (Windows Server 2012+) | ✓ Coordinar con equipos de aplicaciones | ✓ Ventana de mantenimiento programada"
-
-operational_impact: "⚠️ MEDIO: Requiere reiniciar servicios que usan la cuenta. Coordinar con equipos de aplicaciones. Downtime estimado: 5-15 minutos por servicio. No afecta usuarios finales si se ejecuta fuera de horario laboral."
-
-microsoft_docs: "https://learn.microsoft.com/en-us/windows-server/security/group-managed-service-accounts/group-managed-service-accounts-overview | https://learn.microsoft.com/en-us/powershell/module/activedirectory/new-adserviceaccount"
-
-current_vs_recommended: "Actual: 8 cuentas de servicio con SPN usando contraseñas estándar (<15 caracteres), PasswordLastSet promedio: 18 meses | Recomendado: Migrar a gMSA o contraseñas >25 caracteres aleatorios, rotación automática cada 30 días (CIS Benchmark 5.2.3)"
-
-timeline: "60d - Migración gradual por aplicación, testing en QA primero"`
+Si no encuentras problemas verificables, devuelve: {"findings": []}`
           },
           { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
         ],
@@ -1883,18 +1846,20 @@ timeline: "60d - Migración gradual por aplicación, testing en QA primero"`
 }
 
 async function callGemini(prompt, model, key) {
-  const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+  const systemPrompt = `Eres un analista de seguridad de Active Directory.
 
-PRINCIPIOS FUNDAMENTALES:
-1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
-2. EVIDENCIA PRIMERO - Si no hay evidencia concreta (count > 0, nombres específicos), NO generes finding
-3. COMANDOS RELEVANTES - Cada comando PowerShell debe estar directamente relacionado con el problema específico
-4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
-5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
+⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
+Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
+El sistema VALIDA y RECHAZA automáticamente cualquier nombre inventado.
+Si inventas nombres → Tu finding será ELIMINADO.
 
-FORMATO JSON REQUERIDO: Devuelve un objeto JSON con array "findings". 
-CRÍTICO: NO INVENTES DATOS. Usa SOLO nombres que existan en el JSON. Si no hay hallazgos verificables, devuelve "findings": []. 
-NO uses ejemplos como 'user1', 'user2'.`;
+PRINCIPIOS:
+1. SOLO reporta problemas verificables en los datos
+2. Si count = 0 o no hay objetos reales → NO generes finding
+3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
+
+FORMATO JSON: {"findings": [...]}
+Si no hay problemas verificables: {"findings": []}`;
 
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
     method: 'POST',
@@ -1946,37 +1911,20 @@ async function callDeepSeek(prompt, model, key) {
       messages: [
         {
           role: 'system',
-          content: `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+          content: `Eres un analista de seguridad de Active Directory.
 
-PRINCIPIOS FUNDAMENTALES:
-1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
-2. EVIDENCIA PRIMERO - Si no hay evidencia concreta (count > 0, nombres específicos), NO generes finding
-3. COMANDOS RELEVANTES - Cada comando PowerShell debe estar directamente relacionado con el problema específico
-4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
-5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
+⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
+Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
+El sistema VALIDA y RECHAZA automáticamente cualquier nombre inventado.
+Si inventas nombres → Tu finding será ELIMINADO.
 
-FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
-{
-  "findings": [
-    {
-      "type_id": "string",
-      "title": "string",
-      "severity": "critical|high|medium|low",
-      "description": "string",
-      "recommendation": "string",
-      "evidence": {
-        "affected_objects": ["CN=Administrator", "CN=JSmith"],
-        "count": number,
-        "details": "string"
-      },
-      "mitre_attack": "string (opcional)",
-      "cis_control": "string (opcional)",
-      "timeline": "string (opcional)",
-      "affected_count": number (opcional)
-    }
-  ]
-}
-CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay evidencia, devuelve array vacío.`
+PRINCIPIOS:
+1. SOLO reporta problemas verificables en los datos
+2. Si count = 0 o no hay objetos reales → NO generes finding
+3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
+
+FORMATO JSON: {"findings": [...]}
+Si no hay problemas verificables: {"findings": []}`
         },
         { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
       ],
@@ -2006,37 +1954,20 @@ CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay e
 }
 
 async function callAnthropic(prompt, model, key) {
-  const systemPrompt = `Eres un analista senior de seguridad de Active Directory con certificaciones CISSP, OSCP y experiencia en auditorías de cumplimiento.
+  const systemPrompt = `Eres un analista de seguridad de Active Directory.
 
-PRINCIPIOS FUNDAMENTALES:
-1. CERO TOLERANCIA A FALSOS POSITIVOS - Solo reporta problemas que existan y sean verificables en los datos
-2. EVIDENCIA PRIMERO - Si no hay evidencia concreta (count > 0, nombres específicos), NO generes finding
-3. COMANDOS RELEVANTES - Cada comando PowerShell debe estar directamente relacionado con el problema específico
-4. CALIDAD SOBRE CANTIDAD - Mejor 3 findings de alta calidad que 10 mediocres
-5. TODO EN ESPAÑOL - Excepto nombres de comandos técnicos
+⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
+Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
+El sistema VALIDA y RECHAZA automáticamente cualquier nombre inventado.
+Si inventas nombres → Tu finding será ELIMINADO.
 
-FORMATO JSON REQUERIDO: Devuelve SOLO un objeto JSON válido con este formato:
-{
-  "findings": [
-    {
-      "type_id": "string",
-      "title": "string",
-      "severity": "critical|high|medium|low",
-      "description": "string",
-      "recommendation": "string",
-      "evidence": {
-        "affected_objects": ["CN=Administrator", "CN=JSmmith"],
-        "count": number,
-        "details": "string"
-      },
-      "mitre_attack": "string (opcional)",
-      "cis_control": "string (opcional)",
-      "timeline": "string (opcional)",
-      "affected_count": number (opcional)
-    }
-  ]
-}
-CRÍTICO: NO INVENTES NOMBRES. Usa SOLO los nombres reales del JSON. Si no hay evidencia, devuelve array vacío.`;
+PRINCIPIOS:
+1. SOLO reporta problemas verificables en los datos
+2. Si count = 0 o no hay objetos reales → NO generes finding
+3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
+
+FORMATO JSON: {"findings": [...]}
+Si no hay problemas verificables: {"findings": []}`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
