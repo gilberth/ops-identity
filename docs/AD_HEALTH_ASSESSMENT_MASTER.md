@@ -815,3 +815,64 @@ _Los 12 nuevos prompts están documentados en detalle en el archivo original `MO
 _Documento consolidado el 8 de Diciembre de 2025_  
 _Fuentes: ANALISIS_INFRAESTRUCTURA_AUDIT.md, ANALISIS_SALUD_OPERATIVA_AD.md, METRICAS_INDUSTRIA_COMPLETAS.md, AUDITORIA_SALUD_OPERATIVA_AD.md, COMPARATIVA_AUDITORIAS_CONSOLIDADA.md, MODIFICACIONES_NEWASSESSMENT.md_  
 _Para: Active Scan Insight - AD Assessment Platform_
+
+---
+
+# 8. Sistema Anti-Alucinaciones (Smart Filtering)
+
+## 8.1 Implementación (v1.5.0)
+
+Para evitar que el LLM invente hallazgos falsos, se implementó un sistema de **pre-filtrado inteligente** que solo envía datos relevantes/problemáticos a la IA.
+
+### Filtros Implementados
+
+| Categoría | Criterios de Filtrado | Resultado |
+|-----------|----------------------|-----------|
+| **Users** | PasswordNeverExpires, PasswordNotRequired, Disabled, Delegación, AdminCount, AS-REP/Kerberoastable | Solo usuarios de riesgo |
+| **Computers** | Stale, Delegación, Disabled, OS Legacy (2008, XP, Vista, Win7) | Solo equipos problemáticos |
+| **Groups** | Privileged, Empty (MemberCount=0) | Solo grupos administrativos o vacíos |
+| **GPOs** | Sin links, Disabled, Version mismatch, Monolíticas (>50 settings), Permisos peligrosos | Solo GPOs problemáticas |
+| **DNS** | SecurityIssues, ScavengingEnabled=false, DynamicUpdate inseguro | Solo configuraciones de riesgo |
+| **DCHealth** | Errors, Warnings, Unhealthy, Services stopped, LowDisk (<10GB), HighLatency (>500ms) | Solo DCs con problemas |
+| **Replication** | Failed (Result≠0), ConsecutiveFailures>0, Latency>15min | Solo fallos de replicación |
+| **Trusts** | Broken, No SID Filtering, Orphaned, PasswordAge>180d | Solo trusts problemáticos |
+| **FSMO** | Issues, AllOnSingleDC, VM Time Sync, RID Pool>80% | Solo problemas de roles |
+| **Sites** | Sin subnets, Default-First-Site-Name, Sin DCs | Solo sitios mal configurados |
+
+### Beneficios
+
+1. **Reducción de Tokens:** De ~10,000 objetos a ~50-200 objetos relevantes
+2. **Eliminación de Ruido:** La IA solo ve problemas reales
+3. **Prevención de Alucinaciones:** Sin datos "normales" que la IA pueda malinterpretar
+4. **Mejor Precisión:** El LLM se enfoca en analizar patterns de riesgo, no en inventar
+
+### Logs de Diagnóstico
+
+```
+[SmartFilter] 'Users' category reduced from 5000 to 47 items (keeping only high-risk objects)
+[SmartFilter] 'GPOs' category reduced from 200 to 12 items (keeping only problematic GPOs)
+[SmartFilter] 'DCHealth' category reduced from 10 to 2 items (keeping only unhealthy DCs)
+```
+
+## 8.2 Prompt Engineering (v1.4.0)
+
+Los prompts del sistema incluyen la **Regla de Oro de Grounding**:
+
+```
+⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
+Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
+El sistema VALIDA y RECHAZA automáticamente cualquier nombre inventado.
+Si inventas nombres → Tu finding será ELIMINADO.
+```
+
+## 8.3 Validación Post-IA (Deep Grounding)
+
+Después de recibir los findings de la IA, el sistema valida recursivamente:
+
+1. Extrae TODOS los strings del JSON original (valores + claves)
+2. Compara cada `affected_object` del finding contra esta lista
+3. Si un objeto no existe en los datos originales → **FINDING ELIMINADO**
+
+---
+
+_Última actualización: 15 de Diciembre de 2025 - v1.5.0_
