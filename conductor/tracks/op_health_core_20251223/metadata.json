@@ -1,0 +1,8 @@
+{
+  "track_id": "op_health_core_20251223",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2025-12-23T00:00:00Z",
+  "updated_at": "2025-12-23T00:00:00Z",
+  "description": "Implementar el Operational Health Core integrando las nuevas funciones de recolección de métricas críticas en el script de PowerShell."
+}
