@@ -64,6 +64,47 @@ const MAX_PROMPT = 8000;
 const CHUNK_SIZE = 50;
 const MAX_PARALLEL_CHUNKS = 3;
 
+// =============================================================================
+// v1.8.0: ANTHROPIC MODEL SELECTION - Claude 4.5 (Opus & Sonnet)
+// Dynamic model selection based on category complexity
+// =============================================================================
+const ANTHROPIC_MODELS = {
+  OPUS: 'claude-opus-4-5-20251101',    // Released Nov 2025 - Premium model
+  SONNET: 'claude-sonnet-4-5-20250929'  // Released Sep 2025 - Best balance
+};
+
+// Categories that require deeper analysis → Use Opus 4.5
+// These involve complex security implications, privilege escalation paths, or critical infrastructure
+const OPUS_CATEGORIES = new Set([
+  'Kerberos',       // Golden Ticket, delegation, encryption analysis
+  'Security',       // NTLM, SMB, LDAP signing, critical configs
+  'ACLs',           // Complex permission analysis, privilege escalation paths
+  'TrustHealth',    // Inter-domain trust relationships, SID filtering
+  'CertServices',   // PKI vulnerabilities (ESC1-ESC8), template analysis
+  'FSMORolesHealth' // Critical FSMO roles, domain operation health
+]);
+
+/**
+ * Select the appropriate Claude model based on category complexity
+ * @param {string} category - The AD category being analyzed
+ * @param {boolean} forceOpus - Override to always use Opus (for deep analysis requests)
+ * @returns {string} - The model ID to use
+ */
+function selectAnthropicModel(category, forceOpus = false) {
+  if (forceOpus) {
+    console.log(`[${timestamp()}] [ModelSelect] Forced Opus 4.5 for ${category}`);
+    return ANTHROPIC_MODELS.OPUS;
+  }
+
+  if (OPUS_CATEGORIES.has(category)) {
+    console.log(`[${timestamp()}] [ModelSelect] Using Opus 4.5 for complex category: ${category}`);
+    return ANTHROPIC_MODELS.OPUS;
+  }
+
+  console.log(`[${timestamp()}] [ModelSelect] Using Sonnet 4.5 for category: ${category}`);
+  return ANTHROPIC_MODELS.SONNET;
+}
+
 // Helper: Log to DB
 const timestamp = () => new Date().toISOString();
 
@@ -137,74 +178,152 @@ function extractCategoryData(jsonData, categoryName) {
   const categoryData = jsonData[categoryKey];
   let result = [];
 
-  if (categoryData.Data) {
-    result = Array.isArray(categoryData.Data) ? categoryData.Data : [categoryData.Data];
+  // FIX v1.7.0: Validación robusta de categoryData.Data
+  if (categoryData.Data !== undefined && categoryData.Data !== null) {
+    // Validar que Data no sea null, undefined, o empty string
+    if (Array.isArray(categoryData.Data)) {
+      // Filtrar elementos null/undefined del array
+      result = categoryData.Data.filter(item => item !== null && item !== undefined);
+    } else if (typeof categoryData.Data === 'object' && Object.keys(categoryData.Data).length > 0) {
+      result = [categoryData.Data];
+    } else if (categoryData.Data === '' || (typeof categoryData.Data === 'object' && Object.keys(categoryData.Data).length === 0)) {
+      // Empty string or empty object - return empty array (not null to allow filtering)
+      console.log(`[extractCategoryData] Warning: ${categoryName}.Data is empty, skipping`);
+      result = [];
+    } else {
+      // Primitive non-empty value, wrap in array
+      result = [categoryData.Data];
+    }
   } else if (Array.isArray(categoryData)) {
-    result = categoryData;
-  } else if (typeof categoryData === 'object') {
+    // Direct array format: { CategoryName: [...] }
+    result = categoryData.filter(item => item !== null && item !== undefined);
+  } else if (typeof categoryData === 'object' && Object.keys(categoryData).length > 0) {
+    // Single object format: { CategoryName: { prop: value } }
     result = [categoryData];
   } else {
+    // Invalid or empty data
+    console.log(`[extractCategoryData] Warning: ${categoryName} has no valid data structure`);
     return null;
   }
 
+  // Final validation: ensure we don't return array with only invalid items
+  if (result.length === 0) {
+    console.log(`[extractCategoryData] ${categoryName}: No valid items after filtering`);
+  }
+
   // Smart Filtering to reduce AI hallucinations and token usage
-  // We only send "interesting" objects to the AI
+  // v1.7.0: Added detailed logging for filter transparency
   if (categoryName.toLowerCase() === 'users' && result.length > 0) {
     const originalCount = result.length;
+    const filterStats = {
+      disabled: 0, passwordNeverExpires: 0, passwordNotRequired: 0,
+      delegation: 0, privileged: 0, adminCount: 0,
+      asrepRoastable: 0, kerberoastable: 0
+    };
 
     result = result.filter(user => {
+      if (!user) return false;
+
+      // Track each risk flag
+      if (user.Enabled === false) filterStats.disabled++;
+      if (user.PasswordNeverExpires === true) filterStats.passwordNeverExpires++;
+      if (user.PasswordNotRequired === true) filterStats.passwordNotRequired++;
+      if (user.TrustedForDelegation === true) filterStats.delegation++;
+      if (user.IsPrivileged === true) filterStats.privileged++;
+      if (user.AdminCount === 1) filterStats.adminCount++;
+      if (user.DoNotRequirePreAuth === true || user.IsASREPRoastable === true) filterStats.asrepRoastable++;
+      if (user.IsKerberoastable === true) filterStats.kerberoastable++;
+
       // Keep if any risk/relevant flag is present
       return (
-        user.Enabled === false || // Bloqueados/Deshabilitados
-        user.PasswordNeverExpires === true || // Password Never Expires
-        user.PasswordNotRequired === true || // Password Not Required
-        user.TrustedForDelegation === true || // Unconstrained Delegation
-        user.IsPrivileged === true || // Admin/Privileged
-        user.AdminCount === 1 || // AdminSDHolder protected
-        user.DoNotRequirePreAuth === true || // AS-REP Roasting vulnerable
+        user.Enabled === false ||
+        user.PasswordNeverExpires === true ||
+        user.PasswordNotRequired === true ||
+        user.TrustedForDelegation === true ||
+        user.IsPrivileged === true ||
+        user.AdminCount === 1 ||
+        user.DoNotRequirePreAuth === true ||
         user.IsASREPRoastable === true ||
-        user.IsKerberoastable === true // Kerberoasting vulnerable
+        user.IsKerberoastable === true
       );
     });
 
     if (originalCount !== result.length) {
       console.log(`[SmartFilter] 'Users' category reduced from ${originalCount} to ${result.length} items (keeping only high-risk objects)`);
+      console.log(`[SmartFilter] Users breakdown: disabled=${filterStats.disabled}, pwdNeverExp=${filterStats.passwordNeverExpires}, pwdNotReq=${filterStats.passwordNotRequired}, delegation=${filterStats.delegation}, privileged=${filterStats.privileged}, adminCount=${filterStats.adminCount}, asrep=${filterStats.asrepRoastable}, kerberoast=${filterStats.kerberoastable}`);
     }
   }
 
   // Smart Filtering for Computers
+  // FIX v1.7.0: Added Windows Server 2012/2012 R2 (EOL October 2023) to legacy list + detailed logging
   if (categoryName.toLowerCase() === 'computers' && result.length > 0) {
     const originalCount = result.length;
+    const filterStats = { stale: 0, delegation: 0, disabled: 0, legacyOS: 0, noLAPS: 0, weakEncryption: 0 };
+
     result = result.filter(computer => {
+      if (!computer) return false;
+
       const os = (computer.OperatingSystem || '').toLowerCase();
-      const isLegacy = os.includes('2008') || os.includes('2003') || os.includes('2000') || os.includes('xp') || os.includes('vista') || os.includes('windows 7');
+      // Legacy OS detection - includes all EOL Windows versions
+      const isLegacy = os.includes('2012') || os.includes('2008') || os.includes('2003') ||
+                       os.includes('2000') || os.includes('xp') || os.includes('vista') ||
+                       os.includes('windows 7') || os.includes('windows 8');
+
+      // Track each risk flag
+      if (computer.IsStale === true) filterStats.stale++;
+      if (computer.TrustedForDelegation === true) filterStats.delegation++;
+      if (computer.Enabled === false) filterStats.disabled++;
+      if (isLegacy) filterStats.legacyOS++;
+      if (computer.LAPSEnabled === false && os.includes('server')) filterStats.noLAPS++;
+      if (computer.SupportedEncryptionTypes?.includes('RC4')) filterStats.weakEncryption++;
 
       return (
-        computer.IsStale === true || // Equipos inactivos/stale
-        computer.TrustedForDelegation === true || // Unconstrained Delegation
-        computer.Enabled === false || // Deshabilitados
-        isLegacy // Sistemas operativos antiguos
+        computer.IsStale === true ||
+        computer.TrustedForDelegation === true ||
+        computer.Enabled === false ||
+        isLegacy ||
+        (computer.LAPSEnabled === false && os.includes('server')) ||
+        (computer.SupportedEncryptionTypes && computer.SupportedEncryptionTypes.includes('RC4'))
       );
     });
 
     if (originalCount !== result.length) {
       console.log(`[SmartFilter] 'Computers' category reduced from ${originalCount} to ${result.length} items`);
+      console.log(`[SmartFilter] Computers breakdown: stale=${filterStats.stale}, delegation=${filterStats.delegation}, disabled=${filterStats.disabled}, legacyOS=${filterStats.legacyOS}, noLAPS=${filterStats.noLAPS}, weakEncryption=${filterStats.weakEncryption}`);
     }
   }
 
   // Smart Filtering for Groups (Focus on Privileged or Empty)
+  // v1.7.0: Fixed redundant logic and added detailed logging
   if (categoryName.toLowerCase() === 'groups' && result.length > 0) {
     const originalCount = result.length;
+    const filterStats = { privileged: 0, empty: 0, excessiveMembers: 0 };
+
     result = result.filter(group => {
-      return (
-        group.IsPrivileged === true || // Grupos administrativos (Tier 0/1)
-        group.MemberCount === 0 || // Grupos vacíos (higiene)
-        (group.Members && group.Members.length === 0)
-      );
+      if (!group) return false;
+
+      // Check if privileged (Tier 0/1 administrative groups)
+      const isPrivileged = group.IsPrivileged === true;
+      if (isPrivileged) filterStats.privileged++;
+
+      // v1.7.0: Fixed - Use single source of truth for empty check
+      // Prefer MemberCount if available, fallback to Members array
+      const memberCount = group.MemberCount !== undefined
+        ? group.MemberCount
+        : (group.Members ? group.Members.length : undefined);
+      const isEmpty = memberCount === 0;
+      if (isEmpty) filterStats.empty++;
+
+      // NEW v1.7.0: Groups with excessive members (potential over-permissioning)
+      const hasExcessiveMembers = memberCount !== undefined && memberCount > 50;
+      if (hasExcessiveMembers) filterStats.excessiveMembers++;
+
+      return isPrivileged || isEmpty || hasExcessiveMembers;
     });
 
     if (originalCount !== result.length) {
       console.log(`[SmartFilter] 'Groups' category reduced from ${originalCount} to ${result.length} items`);
+      console.log(`[SmartFilter] Groups breakdown: privileged=${filterStats.privileged}, empty=${filterStats.empty}, excessiveMembers=${filterStats.excessiveMembers}`);
     }
   }
 
@@ -252,19 +371,35 @@ function extractCategoryData(jsonData, categoryName) {
 
   // Smart Filtering for DNS (Focus on Issues)
   // Source: Microsoft DNS Best Practices, CIS
+  // FIX v1.7.0: Iterate ALL items, not just check result[0]
   if (categoryName.toLowerCase() === 'dns' && result.length > 0) {
-    if (result[0]?.SecurityIssues || result[0]?.ScavengingEnabled !== undefined) {
+    // Check if ANY item in the array has the expected DNS structure
+    const hasDNSStructure = result.some(item =>
+      item && (item.SecurityIssues !== undefined || item.ScavengingEnabled !== undefined ||
+               item.DynamicUpdate !== undefined || item.Forwarders !== undefined || item.ZoneTransfer !== undefined)
+    );
+
+    if (hasDNSStructure) {
       const originalCount = result.length;
-      result = result.filter(item =>
-        (item.SecurityIssues && item.SecurityIssues.length > 0) ||
-        item.ScavengingEnabled === false || // CIS: Scavenging should be enabled
-        item.DynamicUpdate === 'NonsecureAndSecure' || // Microsoft: Insecure dynamic updates
-        item.DynamicUpdate === 'Nonsecure' ||
-        // NEW: Public DNS forwarders without conditional
-        (item.Forwarders && item.Forwarders.some(f => f.includes('8.8.8.8') || f.includes('1.1.1.1'))) ||
-        // NEW: Zone transfer to any
-        item.ZoneTransfer === 'Any'
-      );
+      result = result.filter(item => {
+        if (!item) return false;
+        return (
+          (item.SecurityIssues && Array.isArray(item.SecurityIssues) && item.SecurityIssues.length > 0) ||
+          item.ScavengingEnabled === false || // CIS: Scavenging should be enabled
+          item.DynamicUpdate === 'NonsecureAndSecure' || // Microsoft: Insecure dynamic updates
+          item.DynamicUpdate === 'Nonsecure' ||
+          // Public DNS forwarders without conditional
+          (item.Forwarders && Array.isArray(item.Forwarders) && item.Forwarders.some(f =>
+            typeof f === 'string' && (f.includes('8.8.8.8') || f.includes('1.1.1.1'))
+          )) ||
+          // Zone transfer to any
+          item.ZoneTransfer === 'Any' ||
+          // NEW v1.7.0: Aging/Scavenging not configured properly
+          (item.AgingEnabled === false && item.ZoneType === 'Primary') ||
+          // NEW v1.7.0: Stale DNS records threshold exceeded
+          (item.StaleRecordCount && item.StaleRecordCount > 100)
+        );
+      });
       if (originalCount !== result.length) {
         console.log(`[SmartFilter] 'DNS' category reduced from ${originalCount} to ${result.length} items`);
       }
@@ -482,11 +617,20 @@ function extractCategoryData(jsonData, categoryName) {
 // AI ORCHESTRATOR & ANALYZER
 // ------------------------------------------------------------------
 
-async function analyzeCategory(assessmentId, category, data) {
+async function analyzeCategory(assessmentId, category, data, options = {}) {
   try {
     const provider = process.env.AI_PROVIDER || 'anthropic';
-    const model = process.env.AI_MODEL || 'claude-3-5-sonnet-20241022';
     const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
+
+    // v1.8.0: Dynamic model selection for Anthropic
+    let model;
+    if (provider === 'anthropic') {
+      const forceOpus = options.deepAnalysis || false;
+      model = selectAnthropicModel(category, forceOpus);
+      await addLog(assessmentId, 'info', `Modelo seleccionado: ${model.includes('opus') ? 'Opus 4.5' : 'Sonnet 4.5'}`, category);
+    } else {
+      model = process.env.AI_MODEL || 'gpt-4o';
+    }
 
     if (!apiKey) {
       throw new Error('AI API Key not configured');
@@ -526,20 +670,26 @@ async function analyzeCategory(assessmentId, category, data) {
         const chunks = chunkArray(data, MAX_CHUNK_SIZE);
         const mergedFindingsMap = new Map();
 
-        // Process chunks in parallel (limited concurrency)
+        // v1.7.0: Process chunks with per-chunk validation
         const processChunk = async (chunk, index) => {
           await addLog(assessmentId, 'info', `Analizando bloque ${index + 1}/${chunks.length} (${chunk.length.toLocaleString()} items)`, category);
           const prompt = buildPrompt(category, chunk);
           console.log(`[${timestamp()}] [AI] Chunk ${index + 1} prompt: ${prompt.length} chars`);
           try {
-            // We use a small sleep to avoid rigorous rate limits
+            // Rate limit protection
             await new Promise(r => setTimeout(r, 1000 * Math.random()));
             const findings = await callAI(prompt, provider, model, apiKey);
-            console.log(`[${timestamp()}] [AI] Chunk ${index + 1} returned ${findings.length} findings`);
-            if (findings.length > 0) {
-              await addLog(assessmentId, 'info', `Bloque ${index + 1}: ${findings.length} hallazgos encontrados`, category);
+            console.log(`[${timestamp()}] [AI] Chunk ${index + 1} returned ${findings.length} raw findings`);
+
+            // v1.7.0: VALIDATE PER CHUNK before merging
+            // This catches hallucinations early and prevents contaminating the merge
+            const validatedFindings = validateFindingsPerChunk(findings, chunk, category);
+            console.log(`[${timestamp()}] [AI] Chunk ${index + 1}: ${validatedFindings.length}/${findings.length} findings passed validation`);
+
+            if (validatedFindings.length > 0) {
+              await addLog(assessmentId, 'info', `Bloque ${index + 1}: ${validatedFindings.length} hallazgos verificados`, category);
             }
-            return findings;
+            return validatedFindings;
           } catch (e) {
             console.error(`Error processing chunk ${index}:`, e);
             await addLog(assessmentId, 'error', `Error en bloque ${index + 1}: ${e.message}`, category);
@@ -551,10 +701,10 @@ async function analyzeCategory(assessmentId, category, data) {
         for (let i = 0; i < chunks.length; i++) {
           const chunkFindings = await processChunk(chunks[i], i);
           chunkFindings.forEach(f => {
-            // Merge Logic
+            // Merge Logic - only validated findings reach here
             let key = f.type_id;
             if (!key && f.cis_control) key = f.cis_control.split(' ')[0];
-            if (!key) key = f.title.replace(/^\d+\s+/, '');
+            if (!key) key = (f.title || '').replace(/^\d+\s+/, '');
 
             if (!mergedFindingsMap.has(key)) {
               mergedFindingsMap.set(key, { ...f });
@@ -569,6 +719,7 @@ async function analyzeCategory(assessmentId, category, data) {
 
               const existingObjects = existing.evidence?.affected_objects || [];
               const newObjects = f.evidence?.affected_objects || [];
+              // Use Set to deduplicate and preserve order
               existing.evidence.affected_objects = [...new Set([...existingObjects, ...newObjects])];
 
               // Update title with new count
@@ -645,20 +796,357 @@ async function analyzeCategory(assessmentId, category, data) {
   }
 }
 
+// =============================================================================
+// 🛡️ SECURITY v1.7.0: ATTRIBUTE VALIDATION SYSTEM
+// Ensures AI cannot invent attributes for real objects
+// =============================================================================
+
+/**
+ * Attribute validation rules per finding type
+ * Maps type_id/title patterns to validation functions
+ */
+const ATTRIBUTE_VALIDATION_RULES = {
+  // User-related findings
+  'PASSWORD_NEVER_EXPIRES': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true && obj.PasswordNeverExpires === true
+  },
+  'INACTIVE_ACCOUNTS': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => {
+      if (!obj.Enabled || !obj.LastLogonDate) return false;
+      const lastLogon = parseFlexibleDate(obj.LastLogonDate);
+      if (!lastLogon) return false;
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      return lastLogon < ninetyDaysAgo;
+    }
+  },
+  'ADMIN_COUNT_EXPOSURE': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true && obj.AdminCount === 1
+  },
+  'KERBEROASTING': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true &&
+      obj.ServicePrincipalNames &&
+      (Array.isArray(obj.ServicePrincipalNames) ? obj.ServicePrincipalNames.length > 0 : true) &&
+      obj.SamAccountName?.toLowerCase() !== 'krbtgt'
+  },
+  'ASREP_ROASTING': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true && (obj.DoNotRequirePreAuth === true || obj.IsASREPRoastable === true)
+  },
+  'UNCONSTRAINED_DELEGATION': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true && obj.TrustedForDelegation === true
+  },
+  'PASSWORD_NOT_REQUIRED': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true && obj.PasswordNotRequired === true
+  },
+  'PRIVILEGED_NO_PROTECTION': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.Enabled === true && obj.IsPrivileged === true
+  },
+
+  // Computer-related findings
+  'LEGACY_OS': {
+    category: 'Computers',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const os = (obj.OperatingSystem || '').toLowerCase();
+      return os.includes('2012') || os.includes('2008') || os.includes('2003') ||
+             os.includes('2000') || os.includes('xp') || os.includes('vista') ||
+             os.includes('windows 7') || os.includes('windows 8');
+    }
+  },
+  'STALE_COMPUTER': {
+    category: 'Computers',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsStale === true || obj.Enabled === false
+  },
+  'COMPUTER_UNCONSTRAINED_DELEGATION': {
+    category: 'Computers',
+    identifierField: 'Name',
+    validate: (obj) => obj.TrustedForDelegation === true
+  },
+
+  // Group-related findings
+  'EMPTY_GROUP': {
+    category: 'Groups',
+    identifierField: 'Name',
+    validate: (obj) => obj.MemberCount === 0 || (obj.Members && obj.Members.length === 0)
+  },
+  'PRIVILEGED_GROUP': {
+    category: 'Groups',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsPrivileged === true
+  },
+
+  // GPO-related findings
+  'UNLINKED_GPO': {
+    category: 'GPOs',
+    identifierField: 'DisplayName',
+    validate: (obj) => !obj.Links || obj.Links.length === 0 || obj.LinksTo?.length === 0
+  },
+  'DISABLED_GPO': {
+    category: 'GPOs',
+    identifierField: 'DisplayName',
+    validate: (obj) => obj.GpoStatus === 'AllSettingsDisabled' ||
+                       obj.GpoStatus === 'UserSettingsDisabled' ||
+                       obj.GpoStatus === 'ComputerSettingsDisabled'
+  }
+};
+
+/**
+ * Flexible date parser for multiple formats
+ * Supports: /Date(\d+)/, ISO 8601, Unix timestamp
+ */
+function parseFlexibleDate(dateValue) {
+  if (!dateValue) return null;
+
+  try {
+    // Format 1: /Date(1234567890000)/
+    if (typeof dateValue === 'string' && dateValue.includes('/Date(')) {
+      const match = dateValue.match(/\/Date\((-?\d+)\)\//);
+      if (match) return new Date(parseInt(match[1]));
+    }
+
+    // Format 2: ISO 8601 string
+    if (typeof dateValue === 'string' && dateValue.includes('-')) {
+      const parsed = new Date(dateValue);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+
+    // Format 3: Unix timestamp (number or string)
+    const timestamp = typeof dateValue === 'number' ? dateValue : parseInt(dateValue);
+    if (!isNaN(timestamp)) {
+      // Handle both seconds and milliseconds
+      const date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1000);
+      if (!isNaN(date.getTime())) return date;
+    }
+
+    return null;
+  } catch (e) {
+    console.warn(`[parseFlexibleDate] Failed to parse: ${dateValue}`);
+    return null;
+  }
+}
+
+/**
+ * Validates that affected objects actually have the claimed attributes
+ * @param {Object} finding - The finding to validate
+ * @param {Array} data - Raw data for the category
+ * @param {string} category - Category name
+ * @returns {Object} - { isValid: boolean, validObjects: string[], invalidObjects: string[] }
+ */
+function validateAttributes(finding, data, category) {
+  const result = { isValid: true, validObjects: [], invalidObjects: [], rule: null };
+
+  if (!finding || !data || !Array.isArray(data)) return result;
+
+  const affectedObjects = finding.evidence?.affected_objects || [];
+  if (affectedObjects.length === 0) return result;
+
+  // Find matching rule by type_id or title pattern
+  let rule = null;
+  const typeId = finding.type_id || '';
+  const title = (finding.title || '').toLowerCase();
+
+  // Try exact match first
+  if (typeId && ATTRIBUTE_VALIDATION_RULES[typeId]) {
+    rule = ATTRIBUTE_VALIDATION_RULES[typeId];
+  } else {
+    // Try pattern matching on title
+    for (const [ruleId, ruleConfig] of Object.entries(ATTRIBUTE_VALIDATION_RULES)) {
+      const pattern = ruleId.toLowerCase().replace(/_/g, ' ');
+      if (title.includes(pattern) || title.includes(ruleId.toLowerCase())) {
+        rule = ruleConfig;
+        result.rule = ruleId;
+        break;
+      }
+    }
+  }
+
+  // If no matching rule, skip attribute validation (allow the finding)
+  if (!rule) {
+    result.validObjects = affectedObjects;
+    return result;
+  }
+
+  // Check if rule applies to this category
+  if (rule.category && rule.category.toLowerCase() !== category.toLowerCase()) {
+    result.validObjects = affectedObjects;
+    return result;
+  }
+
+  // Build lookup map for data objects
+  const identifierField = rule.identifierField || 'Name';
+  const dataMap = new Map();
+  data.forEach(obj => {
+    if (obj && obj[identifierField]) {
+      dataMap.set(obj[identifierField].toLowerCase(), obj);
+    }
+    // Also try SamAccountName as fallback
+    if (obj && obj.SamAccountName) {
+      dataMap.set(obj.SamAccountName.toLowerCase(), obj);
+    }
+    // And Name
+    if (obj && obj.Name) {
+      dataMap.set(obj.Name.toLowerCase(), obj);
+    }
+  });
+
+  // Validate each affected object
+  for (const objName of affectedObjects) {
+    if (!objName) continue;
+
+    const lowerName = objName.toString().toLowerCase();
+    const cleanName = lowerName.replace(/^(cn=|name=|user=|computer=)/, '').split(',')[0].trim();
+
+    const realObj = dataMap.get(cleanName) || dataMap.get(lowerName);
+
+    if (realObj && rule.validate(realObj)) {
+      result.validObjects.push(objName);
+    } else {
+      result.invalidObjects.push(objName);
+      console.log(`[validateAttributes] ❌ Object "${objName}" failed attribute check for rule (exists: ${!!realObj}, validate: ${realObj ? rule.validate(realObj) : 'N/A'})`);
+    }
+  }
+
+  result.isValid = result.validObjects.length > 0;
+  return result;
+}
+
+// =============================================================================
+// v1.7.0: PER-CHUNK VALIDATION
+// Lightweight validation for chunk processing - validates against chunk data only
+// =============================================================================
+
+/**
+ * Validate findings against chunk data before merging
+ * This is a lighter version of validateFindings optimized for chunk processing
+ * @param {Array} findings - Findings from AI for this chunk
+ * @param {Array} chunkData - The chunk data that was sent to AI
+ * @param {string} category - Category name
+ * @returns {Array} - Validated findings
+ */
+function validateFindingsPerChunk(findings, chunkData, category) {
+  if (!findings || findings.length === 0) return [];
+  if (!chunkData || chunkData.length === 0) return [];
+
+  // Build index of valid identifiers from chunk data
+  const validIdentifiers = new Set();
+
+  chunkData.forEach(obj => {
+    if (!obj) return;
+    // Add common identifier fields
+    ['SamAccountName', 'Name', 'DisplayName', 'DistinguishedName', 'DNSHostName'].forEach(field => {
+      if (obj[field] && typeof obj[field] === 'string') {
+        validIdentifiers.add(obj[field].toLowerCase());
+      }
+    });
+  });
+
+  const validatedFindings = [];
+
+  for (const finding of findings) {
+    if (!finding) continue;
+
+    const evidence = finding.evidence || {};
+    const affectedObjects = evidence.affected_objects || [];
+
+    // Global findings (no specific objects) - allow for non-object categories
+    if (affectedObjects.length === 0) {
+      if (['Users', 'Computers', 'Groups'].includes(category)) {
+        // These require specific objects
+        if ((evidence.count || 0) > 0 || (finding.affected_count || 0) > 0) {
+          console.log(`[ChunkValidation] 🛑 Rejected: "${finding.title}" claims count but no objects`);
+          continue;
+        }
+      }
+      validatedFindings.push(finding);
+      continue;
+    }
+
+    // Validate each affected object exists in chunk
+    const validObjects = affectedObjects.filter(objName => {
+      if (!objName) return false;
+      const lowerName = objName.toString().toLowerCase();
+      const cleanName = lowerName.replace(/^(cn=|name=|user=|computer=)/, '').split(',')[0].trim();
+
+      return validIdentifiers.has(cleanName) || validIdentifiers.has(lowerName) ||
+        // Partial match for domain-prefixed names (DOMAIN\user)
+        Array.from(validIdentifiers).some(id => id.includes(cleanName) || cleanName.includes(id));
+    });
+
+    if (validObjects.length === 0) {
+      console.log(`[ChunkValidation] 🛑 Rejected: "${finding.title}" - no valid objects in chunk`);
+      continue;
+    }
+
+    // Update finding with validated objects
+    finding.evidence.affected_objects = validObjects;
+    finding.evidence.count = validObjects.length;
+    finding.affected_count = validObjects.length;
+
+    // Update title count if present
+    if (/^\d+/.test(finding.title)) {
+      finding.title = finding.title.replace(/^\d+/, validObjects.length.toString());
+    }
+
+    validatedFindings.push(finding);
+  }
+
+  return validatedFindings;
+}
+
 // 🛡️ SECURITY: Grounding Verification Function
 // Ensures AI cannot invent objects that don't exist in the input data.
+// v1.7.0: Optimized with n-gram index for O(1) fuzzy matching
 function validateFindings(findings, data, category) {
   if (!findings || findings.length === 0) return [];
 
   // Create a Set of all valid object identifiers for O(1) lookup
   const validNames = new Set();
+  // v1.7.0: Create n-gram index for faster fuzzy matching
+  const ngramIndex = new Map(); // Maps 3-char substrings to full names
+
+  // Helper to extract n-grams from a string
+  const extractNgrams = (str, n = 3) => {
+    const ngrams = [];
+    const lower = str.toLowerCase();
+    for (let i = 0; i <= lower.length - n; i++) {
+      ngrams.push(lower.substring(i, i + n));
+    }
+    return ngrams;
+  };
 
   // Recursive function to extract all strings from an object
   const extractStrings = (obj) => {
     if (!obj) return;
 
     if (typeof obj === 'string') {
-      if (obj.length > 2 && obj.length < 100) validNames.add(obj.toLowerCase());
+      if (obj.length > 2 && obj.length < 100) {
+        const lower = obj.toLowerCase();
+        validNames.add(lower);
+        // Index n-grams for this string
+        extractNgrams(lower).forEach(ngram => {
+          if (!ngramIndex.has(ngram)) {
+            ngramIndex.set(ngram, new Set());
+          }
+          ngramIndex.get(ngram).add(lower);
+        });
+      }
       return;
     }
 
@@ -670,13 +1158,23 @@ function validateFindings(findings, data, category) {
     if (typeof obj === 'object') {
       Object.keys(obj).forEach(key => {
         // Add keys as well, as they often contain DC names or hostnames
-        if (key.length > 2 && key.length < 100) validNames.add(key.toLowerCase());
+        if (key.length > 2 && key.length < 100) {
+          const lowerKey = key.toLowerCase();
+          validNames.add(lowerKey);
+          extractNgrams(lowerKey).forEach(ngram => {
+            if (!ngramIndex.has(ngram)) {
+              ngramIndex.set(ngram, new Set());
+            }
+            ngramIndex.get(ngram).add(lowerKey);
+          });
+        }
         extractStrings(obj[key]);
       });
     }
   };
 
   data.forEach(item => extractStrings(item));
+  console.log(`[Validation] Built index with ${validNames.size} valid names, ${ngramIndex.size} n-gram entries`);
 
   const validatedFindings = [];
 
@@ -685,67 +1183,102 @@ function validateFindings(findings, data, category) {
     let affectedObjects = evidence.affected_objects || [];
 
     // 1. GLOBAL/GENERIC CHECKS (Type II Findings)
-    // If finding has NO affected objects listed, it might be a global setting (e.g. "Complexity Enabled")
-    // We only allow this if the category supports global findings.
     if (affectedObjects.length === 0) {
       if (['Users', 'Computers', 'Groups'].includes(category)) {
-        // These categories SHOULD always have affected objects for specific findings.
-        // Unless it's a summary stats finding, which we discourage AI from making.
-        // We'll treat "0 objects" but "count > 0" as a hallucination for these categories.
         if (evidence.count > 0 || finding.affected_count > 0) {
           console.log(`[Validation] 🛑 PURGING HALLUCINATION: "${finding.title}" (Category: ${category}) claims issues but lists NO objects.`);
           continue;
         }
       }
-      // For DNS, GPO, etc, global findings are okay.
       validatedFindings.push(finding);
       continue;
     }
 
     // 2. SPECIFIC OBJECT CHECKS (Type I Findings)
-    // Validate every single object name against the source of truth
+    // v1.7.0: Optimized validation using n-gram index
     const validObjects = affectedObjects.filter(objName => {
       if (!objName) return false;
       const lowerObj = objName.toString().toLowerCase();
       // Clean up common prefixes
       const cleanName = lowerObj.replace(/^(cn=|name=|user=|computer=)/, '').split(',')[0].trim();
 
-      // Strict Check
-      const isValid = validNames.has(cleanName) || validNames.has(lowerObj) ||
-        Array.from(validNames).some(vn => vn.includes(cleanName) || cleanName.includes(vn));
+      // Fast path: exact match O(1)
+      if (validNames.has(cleanName) || validNames.has(lowerObj)) {
+        return true;
+      }
 
-      return isValid;
+      // v1.7.0: Optimized fuzzy matching using n-gram index
+      // Instead of O(n) iteration, use n-grams to find candidates
+      if (cleanName.length >= 3) {
+        const searchNgrams = extractNgrams(cleanName);
+        const candidates = new Set();
+
+        // Find all names that share at least one n-gram with the search term
+        searchNgrams.forEach(ngram => {
+          const matches = ngramIndex.get(ngram);
+          if (matches) {
+            matches.forEach(m => candidates.add(m));
+          }
+        });
+
+        // Check candidates for actual match (now O(candidates) not O(validNames))
+        for (const candidate of candidates) {
+          if (candidate.includes(cleanName) || cleanName.includes(candidate)) {
+            return true;
+          }
+        }
+      }
+
+      return false;
     });
 
-    // 3. DECISION GATES
+    // 3. DECISION GATES - EXISTENCE CHECK
     if (validObjects.length === 0) {
       console.log(`[Validation] 🛑 BLOCKING TOTAL HALLUCINATION: Finding "${finding.title}" listed ${affectedObjects.length} objects but NONE exist in real data.`);
       continue; // DELETE FINDING
     }
 
     if (validObjects.length !== affectedObjects.length) {
-      console.log(`[Validation] ⚠️ PARTIAL HALLUCINATION FIX: Finding "${finding.title}" reduced from ${affectedObjects.length} to ${validObjects.length} real objects.`);
+      console.log(`[Validation] ⚠️ PARTIAL HALLUCINATION FIX (existence): Finding "${finding.title}" reduced from ${affectedObjects.length} to ${validObjects.length} real objects.`);
     }
 
-    // 4. REWRITE REALITY
+    // 4. NEW v1.7.0: ATTRIBUTE VALIDATION
+    // Verify that objects actually have the claimed vulnerability attributes
+    finding.evidence.affected_objects = validObjects; // Update before attribute check
+    const attrValidation = validateAttributes(finding, data, category);
+
+    if (!attrValidation.isValid) {
+      console.log(`[Validation] 🛑 BLOCKING ATTRIBUTE HALLUCINATION: Finding "${finding.title}" - objects exist but NONE have the claimed attributes.`);
+      continue; // DELETE FINDING
+    }
+
+    if (attrValidation.invalidObjects.length > 0) {
+      console.log(`[Validation] ⚠️ PARTIAL ATTRIBUTE FIX: Finding "${finding.title}" reduced from ${validObjects.length} to ${attrValidation.validObjects.length} (attribute-verified).`);
+    }
+
+    // Use attribute-validated objects (more strict than existence-only)
+    const finalValidObjects = attrValidation.validObjects;
+
+    // 5. REWRITE REALITY
     // Force the finding to match the verified reality
-    finding.evidence.affected_objects = validObjects;
-    finding.evidence.count = validObjects.length;
-    finding.affected_count = validObjects.length;
+    finding.evidence.affected_objects = finalValidObjects;
+    finding.evidence.count = finalValidObjects.length;
+    finding.affected_count = finalValidObjects.length;
 
     // Update title to be mathematically correct
     if (/^\d+/.test(finding.title)) {
-      finding.title = finding.title.replace(/^\d+/, validObjects.length.toString());
+      finding.title = finding.title.replace(/^\d+/, finalValidObjects.length.toString());
     } else {
       // If title doesn't start with number but finding implies count, prepend it
-      if (!finding.title.includes(validObjects.length.toString())) {
-        finding.title = `(${validObjects.length}) ${finding.title}`;
+      if (!finding.title.includes(finalValidObjects.length.toString())) {
+        finding.title = `(${finalValidObjects.length}) ${finding.title}`;
       }
     }
 
     validatedFindings.push(finding);
   }
 
+  console.log(`[Validation] ✅ Final result: ${validatedFindings.length}/${findings.length} findings passed all validations`);
   return validatedFindings;
 }
 
@@ -2125,44 +2658,66 @@ PRINCIPIOS:
 2. Si count = 0 o no hay objetos reales → NO generes finding
 3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
 
-FORMATO JSON: {"findings": [...]}
+FORMATO JSON ESTRICTO (sin texto adicional):
+{
+  "findings": [
+    {
+      "type_id": "RULE_ID",
+      "severity": "critical|high|medium|low",
+      "title": "Título descriptivo",
+      "description": "Descripción técnica",
+      "recommendation": "Recomendación",
+      "evidence": {
+        "affected_objects": ["nombre1", "nombre2"],
+        "count": 2,
+        "details": "Detalles"
+      }
+    }
+  ]
+}
 Si no hay problemas verificables: {"findings": []}`;
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: systemPrompt + '\n\n' + prompt.substring(0, MAX_PROMPT) }]
-      }],
-      generationConfig: {
-        temperature: 0.2,
-        topP: 0.95,
-        topK: 40,
-        maxOutputTokens: 8192,
-        responseMimeType: 'application/json'
-      }
-    })
-  });
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: systemPrompt + '\n\n' + prompt.substring(0, MAX_PROMPT) }]
+        }],
+        generationConfig: {
+          temperature: 0.1, // v1.7.0: Lower temperature for more deterministic output
+          topP: 0.9,
+          topK: 40,
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json'
+        }
+      })
+    });
 
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error(`[${timestamp()}] [Gemini] API error: ${res.status} - ${errorText}`);
-    throw new Error(`Gemini API error: ${res.status} - ${errorText}`);
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`[${timestamp()}] [Gemini] API error: ${res.status} - ${errorText}`);
+      throw new Error(`Gemini API error: ${res.status} - ${errorText}`);
+    }
+
+    const result = await res.json();
+    console.log(`[${timestamp()}] [Gemini] Response received:`, JSON.stringify(result).substring(0, 500));
+
+    const content = result.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (content) {
+      // v1.7.0: Robust JSON parsing with multiple fallbacks
+      const findings = parseAIResponse(content, 'Gemini');
+      console.log(`[${timestamp()}] [Gemini] Parsed ${findings.length} findings`);
+      return findings;
+    }
+
+    console.log(`[${timestamp()}] [Gemini] No content in response`);
+    return [];
+  } catch (e) {
+    console.error(`[${timestamp()}] [Gemini] Call failed:`, e.message);
+    return [];
   }
-
-  const result = await res.json();
-  console.log(`[${timestamp()}] [Gemini] Response received:`, JSON.stringify(result).substring(0, 500));
-
-  const content = result.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (content) {
-    const parsed = JSON.parse(content);
-    console.log(`[${timestamp()}] [Gemini] Parsed ${parsed.findings?.length || 0} findings`);
-    return parsed.findings || [];
-  }
-
-  console.log(`[${timestamp()}] [Gemini] No content in response`);
-  return [];
 }
 
 async function callDeepSeek(prompt, model, key) {
@@ -2221,7 +2776,11 @@ Si no hay problemas verificables: {"findings": []}`
 }
 
 async function callAnthropic(prompt, model, key) {
-  const systemPrompt = `Eres un analista de seguridad de Active Directory.
+  // v1.8.0: Enhanced system prompt for Claude 4.5 models
+  const isOpus = model.includes('opus');
+  const modelLabel = isOpus ? 'Opus 4.5' : 'Sonnet 4.5';
+
+  const systemPrompt = `Eres un analista de seguridad de Active Directory experto.${isOpus ? ' Como modelo Opus, proporciona análisis profundo con contexto de amenazas avanzadas.' : ''}
 
 ⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
 Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
@@ -2232,60 +2791,204 @@ PRINCIPIOS:
 1. SOLO reporta problemas verificables en los datos
 2. Si count = 0 o no hay objetos reales → NO generes finding
 3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
+${isOpus ? `4. Proporciona análisis de cadena de ataque cuando sea relevante
+5. Incluye referencias a técnicas MITRE ATT&CK específicas
+6. Considera escenarios de escalación de privilegios` : ''}
 
-FORMATO JSON: {"findings": [...]}
-Si no hay problemas verificables: {"findings": []}`;
+FORMATO JSON ESTRICTO (sin texto adicional, sin markdown):
+{
+  "findings": [
+    {
+      "type_id": "RULE_ID",
+      "severity": "critical|high|medium|low",
+      "title": "Título descriptivo",
+      "description": "Descripción técnica",
+      "recommendation": "Recomendación",
+      "evidence": {
+        "affected_objects": ["nombre1", "nombre2"],
+        "count": 2,
+        "details": "Detalles"
+      }${isOpus ? `,
+      "attack_chain": "Descripción opcional de cómo se podría explotar",
+      "mitre_technique": "T1234.001"` : ''}
+    }
+  ]
+}
+Si no hay problemas verificables: {"findings": []}
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: model,
-      max_tokens: 8192,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
-      ]
-    })
-  });
+IMPORTANTE: Responde SOLO con JSON válido, sin texto explicativo antes o después.`;
 
-  if (!res.ok) {
-    const errorText = await res.text();
-    console.error(`[${timestamp()}] [Anthropic] API error: ${res.status} - ${errorText}`);
-    throw new Error(`Anthropic API error: ${res.status} - ${errorText}`);
+  // v1.8.0: Optimized parameters per model
+  // Opus 4.5: Higher token limit for deeper analysis
+  // Sonnet 4.5: Standard limit for efficiency
+  const maxTokens = isOpus ? 16384 : 8192;
+
+  console.log(`[${timestamp()}] [Anthropic] Calling ${modelLabel} (max_tokens: ${maxTokens})`);
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: maxTokens,
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
+        ]
+      })
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`[${timestamp()}] [Anthropic] API error: ${res.status} - ${errorText}`);
+      throw new Error(`Anthropic API error: ${res.status} - ${errorText}`);
+    }
+
+    const result = await res.json();
+    console.log(`[${timestamp()}] [Anthropic] [${modelLabel}] Response received:`, JSON.stringify(result).substring(0, 500));
+
+    // Log usage for cost tracking
+    if (result.usage) {
+      console.log(`[${timestamp()}] [Anthropic] [${modelLabel}] Tokens - Input: ${result.usage.input_tokens}, Output: ${result.usage.output_tokens}`);
+    }
+
+    const content = result.content?.[0]?.text;
+    if (content) {
+      // v1.7.0: Use robust parsing function
+      const findings = parseAIResponse(content, `Anthropic/${modelLabel}`);
+      console.log(`[${timestamp()}] [Anthropic] [${modelLabel}] Parsed ${findings.length} findings`);
+      return findings;
+    }
+
+    console.log(`[${timestamp()}] [Anthropic] [${modelLabel}] No valid content in response`);
+    return [];
+  } catch (e) {
+    console.error(`[${timestamp()}] [Anthropic] [${modelLabel}] Call failed:`, e.message);
+    return [];
+  }
+}
+
+// =============================================================================
+// v1.7.0: ROBUST JSON PARSING FOR AI RESPONSES
+// Handles various edge cases: markdown blocks, mixed text, malformed JSON
+// =============================================================================
+
+/**
+ * Parse AI response with multiple fallback strategies
+ * @param {string} content - Raw AI response content
+ * @param {string} provider - AI provider name for logging
+ * @returns {Array} - Parsed findings array or empty array on failure
+ */
+function parseAIResponse(content, provider) {
+  if (!content || typeof content !== 'string') {
+    console.warn(`[${timestamp()}] [${provider}] Empty or invalid content`);
+    return [];
   }
 
-  const result = await res.json();
-  console.log(`[${timestamp()}] [Anthropic] Response received:`, JSON.stringify(result).substring(0, 500));
+  // Strategy 1: Direct JSON parse
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed.findings && Array.isArray(parsed.findings)) {
+      return parsed.findings;
+    }
+    // If parsed but no findings array, check if it's an array directly
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    console.warn(`[${timestamp()}] [${provider}] Parsed JSON but no findings array`);
+    return [];
+  } catch (e1) {
+    // Continue to next strategy
+  }
 
-  const content = result.content?.[0]?.text;
-  if (content) {
-    // Anthropic might wrap JSON in markdown blocks, clean it up
-    const cleanContent = content.replace(/```json\n?|\n?```/g, '').trim();
-    try {
-      const parsed = JSON.parse(cleanContent);
-      console.log(`[${timestamp()}] [Anthropic] Parsed ${parsed.findings?.length || 0} findings`);
-      return parsed.findings || [];
-    } catch (e) {
-      console.error(`[${timestamp()}] [Anthropic] Error parsing JSON:`, e.message);
-      // Try to find JSON object if mixed with text
-      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          return parsed.findings || [];
-        } catch (e2) {
-          console.error(`[${timestamp()}] [Anthropic] Error parsing extracted JSON:`, e2.message);
+  // Strategy 2: Clean markdown code blocks
+  let cleanContent = content
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/g, '')
+    .trim();
+
+  try {
+    const parsed = JSON.parse(cleanContent);
+    if (parsed.findings && Array.isArray(parsed.findings)) {
+      console.log(`[${timestamp()}] [${provider}] Parsed after removing markdown blocks`);
+      return parsed.findings;
+    }
+  } catch (e2) {
+    // Continue to next strategy
+  }
+
+  // Strategy 3: Extract JSON object using balanced brace matching
+  try {
+    const jsonStart = cleanContent.indexOf('{');
+    if (jsonStart !== -1) {
+      let braceCount = 0;
+      let jsonEnd = -1;
+
+      for (let i = jsonStart; i < cleanContent.length; i++) {
+        if (cleanContent[i] === '{') braceCount++;
+        if (cleanContent[i] === '}') braceCount--;
+        if (braceCount === 0) {
+          jsonEnd = i + 1;
+          break;
+        }
+      }
+
+      if (jsonEnd > jsonStart) {
+        const extractedJson = cleanContent.substring(jsonStart, jsonEnd);
+        const parsed = JSON.parse(extractedJson);
+        if (parsed.findings && Array.isArray(parsed.findings)) {
+          console.log(`[${timestamp()}] [${provider}] Parsed after balanced brace extraction`);
+          return parsed.findings;
         }
       }
     }
+  } catch (e3) {
+    // Continue to next strategy
   }
 
-  console.log(`[${timestamp()}] [Anthropic] No valid content in response`);
+  // Strategy 4: Find JSON array directly (for responses that skip the wrapper)
+  try {
+    const arrayMatch = cleanContent.match(/\[\s*\{[\s\S]*\}\s*\]/);
+    if (arrayMatch) {
+      const parsed = JSON.parse(arrayMatch[0]);
+      if (Array.isArray(parsed)) {
+        console.log(`[${timestamp()}] [${provider}] Parsed direct array match`);
+        return parsed;
+      }
+    }
+  } catch (e4) {
+    // Continue to final fallback
+  }
+
+  // Strategy 5: Try to fix common JSON issues
+  try {
+    // Remove trailing commas before ] or }
+    let fixedContent = cleanContent
+      .replace(/,\s*([}\]])/g, '$1')
+      // Fix unquoted keys
+      .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
+
+    const jsonStart = fixedContent.indexOf('{');
+    const jsonEnd = fixedContent.lastIndexOf('}') + 1;
+
+    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+      const extracted = fixedContent.substring(jsonStart, jsonEnd);
+      const parsed = JSON.parse(extracted);
+      if (parsed.findings && Array.isArray(parsed.findings)) {
+        console.log(`[${timestamp()}] [${provider}] Parsed after JSON fixes`);
+        return parsed.findings;
+      }
+    }
+  } catch (e5) {
+    console.error(`[${timestamp()}] [${provider}] All parsing strategies failed`);
+    console.error(`[${timestamp()}] [${provider}] Content preview: ${content.substring(0, 200)}...`);
+  }
+
   return [];
 }
 
@@ -2433,7 +3136,13 @@ app.get('/api/config/ai', async (req, res) => {
         openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
         gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'],
         deepseek: ['deepseek-chat', 'deepseek-coder'],
-        anthropic: ['claude-sonnet-4-5-20250929', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620', 'claude-3-opus-20240229']
+        anthropic: ['claude-opus-4-5-20250514', 'claude-sonnet-4-5-20250514', 'auto']
+      },
+      // v1.8.0: Inform frontend about dynamic model selection
+      anthropic_auto_select: {
+        enabled: true,
+        opus_categories: Array.from(OPUS_CATEGORIES),
+        description: 'Selección automática: Opus 4.5 para categorías críticas, Sonnet 4.5 para el resto'
       }
     });
   } catch (error) {
@@ -3010,6 +3719,586 @@ app.get('/api/debug/assessments/:id/dashboard-data', async (req, res) => {
     };
 
     res.json(dashboardDebug);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 6. Executive Summary Debug - Complete assessment overview
+app.get('/api/debug/assessments/:id/summary', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get assessment info
+    const assessmentRes = await pool.query('SELECT * FROM assessments WHERE id = $1', [id]);
+    if (assessmentRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Assessment not found' });
+    }
+    const assessment = assessmentRes.rows[0];
+    
+    // Get findings
+    const findingsRes = await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id]);
+    const findings = findingsRes.rows;
+    
+    // Get logs
+    const logsRes = await pool.query('SELECT * FROM assessment_logs WHERE assessment_id = $1 ORDER BY created_at DESC LIMIT 20', [id]);
+    const logs = logsRes.rows;
+    
+    // Get raw data stats
+    const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+    let dataStats = { hasData: false, categories: [], totalObjects: 0 };
+    
+    if (dataRes.rows.length > 0) {
+      let rawData;
+      if (Buffer.isBuffer(dataRes.rows[0].data)) {
+        rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
+      } else {
+        rawData = dataRes.rows[0].data;
+      }
+      
+      dataStats.hasData = true;
+      // Count objects per category
+      for (const category of CATEGORIES) {
+        const catData = extractCategoryData(rawData, category);
+        if (catData && catData.length > 0) {
+          dataStats.categories.push({ name: category, count: catData.length });
+          dataStats.totalObjects += catData.length;
+        }
+      }
+    }
+    
+    // Calculate severity distribution
+    const severityDist = {
+      critical: findings.filter(f => f.severity === 'critical').length,
+      high: findings.filter(f => f.severity === 'high').length,
+      medium: findings.filter(f => f.severity === 'medium').length,
+      low: findings.filter(f => f.severity === 'low').length,
+      info: findings.filter(f => f.severity === 'info' || f.severity === 'informational').length
+    };
+    
+    // Calculate health score (simple formula)
+    const riskScore = (severityDist.critical * 40) + (severityDist.high * 20) + (severityDist.medium * 5) + (severityDist.low * 1);
+    const healthScore = Math.max(0, 100 - Math.min(100, riskScore));
+    
+    // Categorize findings
+    const findingsByCategory = {};
+    findings.forEach(f => {
+      const cat = f.category_id || 'Uncategorized';
+      if (!findingsByCategory[cat]) findingsByCategory[cat] = [];
+      findingsByCategory[cat].push({ title: f.title, severity: f.severity });
+    });
+    
+    const summary = {
+      assessment: {
+        id: assessment.id,
+        domain: assessment.domain,
+        status: assessment.status,
+        created_at: assessment.created_at,
+        completed_at: assessment.completed_at,
+        duration: assessment.completed_at 
+          ? `${Math.round((new Date(assessment.completed_at) - new Date(assessment.created_at)) / 1000 / 60)} minutos`
+          : 'En progreso'
+      },
+      health: {
+        score: healthScore,
+        grade: healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F',
+        riskLevel: healthScore >= 75 ? 'Bajo' : healthScore >= 50 ? 'Medio' : healthScore >= 25 ? 'Alto' : 'Crítico'
+      },
+      findings: {
+        total: findings.length,
+        distribution: severityDist,
+        byCategory: findingsByCategory,
+        topCritical: findings.filter(f => f.severity === 'critical').slice(0, 5).map(f => f.title)
+      },
+      data: dataStats,
+      recentLogs: logs.slice(0, 10).map(l => ({
+        level: l.level,
+        message: l.message,
+        time: l.created_at
+      })),
+      debugTips: []
+    };
+    
+    // Add debug tips based on analysis
+    if (findings.length === 0) {
+      summary.debugTips.push('⚠️ Sin hallazgos: Verificar /validate para detectar problemas de análisis');
+    }
+    if (!dataStats.hasData) {
+      summary.debugTips.push('❌ Sin datos raw: El assessment no tiene datos cargados');
+    }
+    if (assessment.status === 'failed') {
+      summary.debugTips.push('🔴 Assessment fallido: Revisar logs para identificar el error');
+    }
+    if (severityDist.critical === 0 && dataStats.totalObjects > 100) {
+      summary.debugTips.push('🤔 Muchos objetos pero sin críticos: Posible problema en prompts de IA');
+    }
+    
+    res.json(summary);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 7. Data Coverage Analysis - What data was collected and analyzed
+app.get('/api/debug/assessments/:id/data-coverage', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+    if (dataRes.rows.length === 0) {
+      return res.status(404).json({ error: 'No data found for assessment' });
+    }
+    
+    let rawData;
+    if (Buffer.isBuffer(dataRes.rows[0].data)) {
+      rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
+    } else {
+      rawData = dataRes.rows[0].data;
+    }
+    
+    const coverage = {
+      timestamp: new Date().toISOString(),
+      categories: [],
+      missingCategories: [],
+      dataQuality: {
+        score: 0,
+        issues: []
+      },
+      sampleData: {}
+    };
+    
+    let categoriesWithData = 0;
+    
+    for (const category of CATEGORIES) {
+      const catData = extractCategoryData(rawData, category);
+      const catInfo = {
+        name: category,
+        hasData: false,
+        count: 0,
+        fields: [],
+        sampleSize: 0
+      };
+      
+      if (catData && catData.length > 0) {
+        catInfo.hasData = true;
+        catInfo.count = catData.length;
+        categoriesWithData++;
+        
+        // Extract field names from first item
+        if (catData[0] && typeof catData[0] === 'object') {
+          catInfo.fields = Object.keys(catData[0]).slice(0, 15);
+        }
+        
+        // Add sample (first 2 items, sanitized)
+        coverage.sampleData[category] = catData.slice(0, 2).map(item => {
+          if (typeof item === 'object') {
+            const sanitized = {};
+            Object.keys(item).slice(0, 10).forEach(k => {
+              const val = item[k];
+              if (typeof val === 'string' && val.length > 100) {
+                sanitized[k] = val.substring(0, 100) + '...';
+              } else if (Array.isArray(val)) {
+                sanitized[k] = `[Array: ${val.length} items]`;
+              } else {
+                sanitized[k] = val;
+              }
+            });
+            return sanitized;
+          }
+          return item;
+        });
+        
+        coverage.categories.push(catInfo);
+      } else {
+        coverage.missingCategories.push(category);
+      }
+    }
+    
+    // Calculate data quality score
+    const expectedCategories = ['Users', 'Computers', 'Groups', 'GPOs', 'OUs'];
+    const criticalMissing = expectedCategories.filter(c => coverage.missingCategories.includes(c));
+    
+    coverage.dataQuality.score = Math.round((categoriesWithData / CATEGORIES.length) * 100);
+    
+    if (criticalMissing.length > 0) {
+      coverage.dataQuality.issues.push(`Categorías críticas faltantes: ${criticalMissing.join(', ')}`);
+      coverage.dataQuality.score = Math.max(0, coverage.dataQuality.score - (criticalMissing.length * 10));
+    }
+    
+    if (categoriesWithData < 5) {
+      coverage.dataQuality.issues.push('Muy pocas categorías con datos - verificar script de recolección');
+    }
+    
+    // Check for empty or minimal data
+    coverage.categories.forEach(cat => {
+      if (cat.count === 1) {
+        coverage.dataQuality.issues.push(`${cat.name}: Solo 1 objeto - posible error de recolección`);
+      }
+    });
+    
+    res.json(coverage);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 8. Findings Analytics - Detailed analysis of generated findings
+app.get('/api/debug/assessments/:id/findings-analytics', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const findingsRes = await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id]);
+    const findings = findingsRes.rows;
+    
+    if (findings.length === 0) {
+      return res.json({
+        message: 'No findings to analyze',
+        suggestions: [
+          'Verificar si el análisis completó correctamente',
+          'Revisar logs con /api/debug/assessments/:id/summary',
+          'Usar /api/debug/assessments/:id/analyze para re-ejecutar'
+        ]
+      });
+    }
+    
+    const analytics = {
+      overview: {
+        total: findings.length,
+        unique_categories: [...new Set(findings.map(f => f.category_id).filter(Boolean))].length,
+        avg_affected_objects: 0
+      },
+      distribution: {
+        bySeverity: {},
+        byCategory: {},
+        byAffectedCount: { '0': 0, '1-5': 0, '6-20': 0, '21-50': 0, '50+': 0 }
+      },
+      quality: {
+        score: 100,
+        issues: [],
+        warnings: []
+      },
+      patterns: {
+        duplicateTitles: [],
+        emptyEvidence: [],
+        noRemediation: [],
+        suspiciousFindings: []
+      },
+      details: []
+    };
+    
+    const titleCounts = {};
+    let totalAffected = 0;
+    
+    findings.forEach(f => {
+      // Severity distribution
+      const sev = f.severity || 'unknown';
+      analytics.distribution.bySeverity[sev] = (analytics.distribution.bySeverity[sev] || 0) + 1;
+      
+      // Category distribution
+      const cat = f.category_id || 'Uncategorized';
+      analytics.distribution.byCategory[cat] = (analytics.distribution.byCategory[cat] || 0) + 1;
+      
+      // Affected objects analysis
+      const evidence = f.evidence || {};
+      const affected = evidence.affected_objects || [];
+      const affectedCount = affected.length;
+      totalAffected += affectedCount;
+      
+      if (affectedCount === 0) analytics.distribution.byAffectedCount['0']++;
+      else if (affectedCount <= 5) analytics.distribution.byAffectedCount['1-5']++;
+      else if (affectedCount <= 20) analytics.distribution.byAffectedCount['6-20']++;
+      else if (affectedCount <= 50) analytics.distribution.byAffectedCount['21-50']++;
+      else analytics.distribution.byAffectedCount['50+']++;
+      
+      // Track duplicates
+      titleCounts[f.title] = (titleCounts[f.title] || 0) + 1;
+      
+      // Quality checks
+      if (!evidence || Object.keys(evidence).length === 0) {
+        analytics.patterns.emptyEvidence.push(f.title);
+      }
+      if (!f.remediation || f.remediation.trim().length < 20) {
+        analytics.patterns.noRemediation.push(f.title);
+      }
+      
+      // Suspicious patterns (potential hallucinations)
+      if (affected.some(obj => obj.includes('ejemplo') || obj.includes('test123') || obj.includes('sample'))) {
+        analytics.patterns.suspiciousFindings.push({
+          title: f.title,
+          reason: 'Contiene objetos con nombres sospechosos (ejemplo, test, sample)'
+        });
+      }
+      
+      // Add to details
+      analytics.details.push({
+        id: f.id,
+        title: f.title,
+        severity: f.severity,
+        category: f.category_id,
+        affectedCount: affectedCount,
+        hasRemediation: !!(f.remediation && f.remediation.length > 20),
+        hasEvidence: !!(evidence && Object.keys(evidence).length > 0)
+      });
+    });
+    
+    // Calculate averages
+    analytics.overview.avg_affected_objects = Math.round(totalAffected / findings.length);
+    
+    // Find duplicates
+    Object.entries(titleCounts).forEach(([title, count]) => {
+      if (count > 1) {
+        analytics.patterns.duplicateTitles.push({ title, count });
+      }
+    });
+    
+    // Calculate quality score
+    if (analytics.patterns.duplicateTitles.length > 0) {
+      analytics.quality.score -= 15;
+      analytics.quality.issues.push(`${analytics.patterns.duplicateTitles.length} hallazgos duplicados detectados`);
+    }
+    if (analytics.patterns.emptyEvidence.length > findings.length * 0.3) {
+      analytics.quality.score -= 20;
+      analytics.quality.issues.push(`${Math.round(analytics.patterns.emptyEvidence.length / findings.length * 100)}% de hallazgos sin evidencia`);
+    }
+    if (analytics.patterns.suspiciousFindings.length > 0) {
+      analytics.quality.score -= 25;
+      analytics.quality.issues.push(`${analytics.patterns.suspiciousFindings.length} hallazgos sospechosos (posibles alucinaciones)`);
+    }
+    if (analytics.patterns.noRemediation.length > findings.length * 0.2) {
+      analytics.quality.score -= 10;
+      analytics.quality.warnings.push(`${analytics.patterns.noRemediation.length} hallazgos con remediación insuficiente`);
+    }
+    
+    analytics.quality.score = Math.max(0, analytics.quality.score);
+    
+    res.json(analytics);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 9. Deep Grounding Check - Verify all findings against source data
+app.get('/api/debug/assessments/:id/grounding-check', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Get findings
+    const findingsRes = await pool.query('SELECT * FROM findings WHERE assessment_id = $1', [id]);
+    const findings = findingsRes.rows;
+    
+    // Get raw data
+    const dataRes = await pool.query('SELECT data FROM assessment_data WHERE assessment_id = $1', [id]);
+    if (dataRes.rows.length === 0) {
+      return res.status(404).json({ error: 'No source data found' });
+    }
+    
+    let rawData;
+    if (Buffer.isBuffer(dataRes.rows[0].data)) {
+      rawData = JSON.parse(zlib.gunzipSync(dataRes.rows[0].data).toString());
+    } else {
+      rawData = dataRes.rows[0].data;
+    }
+    
+    const groundingReport = {
+      timestamp: new Date().toISOString(),
+      summary: {
+        totalFindings: findings.length,
+        verified: 0,
+        unverified: 0,
+        partiallyVerified: 0,
+        globalFindings: 0,
+        groundingScore: 0
+      },
+      validNames: {
+        total: 0,
+        sample: []
+      },
+      details: [],
+      hallucinations: [],
+      recommendations: []
+    };
+    
+    // Build comprehensive valid names set with deep extraction
+    const validNames = new Set();
+    const validNamesMap = {}; // Track source category
+    
+    const extractNames = (obj, category = 'unknown', path = '') => {
+      if (!obj) return;
+      
+      if (typeof obj === 'string') {
+        if (obj.length > 2 && obj.length < 150) {
+          const clean = obj.toLowerCase().trim();
+          validNames.add(clean);
+          if (!validNamesMap[clean]) validNamesMap[clean] = [];
+          validNamesMap[clean].push(category);
+        }
+        return;
+      }
+      
+      if (Array.isArray(obj)) {
+        obj.forEach((item, idx) => extractNames(item, category, `${path}[${idx}]`));
+        return;
+      }
+      
+      if (typeof obj === 'object') {
+        Object.keys(obj).forEach(key => {
+          // Add key itself as valid name
+          if (key.length > 2 && key.length < 100) {
+            validNames.add(key.toLowerCase());
+          }
+          extractNames(obj[key], category, `${path}.${key}`);
+        });
+      }
+    };
+    
+    // Extract from all categories
+    CATEGORIES.forEach(cat => {
+      const catData = extractCategoryData(rawData, cat);
+      if (catData) {
+        catData.forEach(item => extractNames(item, cat));
+      }
+    });
+    
+    groundingReport.validNames.total = validNames.size;
+    groundingReport.validNames.sample = Array.from(validNames).slice(0, 50);
+    
+    // Verify each finding
+    findings.forEach(f => {
+      const evidence = f.evidence || {};
+      const affected = evidence.affected_objects || [];
+      
+      const findingCheck = {
+        id: f.id,
+        title: f.title,
+        severity: f.severity,
+        category: f.category_id,
+        affectedObjects: affected.length,
+        status: 'pending',
+        verifiedObjects: [],
+        unverifiedObjects: [],
+        verificationRate: 0
+      };
+      
+      if (affected.length === 0) {
+        // Global finding (no specific objects)
+        findingCheck.status = 'global';
+        groundingReport.summary.globalFindings++;
+      } else {
+        // Verify each affected object
+        affected.forEach(obj => {
+          // Clean object name for comparison
+          const cleanVersions = [
+            obj.toLowerCase().trim(),
+            obj.replace(/^CN=|,.*/g, '').toLowerCase().trim(),
+            obj.split('\\').pop()?.toLowerCase().trim(),
+            obj.split('@')[0]?.toLowerCase().trim()
+          ].filter(Boolean);
+          
+          const isValid = cleanVersions.some(v => validNames.has(v));
+          
+          if (isValid) {
+            findingCheck.verifiedObjects.push(obj);
+          } else {
+            findingCheck.unverifiedObjects.push(obj);
+          }
+        });
+        
+        findingCheck.verificationRate = Math.round(
+          (findingCheck.verifiedObjects.length / affected.length) * 100
+        );
+        
+        if (findingCheck.verificationRate === 100) {
+          findingCheck.status = 'verified';
+          groundingReport.summary.verified++;
+        } else if (findingCheck.verificationRate >= 50) {
+          findingCheck.status = 'partial';
+          groundingReport.summary.partiallyVerified++;
+        } else {
+          findingCheck.status = 'unverified';
+          groundingReport.summary.unverified++;
+          
+          // Add to hallucinations list
+          groundingReport.hallucinations.push({
+            findingId: f.id,
+            title: f.title,
+            severity: f.severity,
+            invalidObjects: findingCheck.unverifiedObjects.slice(0, 10),
+            verificationRate: findingCheck.verificationRate
+          });
+        }
+      }
+      
+      groundingReport.details.push(findingCheck);
+    });
+    
+    // Calculate grounding score
+    const verifiableFindings = findings.length - groundingReport.summary.globalFindings;
+    if (verifiableFindings > 0) {
+      groundingReport.summary.groundingScore = Math.round(
+        ((groundingReport.summary.verified + (groundingReport.summary.partiallyVerified * 0.5)) / verifiableFindings) * 100
+      );
+    } else {
+      groundingReport.summary.groundingScore = 100; // All global findings
+    }
+    
+    // Generate recommendations
+    if (groundingReport.hallucinations.length > 0) {
+      groundingReport.recommendations.push({
+        priority: 'high',
+        action: 'Revisar prompts de IA para reforzar grounding',
+        details: `${groundingReport.hallucinations.length} hallazgos contienen objetos no verificables`
+      });
+    }
+    if (groundingReport.summary.groundingScore < 70) {
+      groundingReport.recommendations.push({
+        priority: 'critical',
+        action: 'Re-ejecutar análisis con prompts mejorados',
+        details: `Score de grounding ${groundingReport.summary.groundingScore}% es demasiado bajo`
+      });
+    }
+    if (groundingReport.summary.globalFindings > findings.length * 0.5) {
+      groundingReport.recommendations.push({
+        priority: 'medium',
+        action: 'Verificar que los hallazgos incluyan objetos específicos afectados',
+        details: `${Math.round(groundingReport.summary.globalFindings / findings.length * 100)}% de hallazgos son globales`
+      });
+    }
+    
+    res.json(groundingReport);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 10. List all assessments for debugging
+app.get('/api/debug/assessments', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        a.id,
+        a.domain,
+        a.status,
+        a.created_at,
+        a.completed_at,
+        (SELECT COUNT(*) FROM findings WHERE assessment_id = a.id) as findings_count,
+        (SELECT COUNT(*) FROM assessment_data WHERE assessment_id = a.id) as has_data
+      FROM assessments a
+      ORDER BY a.created_at DESC
+      LIMIT 50
+    `);
+    
+    res.json({
+      total: result.rows.length,
+      assessments: result.rows.map(a => ({
+        id: a.id,
+        domain: a.domain,
+        status: a.status,
+        created: a.created_at,
+        completed: a.completed_at,
+        findings: parseInt(a.findings_count),
+        hasData: parseInt(a.has_data) > 0
+      }))
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
