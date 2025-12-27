@@ -376,23 +376,71 @@ function Get-AllADUsers {
             "Administradores de DNS", "Propietarios creadores de directivas de grupo"
         )
 
-        # Get all users first, then process
-        $adUsers = @(Get-ADUser -Filter * -Properties \`
-            DisplayName, UserPrincipalName, Enabled, PasswordLastSet, PasswordNeverExpires, \`
-            PasswordNotRequired, LastLogonDate, whenCreated, ServicePrincipalName, \`
-            DoesNotRequirePreAuth, TrustedForDelegation, TrustedToAuthForDelegation, \`
-            MemberOf, msDS-SupportedEncryptionTypes, \`
-            msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity -ErrorAction Stop)
+        # First, count users to verify AD connectivity
+        Write-Host "[*] Verifying AD connectivity and counting users..." -ForegroundColor Cyan
+        $userCount = 0
+        try {
+            $userCount = (Get-ADUser -Filter * -ErrorAction Stop | Measure-Object).Count
+            Write-Host "[+] Found $userCount users in Active Directory" -ForegroundColor Green
+        } catch {
+            Write-Host "[!] Failed to count users - AD connectivity issue: $_" -ForegroundColor Red
+            return @()
+        }
+
+        if ($userCount -eq 0) {
+            Write-Host "[!] No users found in AD - check permissions" -ForegroundColor Yellow
+            return @()
+        }
+
+        # Get all users with properties - use ResultSetSize for large domains
+        Write-Host "[*] Retrieving user properties (this may take several minutes for large domains)..." -ForegroundColor Cyan
+        $adUsers = $null
+        try {
+            $adUsers = @(Get-ADUser -Filter * -Properties \`
+                DisplayName, UserPrincipalName, Enabled, PasswordLastSet, PasswordNeverExpires, \`
+                PasswordNotRequired, LastLogonDate, whenCreated, ServicePrincipalName, \`
+                DoesNotRequirePreAuth, TrustedForDelegation, TrustedToAuthForDelegation, \`
+                MemberOf, msDS-SupportedEncryptionTypes, \`
+                msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity -ErrorAction Stop)
+        } catch {
+            Write-Host "[!] Failed to retrieve user properties: $_" -ForegroundColor Red
+            Write-Host "[*] Attempting simplified query without extended properties..." -ForegroundColor Yellow
+            try {
+                # Fallback: get basic properties only
+                $adUsers = @(Get-ADUser -Filter * -Properties \`
+                    DisplayName, UserPrincipalName, Enabled, PasswordLastSet, PasswordNeverExpires, \`
+                    PasswordNotRequired, LastLogonDate, whenCreated, MemberOf -ErrorAction Stop)
+                Write-Host "[+] Simplified query succeeded" -ForegroundColor Green
+            } catch {
+                Write-Host "[!] Even simplified query failed: $_" -ForegroundColor Red
+                return @()
+            }
+        }
+
+        if (-not $adUsers -or $adUsers.Count -eq 0) {
+            Write-Host "[!] No users retrieved - returning empty array" -ForegroundColor Yellow
+            return @()
+        }
 
         Write-Host "[*] Processing $($adUsers.Count) users..." -ForegroundColor Cyan
+        $processedCount = 0
+        $errorCount = 0
 
         foreach ($user in $adUsers) {
             try {
+                # Get group names efficiently - avoid individual Get-ADGroup calls for performance
                 $userGroups = @()
                 if ($user.MemberOf) {
-                    $userGroups = $user.MemberOf | ForEach-Object {
-                        (Get-ADGroup $_ -ErrorAction SilentlyContinue).Name
-                    } | Where-Object { $_ -ne $null }
+                    foreach ($groupDN in $user.MemberOf) {
+                        try {
+                            # Extract CN from DN directly for speed
+                            if ($groupDN -match '^CN=([^,]+),') {
+                                $userGroups += $matches[1]
+                            }
+                        } catch {
+                            # Silently skip problematic group DNs
+                        }
+                    }
                 }
 
                 $isPrivileged = ($userGroups | Where-Object { $privilegedGroups -contains $_ }).Count -gt 0
@@ -411,6 +459,14 @@ function Get-AllADUsers {
                 if ($user.MemberOf) { $groupCount = @($user.MemberOf).Count }
                 $tokenSize = 1200 + (40 * $groupCount)
 
+                # Handle potentially null SPN property
+                $spnList = @()
+                $isKerberoastable = $false
+                if ($user.ServicePrincipalName) {
+                    $spnList = @($user.ServicePrincipalName)
+                    $isKerberoastable = $spnList.Count -gt 0
+                }
+
                 $userObj = @{
                     SamAccountName = $user.SamAccountName
                     DisplayName = $user.DisplayName
@@ -424,21 +480,36 @@ function Get-AllADUsers {
                     WhenCreated = $user.whenCreated
                     IsPrivileged = $isPrivileged
                     PrivilegedGroups = @($userGroups | Where-Object { $privilegedGroups -contains $_ })
-                    ServicePrincipalNames = @($user.ServicePrincipalName)
-                    IsKerberoastable = (@($user.ServicePrincipalName).Count -gt 0 -and $user.ServicePrincipalName -ne $null)
-                    DoNotRequirePreAuth = $user.DoesNotRequirePreAuth
-                    IsASREPRoastable = $user.DoesNotRequirePreAuth
-                    TrustedForDelegation = $user.TrustedForDelegation
-                    TrustedToAuthForDelegation = $user.TrustedToAuthForDelegation
+                    ServicePrincipalNames = $spnList
+                    IsKerberoastable = $isKerberoastable
+                    DoNotRequirePreAuth = [bool]$user.DoesNotRequirePreAuth
+                    IsASREPRoastable = [bool]$user.DoesNotRequirePreAuth
+                    TrustedForDelegation = [bool]$user.TrustedForDelegation
+                    TrustedToAuthForDelegation = [bool]$user.TrustedToAuthForDelegation
                     AllowedToDelegateTo = @($user.'msDS-AllowedToDelegateTo')
                     IsStale = $isStale
                     EstimatedTokenSize = $tokenSize
                 }
 
                 $usersList += $userObj
+                $processedCount++
+
+                # Progress indicator for large domains
+                if ($processedCount % 500 -eq 0) {
+                    Write-Host "[*] Processed $processedCount of $($adUsers.Count) users..." -ForegroundColor Cyan
+                }
             } catch {
-                Write-Host "[!] Error processing user $($user.SamAccountName): $_" -ForegroundColor Yellow
+                $errorCount++
+                if ($errorCount -le 5) {
+                    Write-Host "[!] Error processing user $($user.SamAccountName): $_" -ForegroundColor Yellow
+                } elseif ($errorCount -eq 6) {
+                    Write-Host "[!] Suppressing further individual user errors..." -ForegroundColor Yellow
+                }
             }
+        }
+
+        if ($errorCount -gt 0) {
+            Write-Host "[!] Total user processing errors: $errorCount" -ForegroundColor Yellow
         }
 
         Write-Host "[+] Successfully collected $($usersList.Count) users" -ForegroundColor Green
@@ -451,6 +522,7 @@ function Get-AllADUsers {
 
     } catch {
         Write-Host "[!] CRITICAL Error collecting users: $_" -ForegroundColor Red
+        Write-Host "[!] Exception type: $($_.Exception.GetType().FullName)" -ForegroundColor Red
         Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
         return @()
     }
@@ -463,13 +535,41 @@ function Get-AllADComputers {
     $computersList = @()
 
     try {
-        # Get all computers first, then process - prevents null on single result
-        $adComputers = @(Get-ADComputer -Filter * -Properties \`
-            DNSHostName, Enabled, OperatingSystem, OperatingSystemVersion, \`
-            LastLogonDate, PasswordLastSet, whenCreated, TrustedForDelegation, \`
-            PrimaryGroupID -ErrorAction Stop)
+        # First, count computers to verify AD connectivity
+        Write-Host "[*] Verifying AD connectivity and counting computers..." -ForegroundColor Cyan
+        $computerCount = 0
+        try {
+            $computerCount = (Get-ADComputer -Filter * -ErrorAction Stop | Measure-Object).Count
+            Write-Host "[+] Found $computerCount computers in Active Directory" -ForegroundColor Green
+        } catch {
+            Write-Host "[!] Failed to count computers - AD connectivity issue: $_" -ForegroundColor Red
+            return @()
+        }
+
+        if ($computerCount -eq 0) {
+            Write-Host "[!] No computers found in AD - check permissions" -ForegroundColor Yellow
+            return @()
+        }
+
+        # Get all computers with properties
+        $adComputers = $null
+        try {
+            $adComputers = @(Get-ADComputer -Filter * -Properties \`
+                DNSHostName, Enabled, OperatingSystem, OperatingSystemVersion, \`
+                LastLogonDate, PasswordLastSet, whenCreated, TrustedForDelegation, \`
+                PrimaryGroupID -ErrorAction Stop)
+        } catch {
+            Write-Host "[!] Failed to retrieve computer properties: $_" -ForegroundColor Red
+            return @()
+        }
+
+        if (-not $adComputers -or $adComputers.Count -eq 0) {
+            Write-Host "[!] No computers retrieved - returning empty array" -ForegroundColor Yellow
+            return @()
+        }
 
         Write-Host "[*] Processing $($adComputers.Count) computers..." -ForegroundColor Cyan
+        $errorCount = 0
 
         foreach ($computer in $adComputers) {
             try {
@@ -485,24 +585,31 @@ function Get-AllADComputers {
                     Name = $computer.Name
                     DNSHostName = $computer.DNSHostName
                     DistinguishedName = $computer.DistinguishedName
-                    Enabled = $computer.Enabled
+                    Enabled = [bool]$computer.Enabled
                     OperatingSystem = $computer.OperatingSystem
                     OperatingSystemVersion = $computer.OperatingSystemVersion
                     LastLogonDate = $computer.LastLogonDate
                     PasswordLastSet = $computer.PasswordLastSet
                     WhenCreated = $computer.whenCreated
                     IsDomainController = $isDC
-                    TrustedForDelegation = $computer.TrustedForDelegation
+                    TrustedForDelegation = [bool]$computer.TrustedForDelegation
                     IsStale = $isStale
                 }
 
                 $computersList += $computerObj
             } catch {
-                Write-Host "[!] Error processing computer $($computer.Name): $_" -ForegroundColor Yellow
+                $errorCount++
+                if ($errorCount -le 5) {
+                    Write-Host "[!] Error processing computer $($computer.Name): $_" -ForegroundColor Yellow
+                }
             }
         }
 
-        Write-Host "[+] Collected $($computersList.Count) computers" -ForegroundColor Green
+        if ($errorCount -gt 0) {
+            Write-Host "[!] Total computer processing errors: $errorCount" -ForegroundColor Yellow
+        }
+
+        Write-Host "[+] Successfully collected $($computersList.Count) computers" -ForegroundColor Green
 
         # Ensure we always return an array
         if ($computersList.Count -eq 0) {
@@ -511,6 +618,7 @@ function Get-AllADComputers {
         return @($computersList | Sort-Object { $_.Name } -Unique)
     } catch {
         Write-Host "[!] CRITICAL Error collecting computers: $_" -ForegroundColor Red
+        Write-Host "[!] Exception type: $($_.Exception.GetType().FullName)" -ForegroundColor Red
         Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
         return @()
     }
