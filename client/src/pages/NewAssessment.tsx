@@ -1777,9 +1777,56 @@ function Get-DCHealthDetails {
                     }
                 } catch {}
 
+                # Calculate OverallHealth based on collected metrics
+                $healthIssues = @()
+                $healthScore = "Healthy"
+
+                # Check Antivirus
+                if ($avStatus -eq "Unknown" -or ($avStatus -is [hashtable] -and $avStatus.Enabled -eq $false)) {
+                    $healthIssues += "Antivirus disabled or unknown"
+                    $healthScore = "Warning"
+                }
+                if ($avStatus -is [hashtable] -and $avStatus.RealTimeEnabled -eq $false) {
+                    $healthIssues += "Real-time protection disabled"
+                    $healthScore = "Warning"
+                }
+
+                # Check Critical Events
+                if ($criticalEvents.Count -gt 10) {
+                    $healthIssues += "High number of critical events ($($criticalEvents.Count))"
+                    $healthScore = "Warning"
+                }
+                if ($criticalEvents.Count -gt 50) {
+                    $healthScore = "Critical"
+                }
+
+                # Check for specific critical event patterns
+                $netlogonErrors = @($criticalEvents | Where-Object { $_.Source -eq "NETLOGON" })
+                if ($netlogonErrors.Count -gt 5) {
+                    $healthIssues += "Multiple NETLOGON errors ($($netlogonErrors.Count))"
+                    if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
+                # Check Time Sync
+                if ($timeConfig) {
+                    $timeSyncError = $timeConfig | Where-Object { $_ -match "Last Sync Error:.*[1-9]" }
+                    if ($timeSyncError) {
+                        $healthIssues += "Time synchronization error detected"
+                        if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                    }
+                }
+
+                # Check Hotfixes (if none in last 90 days, warning)
+                if ($hotfixes.Count -eq 0) {
+                    $healthIssues += "No recent hotfixes found"
+                    if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
                 $dcHealthInfo.DomainControllers += @{
                     Name = $dc.Name
                     HostName = $dc.HostName
+                    OverallHealth = $healthScore
+                    HealthIssues = $healthIssues
                     RecentHotfixes = $hotfixes
                     TimeConfiguration = $timeConfig
                     CriticalEvents = $criticalEvents
@@ -1787,7 +1834,8 @@ function Get-DCHealthDetails {
                     Antivirus = $avStatus
                 }
 
-                Write-Host "[+] Health data collected for $($dc.Name)" -ForegroundColor Green
+                $healthColor = switch ($healthScore) { "Healthy" { "Green" } "Warning" { "Yellow" } "Critical" { "Red" } default { "White" } }
+                Write-Host "[+] Health data collected for $($dc.Name): $healthScore" -ForegroundColor $healthColor
             } catch {
                 Write-Host "[!] Could not collect full health data from $($dc.Name): $_" -ForegroundColor Yellow
             }
