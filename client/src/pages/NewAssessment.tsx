@@ -362,162 +362,220 @@ function Get-TrustRelationships {
 
 function Get-AllADUsers {
     Write-Host "\`n[*] Collecting Active Directory Users (this may take a while)..." -ForegroundColor Green
+
+    # Initialize as empty array to prevent null
+    $usersList = @()
+
     try {
-        $users = Get-ADUser -Filter * -Properties \`
+        $privilegedGroups = @(
+            "Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators",
+            "Account Operators", "Backup Operators", "Server Operators", "Print Operators",
+            "DnsAdmins", "Group Policy Creator Owners",
+            "Admins. del dominio", "Administradores de empresas", "Administradores de esquema", "Administradores",
+            "Operadores de cuentas", "Operadores de copia de seguridad", "Operadores de servidores", "Operadores de impresión",
+            "Administradores de DNS", "Propietarios creadores de directivas de grupo"
+        )
+
+        # Get all users first, then process
+        $adUsers = @(Get-ADUser -Filter * -Properties \`
             DisplayName, UserPrincipalName, Enabled, PasswordLastSet, PasswordNeverExpires, \`
             PasswordNotRequired, LastLogonDate, whenCreated, ServicePrincipalName, \`
             DoesNotRequirePreAuth, TrustedForDelegation, TrustedToAuthForDelegation, \`
             MemberOf, msDS-SupportedEncryptionTypes, \`
-            msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity | ForEach-Object {
+            msDS-AllowedToDelegateTo, msDS-AllowedToActOnBehalfOfOtherIdentity -ErrorAction Stop)
 
-            $privilegedGroups = @(
-                "Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators",
-                "Account Operators", "Backup Operators", "Server Operators", "Print Operators",
-                "DnsAdmins", "Group Policy Creator Owners",
-                "Admins. del dominio", "Administradores de empresas", "Administradores de esquema", "Administradores",
-                "Operadores de cuentas", "Operadores de copia de seguridad", "Operadores de servidores", "Operadores de impresión",
-                "Administradores de DNS", "Propietarios creadores de directivas de grupo"
-            )
+        Write-Host "[*] Processing $($adUsers.Count) users..." -ForegroundColor Cyan
 
-            $userGroups = $_.MemberOf | ForEach-Object {
-                (Get-ADGroup $_ -ErrorAction SilentlyContinue).Name
-            }
+        foreach ($user in $adUsers) {
+            try {
+                $userGroups = @()
+                if ($user.MemberOf) {
+                    $userGroups = $user.MemberOf | ForEach-Object {
+                        (Get-ADGroup $_ -ErrorAction SilentlyContinue).Name
+                    } | Where-Object { $_ -ne $null }
+                }
 
-            $isPrivileged = ($userGroups | Where-Object { $privilegedGroups -contains $_ }).Count -gt 0
+                $isPrivileged = ($userGroups | Where-Object { $privilegedGroups -contains $_ }).Count -gt 0
 
-            $isStale = $false
-            if ($_.LastLogonDate) {
-                $daysSinceLogon = (Get-Date) - $_.LastLogonDate
-                $isStale = $daysSinceLogon.Days -gt 90
-            } elseif ($_.whenCreated) {
-                $daysSinceCreation = (Get-Date) - $_.whenCreated
-                $isStale = $daysSinceCreation.Days -gt 90
-            }
+                $isStale = $false
+                if ($user.LastLogonDate) {
+                    $daysSinceLogon = (Get-Date) - $user.LastLogonDate
+                    $isStale = $daysSinceLogon.Days -gt 90
+                } elseif ($user.whenCreated) {
+                    $daysSinceCreation = (Get-Date) - $user.whenCreated
+                    $isStale = $daysSinceCreation.Days -gt 90
+                }
 
-            # Calculate Estimated Token Size (Kerberos)
-            # Formula: 1200 (Overhead) + (40 * GroupMemberships)
-            $groupCount = 0
-            if ($_.MemberOf) { $groupCount = $_.MemberOf.Count }
-            $tokenSize = 1200 + (40 * $groupCount)
+                # Calculate Estimated Token Size (Kerberos)
+                $groupCount = 0
+                if ($user.MemberOf) { $groupCount = @($user.MemberOf).Count }
+                $tokenSize = 1200 + (40 * $groupCount)
 
-            @{
-                SamAccountName = $_.SamAccountName
-                DisplayName = $_.DisplayName
-                UserPrincipalName = $_.UserPrincipalName
-                DistinguishedName = $_.DistinguishedName
-                Enabled = $_.Enabled
-                PasswordLastSet = $_.PasswordLastSet
-                PasswordNeverExpires = $_.PasswordNeverExpires
-                PasswordNotRequired = $_.PasswordNotRequired
-                LastLogonDate = $_.LastLogonDate
-                WhenCreated = $_.whenCreated
-                IsPrivileged = $isPrivileged
-                PrivilegedGroups = @($userGroups | Where-Object { $privilegedGroups -contains $_ })
-                ServicePrincipalNames = @($_.ServicePrincipalName)
-                IsKerberoastable = ($_.ServicePrincipalName.Count -gt 0)
-                DoNotRequirePreAuth = $_.DoesNotRequirePreAuth
-                IsASREPRoastable = $_.DoesNotRequirePreAuth
-                TrustedForDelegation = $_.TrustedForDelegation
-                TrustedToAuthForDelegation = $_.TrustedToAuthForDelegation
-                AllowedToDelegateTo = @($_.'msDS-AllowedToDelegateTo')
-                IsStale = $isStale
-                EstimatedTokenSize = $tokenSize
+                $userObj = @{
+                    SamAccountName = $user.SamAccountName
+                    DisplayName = $user.DisplayName
+                    UserPrincipalName = $user.UserPrincipalName
+                    DistinguishedName = $user.DistinguishedName
+                    Enabled = $user.Enabled
+                    PasswordLastSet = $user.PasswordLastSet
+                    PasswordNeverExpires = $user.PasswordNeverExpires
+                    PasswordNotRequired = $user.PasswordNotRequired
+                    LastLogonDate = $user.LastLogonDate
+                    WhenCreated = $user.whenCreated
+                    IsPrivileged = $isPrivileged
+                    PrivilegedGroups = @($userGroups | Where-Object { $privilegedGroups -contains $_ })
+                    ServicePrincipalNames = @($user.ServicePrincipalName)
+                    IsKerberoastable = (@($user.ServicePrincipalName).Count -gt 0 -and $user.ServicePrincipalName -ne $null)
+                    DoNotRequirePreAuth = $user.DoesNotRequirePreAuth
+                    IsASREPRoastable = $user.DoesNotRequirePreAuth
+                    TrustedForDelegation = $user.TrustedForDelegation
+                    TrustedToAuthForDelegation = $user.TrustedToAuthForDelegation
+                    AllowedToDelegateTo = @($user.'msDS-AllowedToDelegateTo')
+                    IsStale = $isStale
+                    EstimatedTokenSize = $tokenSize
+                }
+
+                $usersList += $userObj
+            } catch {
+                Write-Host "[!] Error processing user $($user.SamAccountName): $_" -ForegroundColor Yellow
             }
         }
 
-        Write-Host "[+] Collected $($users.Count) users" -ForegroundColor Green
-        
-        # Ensure uniqueness to prevent duplicate reporting
-        if ($users) {
-            return $users | Sort-Object SamAccountName -Unique
+        Write-Host "[+] Successfully collected $($usersList.Count) users" -ForegroundColor Green
+
+        # Ensure we always return an array
+        if ($usersList.Count -eq 0) {
+            return @()
         }
-        return @()
+        return @($usersList | Sort-Object { $_.SamAccountName } -Unique)
+
     } catch {
-        Write-Host "[!] Error collecting users: $_" -ForegroundColor Red
+        Write-Host "[!] CRITICAL Error collecting users: $_" -ForegroundColor Red
+        Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
         return @()
     }
 }
 
 function Get-AllADComputers {
     Write-Host "\`n[*] Collecting Active Directory Computers..." -ForegroundColor Green
+
+    # Initialize as empty array to prevent null
+    $computersList = @()
+
     try {
-        $computers = Get-ADComputer -Filter * -Properties \`
+        # Get all computers first, then process - prevents null on single result
+        $adComputers = @(Get-ADComputer -Filter * -Properties \`
             DNSHostName, Enabled, OperatingSystem, OperatingSystemVersion, \`
             LastLogonDate, PasswordLastSet, whenCreated, TrustedForDelegation, \`
-            PrimaryGroupID | ForEach-Object {
+            PrimaryGroupID -ErrorAction Stop)
 
-            $isDC = $_.PrimaryGroupID -eq 516
+        Write-Host "[*] Processing $($adComputers.Count) computers..." -ForegroundColor Cyan
 
-            $isStale = $false
-            if ($_.LastLogonDate) {
-                $daysSinceLogon = (Get-Date) - $_.LastLogonDate
-                $isStale = $daysSinceLogon.Days -gt 90
-            }
+        foreach ($computer in $adComputers) {
+            try {
+                $isDC = $computer.PrimaryGroupID -eq 516
 
-            @{
-                Name = $_.Name
-                DNSHostName = $_.DNSHostName
-                DistinguishedName = $_.DistinguishedName
-                Enabled = $_.Enabled
-                OperatingSystem = $_.OperatingSystem
-                OperatingSystemVersion = $_.OperatingSystemVersion
-                LastLogonDate = $_.LastLogonDate
-                PasswordLastSet = $_.PasswordLastSet
-                WhenCreated = $_.whenCreated
-                IsDomainController = $isDC
-                TrustedForDelegation = $_.TrustedForDelegation
-                IsStale = $isStale
+                $isStale = $false
+                if ($computer.LastLogonDate) {
+                    $daysSinceLogon = (Get-Date) - $computer.LastLogonDate
+                    $isStale = $daysSinceLogon.Days -gt 90
+                }
+
+                $computerObj = @{
+                    Name = $computer.Name
+                    DNSHostName = $computer.DNSHostName
+                    DistinguishedName = $computer.DistinguishedName
+                    Enabled = $computer.Enabled
+                    OperatingSystem = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    LastLogonDate = $computer.LastLogonDate
+                    PasswordLastSet = $computer.PasswordLastSet
+                    WhenCreated = $computer.whenCreated
+                    IsDomainController = $isDC
+                    TrustedForDelegation = $computer.TrustedForDelegation
+                    IsStale = $isStale
+                }
+
+                $computersList += $computerObj
+            } catch {
+                Write-Host "[!] Error processing computer $($computer.Name): $_" -ForegroundColor Yellow
             }
         }
 
-        Write-Host "[+] Collected $($computers.Count) computers" -ForegroundColor Green
-        
-        if ($computers) {
-            return $computers | Sort-Object Name -Unique
+        Write-Host "[+] Collected $($computersList.Count) computers" -ForegroundColor Green
+
+        # Ensure we always return an array
+        if ($computersList.Count -eq 0) {
+            return @()
         }
-        return @()
+        return @($computersList | Sort-Object { $_.Name } -Unique)
     } catch {
-        Write-Host "[!] Error collecting computers: $_" -ForegroundColor Red
+        Write-Host "[!] CRITICAL Error collecting computers: $_" -ForegroundColor Red
+        Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
         return @()
     }
 }
 
 function Get-AllADGroups {
     Write-Host "\`n[*] Collecting Active Directory Groups..." -ForegroundColor Green
+
+    # Initialize as empty array to prevent null
+    $groupsList = @()
+
+    # Define privileged groups outside the loop
+    $privilegedGroupNames = @(
+        "Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators",
+        "Admins. del dominio", "Administradores de empresas", "Administradores de esquema", "Administradores"
+    )
+    $tier0Groups = @("Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators", "Admins. del dominio", "Administradores de empresas", "Administradores de esquema", "Administradores")
+    $tier1Groups = @("Account Operators", "Backup Operators", "Server Operators", "Operadores de cuentas", "Operadores de copia de seguridad", "Operadores de servidores")
+
     try {
-        $groups = Get-ADGroup -Filter * -Properties Members, Description | ForEach-Object {
-            $memberCount = if ($_.Members) { $_.Members.Count } else { 0 }
+        # Get all groups first, then process
+        $adGroups = @(Get-ADGroup -Filter * -Properties Members, Description -ErrorAction Stop)
 
-            $privilegedGroups = @(
-                "Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators",
-                "Admins. del dominio", "Administradores de empresas", "Administradores de esquema", "Administradores"
-            )
-            $isPrivileged = $privilegedGroups -contains $_.Name
+        Write-Host "[*] Processing $($adGroups.Count) groups..." -ForegroundColor Cyan
 
-            $privilegeLevel = $null
-            if ($_.Name -in @("Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators", "Admins. del dominio", "Administradores de empresas", "Administradores de esquema", "Administradores")) {
-                $privilegeLevel = "TIER0"
-            } elseif ($_.Name -in @("Account Operators", "Backup Operators", "Server Operators", "Operadores de cuentas", "Operadores de copia de seguridad", "Operadores de servidores")) {
-                $privilegeLevel = "TIER1"
-            }
+        foreach ($group in $adGroups) {
+            try {
+                $memberCount = if ($group.Members) { $group.Members.Count } else { 0 }
+                $isPrivileged = $privilegedGroupNames -contains $group.Name
 
-            @{
-                Name = $_.Name
-                DistinguishedName = $_.DistinguishedName
-                GroupCategory = $_.GroupCategory.ToString()
-                GroupScope = $_.GroupScope.ToString()
-                Description = $_.Description
-                MemberCount = $memberCount
-                Members = @($_.Members)
-                IsPrivileged = $isPrivileged
-                PrivilegeLevel = $privilegeLevel
+                $privilegeLevel = $null
+                if ($group.Name -in $tier0Groups) {
+                    $privilegeLevel = "TIER0"
+                } elseif ($group.Name -in $tier1Groups) {
+                    $privilegeLevel = "TIER1"
+                }
+
+                $groupObj = @{
+                    Name = $group.Name
+                    DistinguishedName = $group.DistinguishedName
+                    GroupCategory = $group.GroupCategory.ToString()
+                    GroupScope = $group.GroupScope.ToString()
+                    Description = $group.Description
+                    MemberCount = $memberCount
+                    Members = @($group.Members)
+                    IsPrivileged = $isPrivileged
+                    PrivilegeLevel = $privilegeLevel
+                }
+
+                $groupsList += $groupObj
+            } catch {
+                Write-Host "[!] Error processing group $($group.Name): $_" -ForegroundColor Yellow
             }
         }
 
-        Write-Host "[+] Collected $($groups.Count) groups" -ForegroundColor Green
-        return $groups
+        Write-Host "[+] Collected $($groupsList.Count) groups" -ForegroundColor Green
+
+        # Ensure we always return an array
+        if ($groupsList.Count -eq 0) {
+            return @()
+        }
+        return @($groupsList)
     } catch {
-        Write-Host "[!] Error collecting groups: $_" -ForegroundColor Red
+        Write-Host "[!] CRITICAL Error collecting groups: $_" -ForegroundColor Red
+        Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
         return @()
     }
 }
@@ -540,18 +598,21 @@ function Get-PasswordPolicies {
         }
 
         try {
-            $fgpp = Get-ADFineGrainedPasswordPolicy -Filter * | ForEach-Object {
-                @{
-                    Name = $_.Name
-                    Precedence = $_.Precedence
-                    ComplexityEnabled = $_.ComplexityEnabled
-                    LockoutThreshold = $_.LockoutThreshold
-                    MinPasswordLength = $_.MinPasswordLength
-                    PasswordHistoryCount = $_.PasswordHistoryCount
-                    AppliesTo = @($_.AppliesTo)
+            $fgppList = @()
+            $fgppPolicies = @(Get-ADFineGrainedPasswordPolicy -Filter * -ErrorAction Stop)
+
+            foreach ($policy in $fgppPolicies) {
+                $fgppList += @{
+                    Name = $policy.Name
+                    Precedence = $policy.Precedence
+                    ComplexityEnabled = $policy.ComplexityEnabled
+                    LockoutThreshold = $policy.LockoutThreshold
+                    MinPasswordLength = $policy.MinPasswordLength
+                    PasswordHistoryCount = $policy.PasswordHistoryCount
+                    AppliesTo = @($policy.AppliesTo)
                 }
             }
-            $policyInfo.FineGrainedPolicies = $fgpp
+            $policyInfo.FineGrainedPolicies = @($fgppList)
         } catch {
             $policyInfo.FineGrainedPolicies = @()
         }
@@ -847,33 +908,47 @@ function Get-ReplicationStatus {
 
 function Get-DCSyncPermissions {
     Write-Host "\`n[*] Analyzing DCSync Attack Permissions (CRITICAL)..." -ForegroundColor Green
-    try {
-        $domainDN = (Get-ADDomain).DistinguishedName
-        $acl = Get-Acl "AD:$domainDN"
 
-        $dangerousPermissions = @()
+    # Initialize as empty array to prevent null
+    $dangerousPermissions = @()
+
+    try {
+        $domainDN = (Get-ADDomain -ErrorAction Stop).DistinguishedName
+        $acl = Get-Acl "AD:$domainDN" -ErrorAction Stop
+
+        if (-not $acl -or -not $acl.Access) {
+            Write-Host "[!] Could not retrieve ACL for domain" -ForegroundColor Yellow
+            return @()
+        }
 
         foreach ($access in $acl.Access) {
-            if ($access.ActiveDirectoryRights -like "*Replication*" -and
-                ($access.ObjectType -eq "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" -or
-                 $access.ObjectType -eq "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")) {
+            try {
+                if ($access.ActiveDirectoryRights -like "*Replication*" -and
+                    ($access.ObjectType -eq "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" -or
+                     $access.ObjectType -eq "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")) {
 
-                $dangerousPermissions += @{
-                    IdentityReference = $access.IdentityReference.ToString()
-                    ActiveDirectoryRights = $access.ActiveDirectoryRights.ToString()
-                    AccessControlType = $access.AccessControlType.ToString()
-                    ObjectType = $access.ObjectType.ToString()
-                    IsInherited = $access.IsInherited
-                    RiskLevel = "CRITICAL"
-                    AttackTechnique = "DCSync (MITRE T1003.006)"
+                    $dangerousPermissions += @{
+                        IdentityReference = $access.IdentityReference.ToString()
+                        ActiveDirectoryRights = $access.ActiveDirectoryRights.ToString()
+                        AccessControlType = $access.AccessControlType.ToString()
+                        ObjectType = $access.ObjectType.ToString()
+                        IsInherited = $access.IsInherited
+                        RiskLevel = "CRITICAL"
+                        AttackTechnique = "DCSync (MITRE T1003.006)"
+                    }
                 }
+            } catch {
+                Write-Host "[!] Error processing ACE: $_" -ForegroundColor Yellow
             }
         }
 
         Write-Host "[+] Found $($dangerousPermissions.Count) potentially dangerous replication permissions" -ForegroundColor $(if ($dangerousPermissions.Count -gt 0) { "Red" } else { "Green" })
-        return $dangerousPermissions
+
+        # Ensure we always return an array
+        return @($dangerousPermissions)
     } catch {
         Write-Host "[!] Error analyzing DCSync permissions: $_" -ForegroundColor Red
+        Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
         return @()
     }
 }
