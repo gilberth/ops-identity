@@ -31,7 +31,7 @@ dist-ssr
 .qoder/rules/byterover-rules.md
 .augment/rules/byterover-rules.md
 # Large assessment files
-AD-Assessment-*.json
+
 
 # Claude Code local settings
 .claude/settings.local.json

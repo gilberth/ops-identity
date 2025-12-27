@@ -1625,8 +1625,13 @@ function Get-DNSScavengingStatus {
                     $checkMethod = "Unknown"
 
                     if ($dnsModuleAvailable) {
-                        $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
-                        if ($dnsServer) {
+                        $dnsServer = $null
+                        try {
+                            $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction Stop -WarningAction SilentlyContinue
+                        } catch {
+                            # Silently continue to WMI fallback
+                        }
+                        if ($dnsServer -and $dnsServer.ServerSetting) {
                             $scavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
                             $scavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
                             $checkMethod = "DNSServer Module"
@@ -3461,21 +3466,40 @@ function Get-DNSScavengingDetailedAnalysis {
 
             try {
                 # Server-level settings
-                $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction Stop
-
-                $serverConfig = @{
-                    DCName = $dc.Name
-                    ScavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
-                    ScavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
-                    DefaultNoRefreshInterval = $dnsServer.ServerSetting.DefaultNoRefreshInterval.TotalHours
-                    DefaultRefreshInterval = $dnsServer.ServerSetting.DefaultRefreshInterval.TotalHours
-                    LastScavengeTime = $dnsServer.ServerSetting.LastScavengeTime
+                $dnsServer = $null
+                try {
+                    $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction Stop -WarningAction SilentlyContinue
+                } catch {
+                    Write-Host "[!] Could not get DNS server settings from $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
                 }
 
-                $scavengingAnalysis.ServerSettings += $serverConfig
+                if ($dnsServer -and $dnsServer.ServerSetting) {
+                    $serverConfig = @{
+                        DCName = $dc.Name
+                        ScavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
+                        ScavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
+                        DefaultNoRefreshInterval = $dnsServer.ServerSetting.DefaultNoRefreshInterval.TotalHours
+                        DefaultRefreshInterval = $dnsServer.ServerSetting.DefaultRefreshInterval.TotalHours
+                        LastScavengeTime = $dnsServer.ServerSetting.LastScavengeTime
+                    }
+                    $scavengingAnalysis.ServerSettings += $serverConfig
+                } else {
+                    $scavengingAnalysis.ServerSettings += @{
+                        DCName = $dc.Name
+                        Status = "Unable to retrieve DNS server settings"
+                        ScavengingInterval = 0
+                        ScavengingEnabled = $false
+                    }
+                }
 
-                # Zone-level settings
-                $zones = Get-DnsServerZone -ComputerName $dc.HostName -ErrorAction Stop |
+                # Zone-level settings (only if we got server config successfully)
+                $serverScavengingEnabled = if ($dnsServer -and $dnsServer.ServerSetting) {
+                    $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
+                } else {
+                    $false
+                }
+
+                $zones = Get-DnsServerZone -ComputerName $dc.HostName -ErrorAction SilentlyContinue |
                     Where-Object { -not $_.IsAutoCreated -and -not $_.IsReverseLookupZone -and $_.ZoneType -eq "Primary" }
 
                 foreach ($zone in $zones) {
@@ -3484,14 +3508,14 @@ function Get-DNSScavengingDetailedAnalysis {
                     $zoneConfig = @{
                         DCName = $dc.Name
                         ZoneName = $zone.ZoneName
-                        AgingEnabled = $zoneAging.AgingEnabled
-                        NoRefreshInterval = $zoneAging.NoRefreshInterval.TotalHours
-                        RefreshInterval = $zoneAging.RefreshInterval.TotalHours
-                        ScavengeServers = $zoneAging.ScavengeServers
+                        AgingEnabled = if ($zoneAging) { $zoneAging.AgingEnabled } else { $null }
+                        NoRefreshInterval = if ($zoneAging) { $zoneAging.NoRefreshInterval.TotalHours } else { 0 }
+                        RefreshInterval = if ($zoneAging) { $zoneAging.RefreshInterval.TotalHours } else { 0 }
+                        ScavengeServers = if ($zoneAging) { $zoneAging.ScavengeServers } else { @() }
                     }
 
                     # Detect configuration mismatches
-                    if ($serverConfig.ScavengingEnabled -and -not $zoneAging.AgingEnabled) {
+                    if ($serverScavengingEnabled -and $zoneAging -and -not $zoneAging.AgingEnabled) {
                         $issue = @{
                             Type = "AgingMismatch"
                             DCName = $dc.Name
@@ -3505,7 +3529,7 @@ function Get-DNSScavengingDetailedAnalysis {
 }
 
                     # Check for unusual intervals
-                    if ($zoneAging.AgingEnabled) {
+                    if ($zoneAging -and $zoneAging.AgingEnabled) {
         $totalCycleHours = $zoneAging.NoRefreshInterval.TotalHours + $zoneAging.RefreshInterval.TotalHours
 
         if ($totalCycleHours -lt 168) {  # Less than 7 days
