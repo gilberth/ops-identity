@@ -1136,19 +1136,450 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["DC Name", "OS", "Antivirus", "BitLocker"], true),
+              createTableRow(["DC Name", "Estado General", "Antivirus", "Eventos Críticos"], true),
               ...(rawData.DCHealth.DomainControllers || []).map((dc: any) => {
-                const avStatus = dc.Antivirus?.Enabled ? "Activo" : "Inactivo/Desconocido";
-                const blStatus = dc.BitLocker?.ProtectionStatus || "Desconocido";
+                const healthStatus = dc.OverallHealth === "Healthy" ? "✅ Saludable" :
+                                     dc.OverallHealth === "Warning" ? "⚠️ Advertencia" :
+                                     dc.OverallHealth === "Critical" ? "🔴 Crítico" : "❓ Desconocido";
+                const healthColor = dc.OverallHealth === "Healthy" ? "low" :
+                                    dc.OverallHealth === "Warning" ? "medium" : "critical";
+                const avStatus = dc.Antivirus?.Enabled ? "✅ Activo" : "⚠️ Inactivo";
+                const criticalEvents = dc.CriticalEvents?.length || 0;
                 return createTableRow([
                   dc.Name || "N/A",
-                  "Windows Server", // OS info might be elsewhere, placeholder
+                  healthStatus,
                   avStatus,
-                  blStatus
-                ]);
+                  criticalEvents.toString()
+                ], false, healthColor);
               }),
             ],
           }),
+          // Health Issues Summary
+          ...(() => {
+            const dcsWithIssues = (rawData.DCHealth.DomainControllers || []).filter((dc: any) =>
+              dc.HealthIssues && dc.HealthIssues.length > 0
+            );
+            if (dcsWithIssues.length === 0) return [];
+            return [
+              new Paragraph({
+                text: "Problemas de Salud Detectados",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              ...dcsWithIssues.flatMap((dc: any) => [
+                new Paragraph({
+                  text: `${dc.Name}:`,
+                  spacing: { before: 100, after: 50 },
+                }),
+                ...dc.HealthIssues.map((issue: string) =>
+                  new Paragraph({
+                    text: `  • ${issue}`,
+                    spacing: { after: 30 },
+                  })
+                )
+              ])
+            ];
+          })(),
+        ] : []),
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SECCIONES DE SEGURIDAD CRÍTICA
+        // ═══════════════════════════════════════════════════════════════════
+
+        // CONFIGURACIÓN KERBEROS Y KRBTGT
+        ...(rawData?.KerberosConfig ? [
+          new Paragraph({
+            text: "🔐 Configuración Kerberos",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "La seguridad de Kerberos depende de la rotación regular de la contraseña de la cuenta KRBTGT. Una contraseña antigua permite ataques Golden Ticket.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Métrica", "Valor", "Estado"], true),
+              (() => {
+                const age = rawData.KerberosConfig.KRBTGTPasswordAge || 0;
+                const status = age > 180 ? "🔴 CRÍTICO" : age > 90 ? "⚠️ Advertencia" : "✅ OK";
+                const color = age > 180 ? "critical" : age > 90 ? "medium" : "low";
+                return createTableRow([
+                  "Edad de Contraseña KRBTGT",
+                  `${age} días`,
+                  status
+                ], false, color);
+              })(),
+              createTableRow([
+                "Última Rotación",
+                rawData.KerberosConfig.KRBTGTPasswordLastSet ?
+                  new Date(parseInt(rawData.KerberosConfig.KRBTGTPasswordLastSet.match(/\d+/)?.[0] || 0)).toLocaleDateString('es-ES') :
+                  "Desconocido",
+                ""
+              ]),
+            ],
+          }),
+          ...(rawData.KerberosConfig.KRBTGTPasswordAge > 180 ? [
+            new Paragraph({
+              children: [new TextRun({
+                text: "⚠️ ACCIÓN REQUERIDA: La contraseña KRBTGT tiene más de 180 días. Se recomienda rotarla dos veces (con intervalo de 10+ horas entre rotaciones).",
+                color: COLORS.critical,
+                bold: true
+              })],
+              spacing: { before: 200, after: 100 },
+            }),
+            new Paragraph({
+              text: "Comando PowerShell para rotar:",
+              spacing: { after: 50 },
+            }),
+            new Paragraph({
+              children: [new TextRun({
+                text: "Reset-KrbtgtKeyInteractive.ps1 (Microsoft Script)",
+                italics: true
+              })],
+              spacing: { after: 200 },
+            }),
+          ] : []),
+        ] : []),
+
+        // POLÍTICAS DE CONTRASEÑA
+        ...(rawData?.PasswordPolicies ? [
+          new Paragraph({
+            text: "🔑 Políticas de Contraseña del Dominio",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Política", "Valor Actual", "Recomendado"], true),
+              createTableRow([
+                "Longitud Mínima",
+                `${rawData.PasswordPolicies.MinPasswordLength || 0} caracteres`,
+                "14+ caracteres"
+              ], false, (rawData.PasswordPolicies.MinPasswordLength || 0) >= 14 ? "low" : "medium"),
+              createTableRow([
+                "Complejidad Requerida",
+                rawData.PasswordPolicies.ComplexityEnabled ? "✅ Habilitada" : "❌ Deshabilitada",
+                "Habilitada"
+              ], false, rawData.PasswordPolicies.ComplexityEnabled ? "low" : "critical"),
+              createTableRow([
+                "Historial de Contraseñas",
+                `${rawData.PasswordPolicies.PasswordHistoryCount || 0} contraseñas`,
+                "24+ contraseñas"
+              ]),
+              createTableRow([
+                "Edad Máxima",
+                `${rawData.PasswordPolicies.MaxPasswordAge || "N/A"} días`,
+                "60-90 días"
+              ]),
+              createTableRow([
+                "Edad Mínima",
+                `${rawData.PasswordPolicies.MinPasswordAge || 0} días`,
+                "1+ día"
+              ]),
+              createTableRow([
+                "Duración de Bloqueo",
+                `${rawData.PasswordPolicies.LockoutDuration || 0} minutos`,
+                "15+ minutos"
+              ]),
+              createTableRow([
+                "Umbral de Bloqueo",
+                `${rawData.PasswordPolicies.LockoutThreshold || 0} intentos`,
+                "5-10 intentos"
+              ]),
+            ],
+          }),
+          // Fine-Grained Password Policies
+          ...(rawData.PasswordPolicies.FineGrainedPolicies && rawData.PasswordPolicies.FineGrainedPolicies.length > 0 ? [
+            new Paragraph({
+              text: "Políticas de Contraseña Detalladas (Fine-Grained)",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Paragraph({
+              text: `Se encontraron ${rawData.PasswordPolicies.FineGrainedPolicies.length} política(s) fine-grained configurada(s).`,
+              spacing: { after: 100 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Nombre", "Precedencia", "Longitud Mín.", "Aplicado a"], true),
+                ...rawData.PasswordPolicies.FineGrainedPolicies.slice(0, 5).map((fgpp: any) =>
+                  createTableRow([
+                    fgpp.Name || "N/A",
+                    fgpp.Precedence?.toString() || "N/A",
+                    `${fgpp.MinPasswordLength || 0} chars`,
+                    fgpp.AppliesTo?.length ? `${fgpp.AppliesTo.length} objeto(s)` : "N/A"
+                  ])
+                ),
+              ],
+            }),
+          ] : []),
+        ] : []),
+
+        // PERMISOS DCSYNC
+        ...(rawData?.DCSyncPermissions && rawData.DCSyncPermissions.length > 0 ? [
+          new Paragraph({
+            text: "🚨 Permisos DCSync (Replicación de Directorio)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "Las siguientes identidades tienen permisos para ejecutar DCSync (extraer hashes de contraseñas). Solo cuentas de DC y administración crítica deberían tener estos permisos.",
+              color: COLORS.critical
+            })],
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Identidad", "Tipo", "Permisos"], true),
+              ...rawData.DCSyncPermissions.map((perm: any) => {
+                const isExpected = perm.Identity?.includes("Domain Controllers") ||
+                                   perm.Identity?.includes("Enterprise Admins") ||
+                                   perm.Identity?.includes("Domain Admins") ||
+                                   perm.Identity?.includes("Administrators");
+                const color = isExpected ? "low" : "critical";
+                const permissions = [
+                  perm.GetChanges ? "GetChanges" : "",
+                  perm.GetChangesAll ? "GetChangesAll" : "",
+                  perm.GetChangesInFilteredSet ? "FilteredSet" : ""
+                ].filter(Boolean).join(", ");
+                return createTableRow([
+                  perm.Identity || "N/A",
+                  isExpected ? "✅ Esperado" : "⚠️ Revisar",
+                  permissions
+                ], false, color);
+              }),
+            ],
+          }),
+          new Paragraph({
+            text: `Total: ${rawData.DCSyncPermissions.length} identidades con permisos DCSync`,
+            spacing: { before: 100, after: 200 },
+          }),
+        ] : []),
+
+        // GRUPO PROTECTED USERS
+        ...(rawData?.ProtectedUsers ? [
+          new Paragraph({
+            text: "🛡️ Grupo Protected Users",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "El grupo Protected Users proporciona protecciones adicionales contra robo de credenciales (no NTLM, no delegación, tickets Kerberos de corta duración).",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Métrica", "Valor"], true),
+              createTableRow([
+                "Miembros Actuales",
+                (rawData.ProtectedUsers.MemberCount || 0).toString()
+              ], false, (rawData.ProtectedUsers.MemberCount || 0) > 0 ? "low" : "critical"),
+              createTableRow([
+                "Estado",
+                rawData.ProtectedUsers.Exists ? "✅ Grupo Existe" : "❌ No Encontrado"
+              ]),
+            ],
+          }),
+          ...(rawData.ProtectedUsers.MemberCount === 0 ? [
+            new Paragraph({
+              children: [new TextRun({
+                text: "⚠️ RECOMENDACIÓN: El grupo Protected Users está vacío. Se recomienda agregar cuentas de administradores de Tier 0 (Domain Admins, Enterprise Admins) para protección adicional.",
+                color: COLORS.high,
+                bold: true
+              })],
+              spacing: { before: 200, after: 200 },
+            }),
+          ] : [
+            new Paragraph({
+              text: "Miembros del grupo:",
+              spacing: { before: 200, after: 100 },
+            }),
+            ...(rawData.ProtectedUsers.Members || []).slice(0, 10).map((member: any) =>
+              new Paragraph({
+                text: `• ${typeof member === 'string' ? member : member.Name || member.SamAccountName || 'N/A'}`,
+                spacing: { after: 30 },
+              })
+            )
+          ]),
+        ] : []),
+
+        // ESTADO DE AD RECYCLE BIN
+        ...(rawData?.RecycleBinStatus ? [
+          new Paragraph({
+            text: "♻️ Estado de AD Recycle Bin",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Característica", "Estado"], true),
+              createTableRow([
+                "AD Recycle Bin",
+                rawData.RecycleBinStatus.Enabled ? "✅ Habilitado" : "❌ DESHABILITADO"
+              ], false, rawData.RecycleBinStatus.Enabled ? "low" : "critical"),
+              ...(rawData.RecycleBinStatus.EnabledDate ? [
+                createTableRow([
+                  "Fecha de Habilitación",
+                  rawData.RecycleBinStatus.EnabledDate
+                ])
+              ] : []),
+            ],
+          }),
+          ...(!rawData.RecycleBinStatus.Enabled ? [
+            new Paragraph({
+              children: [new TextRun({
+                text: "⚠️ CRÍTICO: AD Recycle Bin está deshabilitado. Sin esta característica, los objetos eliminados no pueden recuperarse fácilmente. Habilitar requiere Forest Functional Level 2008 R2+.",
+                color: COLORS.critical,
+                bold: true
+              })],
+              spacing: { before: 200, after: 100 },
+            }),
+            new Paragraph({
+              text: "Comando para habilitar:",
+              spacing: { after: 50 },
+            }),
+            new Paragraph({
+              children: [new TextRun({
+                text: "Enable-ADOptionalFeature -Identity 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name",
+                italics: true,
+                size: 20
+              })],
+              spacing: { after: 200 },
+            }),
+          ] : []),
+        ] : []),
+
+        // ESTADO SMBv1
+        ...(rawData?.SMBv1Status ? [
+          new Paragraph({
+            text: "🔒 Estado de Protocolo SMBv1",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "SMBv1 es un protocolo obsoleto con vulnerabilidades conocidas (WannaCry, EternalBlue). Debe estar deshabilitado en todos los sistemas.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Servidor", "SMBv1 Estado"], true),
+              ...(rawData.SMBv1Status.DomainControllers && rawData.SMBv1Status.DomainControllers.length > 0 ?
+                rawData.SMBv1Status.DomainControllers.map((dc: any) =>
+                  createTableRow([
+                    dc.Name || dc.HostName || "N/A",
+                    dc.SMBv1Enabled ? "⚠️ HABILITADO" : "✅ Deshabilitado"
+                  ], false, dc.SMBv1Enabled ? "critical" : "low")
+                ) : [
+                  createTableRow([
+                    "Estado General",
+                    rawData.SMBv1Status.IsEnabled ? "⚠️ HABILITADO" : "✅ Deshabilitado"
+                  ], false, rawData.SMBv1Status.IsEnabled ? "critical" : "low")
+                ]
+              ),
+            ],
+          }),
+        ] : []),
+
+        // ESTADO DE LAPS
+        ...(rawData?.LAPS ? [
+          new Paragraph({
+            text: "🔐 Estado de LAPS (Local Administrator Password Solution)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "LAPS proporciona gestión automatizada de contraseñas de administrador local, eliminando contraseñas compartidas/estáticas.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Métrica", "Valor"], true),
+              createTableRow([
+                "LAPS Desplegado",
+                rawData.LAPS.Deployed ? "✅ Sí" : "❌ No"
+              ], false, rawData.LAPS.Deployed ? "low" : "critical"),
+              ...(rawData.LAPS.SchemaExtended !== undefined ? [
+                createTableRow([
+                  "Schema Extendido",
+                  rawData.LAPS.SchemaExtended ? "✅ Sí" : "❌ No"
+                ])
+              ] : []),
+              ...(rawData.LAPS.ComputersWithLAPS !== undefined ? [
+                createTableRow([
+                  "Equipos con LAPS",
+                  rawData.LAPS.ComputersWithLAPS.toString()
+                ])
+              ] : []),
+              ...(rawData.LAPS.ComputersWithoutLAPS !== undefined ? [
+                createTableRow([
+                  "Equipos sin LAPS",
+                  rawData.LAPS.ComputersWithoutLAPS.toString()
+                ], false, rawData.LAPS.ComputersWithoutLAPS > 0 ? "medium" : "low")
+              ] : []),
+              ...(rawData.LAPS.CoveragePercentage !== undefined ? [
+                createTableRow([
+                  "Cobertura",
+                  `${rawData.LAPS.CoveragePercentage}%`
+                ], false, rawData.LAPS.CoveragePercentage >= 90 ? "low" : rawData.LAPS.CoveragePercentage >= 50 ? "medium" : "critical")
+              ] : []),
+            ],
+          }),
+          ...(!rawData.LAPS.Deployed ? [
+            new Paragraph({
+              children: [new TextRun({
+                text: "⚠️ CRÍTICO: LAPS no está desplegado. Las contraseñas de administrador local pueden ser compartidas o estáticas, facilitando movimiento lateral.",
+                color: COLORS.critical,
+                bold: true
+              })],
+              spacing: { before: 200, after: 200 },
+            }),
+          ] : []),
+        ] : []),
+
+        // USUARIOS CON CONTRASEÑAS ANTIGUAS
+        ...(rawData?.OldPasswords && rawData.OldPasswords.length > 0 ? [
+          new Paragraph({
+            text: "⏰ Usuarios con Contraseñas Antiguas (>365 días)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: `Se encontraron ${rawData.OldPasswords.length} usuarios con contraseñas sin cambiar en más de 1 año.`,
+              color: rawData.OldPasswords.length > 100 ? COLORS.critical : COLORS.high
+            })],
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Usuario", "Última Cambio", "Días"], true),
+              ...rawData.OldPasswords.slice(0, 15).map((user: any) => {
+                const days = user.PasswordAgeDays || user.DaysSinceChange || "N/A";
+                return createTableRow([
+                  user.SamAccountName || user.Name || "N/A",
+                  user.PasswordLastSet ? new Date(user.PasswordLastSet).toLocaleDateString('es-ES') : "Nunca",
+                  days.toString()
+                ], false, "medium");
+              }),
+            ],
+          }),
+          ...(rawData.OldPasswords.length > 15 ? [
+            new Paragraph({
+              text: `... y ${rawData.OldPasswords.length - 15} usuarios más.`,
+              spacing: { before: 100, after: 200 },
+            }),
+          ] : []),
         ] : []),
 
         // RESUMEN EJECUTIVO
