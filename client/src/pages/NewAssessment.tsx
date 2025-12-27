@@ -2124,9 +2124,14 @@ function Get-DNSConfiguration {
         } else {
                         # MODERN POWERSHELL (RSAT)
                         # Get DNS Server Settings
-            $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+            $dnsServer = $null
+            try {
+                $dnsServer = Get-DnsServer -ComputerName $dc.HostName -ErrorAction Stop -WarningAction SilentlyContinue
+            } catch {
+                Write-Host "[!] Could not get DNS server object from $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
 
-            if ($dnsServer) {
+            if ($dnsServer -and $dnsServer.ServerSetting) {
                         # Global DNS Server Settings
                 $globalSettings = @{
                     DCName = $dc.Name
@@ -2327,10 +2332,32 @@ function Get-DNSConfiguration {
                         }
                     }
                 } catch { }
+            } else {
+                # dnsServer is null or ServerSetting is null - try to get zones at least
+                Write-Host "[!] DNS Server settings unavailable on $($dc.Name), attempting zone query..." -ForegroundColor Yellow
+                try {
+                    $zones = Get-DnsServerZone -ComputerName $dc.HostName -ErrorAction SilentlyContinue
+                    if ($zones) {
+                        foreach($zone in $zones) {
+                            $dnsInfo.Zones += @{
+                                DCName = $dc.Name
+                                ZoneName = $zone.ZoneName
+                                ZoneType = $zone.ZoneType.ToString()
+                                IsReverseLookupZone = $zone.IsReverseLookupZone
+                                DynamicUpdate = $zone.DynamicUpdate.ToString()
+                                IsDSIntegrated = $zone.IsDsIntegrated
+                                Method = "Partial (Zone only)"
+                            }
+                        }
+                        Write-Host "[+] Retrieved $($zones.Count) zones from $($dc.Name)" -ForegroundColor Green
+                    }
+                } catch {
+                    Write-Host "[!] Could not query zones on $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+                }
             }
         }
     } catch {
-        Write-Host "[!] Could not query DNS on $($dc.Name): $_" -ForegroundColor Yellow
+        Write-Host "[!] Error processing DNS on $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
