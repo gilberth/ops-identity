@@ -1017,47 +1017,81 @@ function Get-ReplicationStatus {
 function Get-DCSyncPermissions {
     Write-Host "\`n[*] Analyzing DCSync Attack Permissions (CRITICAL)..." -ForegroundColor Green
 
-    # Initialize as empty array to prevent null
     $dangerousPermissions = @()
 
     try {
-        $domainDN = (Get-ADDomain -ErrorAction Stop).DistinguishedName
-        $acl = Get-Acl "AD:$domainDN" -ErrorAction Stop
+        $domain = Get-ADDomain -ErrorAction Stop
+        $domainDN = $domain.DistinguishedName
+        Write-Host "[*] Domain DN: $domainDN" -ForegroundColor Cyan
 
-        if (-not $acl -or -not $acl.Access) {
-            Write-Host "[!] Could not retrieve ACL for domain" -ForegroundColor Yellow
-            return @()
+        # Try DirectoryEntry method (most reliable)
+        $acl = $null
+        try {
+            $de = [ADSI]"LDAP://$domainDN"
+            $acl = $de.ObjectSecurity
+            if ($acl) {
+                Write-Host "[+] Retrieved ACL using DirectoryEntry" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "[!] DirectoryEntry method failed: \$_" -ForegroundColor Yellow
         }
 
-        foreach ($access in $acl.Access) {
+        # Fallback: Try AD: provider
+        if (-not $acl) {
             try {
-                if ($access.ActiveDirectoryRights -like "*Replication*" -and
-                    ($access.ObjectType -eq "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" -or
-                     $access.ObjectType -eq "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")) {
-
-                    $dangerousPermissions += @{
-                        IdentityReference = $access.IdentityReference.ToString()
-                        ActiveDirectoryRights = $access.ActiveDirectoryRights.ToString()
-                        AccessControlType = $access.AccessControlType.ToString()
-                        ObjectType = $access.ObjectType.ToString()
-                        IsInherited = $access.IsInherited
-                        RiskLevel = "CRITICAL"
-                        AttackTechnique = "DCSync (MITRE T1003.006)"
-                    }
+                if (Get-PSDrive -Name AD -ErrorAction SilentlyContinue) {
+                    $acl = Get-Acl "AD:\$domainDN" -ErrorAction Stop
+                    Write-Host "[+] Retrieved ACL using AD: provider" -ForegroundColor Green
                 }
             } catch {
-                Write-Host "[!] Error processing ACE: $_" -ForegroundColor Yellow
+                Write-Host "[!] AD: provider method failed" -ForegroundColor Yellow
             }
         }
 
-        Write-Host "[+] Found $($dangerousPermissions.Count) potentially dangerous replication permissions" -ForegroundColor $(if ($dangerousPermissions.Count -gt 0) { "Red" } else { "Green" })
+        if ($acl -and $acl.Access) {
+            $dcsyncGuids = @(
+                "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2",
+                "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2",
+                "89e95b76-444d-4c62-991a-0facbeda640c"
+            )
 
-        # Ensure we always return an array
+            foreach ($access in $acl.Access) {
+                try {
+                    $guid = $access.ObjectType.ToString().ToLower()
+                    if ($dcsyncGuids -contains $guid) {
+                        $dangerousPermissions += @{
+                            IdentityReference = $access.IdentityReference.ToString()
+                            ActiveDirectoryRights = "DS-Replication-Get-Changes"
+                            AccessControlType = $access.AccessControlType.ToString()
+                            ObjectType = $guid
+                            IsInherited = [bool]$access.IsInherited
+                            RiskLevel = "CRITICAL"
+                            AttackTechnique = "DCSync (MITRE T1003.006)"
+                        }
+                    }
+                } catch { }
+            }
+        }
+
+        if ($dangerousPermissions.Count -eq 0) {
+            Write-Host "[!] Could not retrieve DCSync permissions" -ForegroundColor Yellow
+            return @(@{
+                Status = "Unable to retrieve"
+                Reason = "Insufficient permissions or method not available"
+                Recommendation = "Run as Domain Admin"
+                RiskLevel = "UNKNOWN"
+            })
+        }
+
+        Write-Host "[+] Found $($dangerousPermissions.Count) DCSync-capable identities" -ForegroundColor Green
         return @($dangerousPermissions)
     } catch {
-        Write-Host "[!] Error analyzing DCSync permissions: $_" -ForegroundColor Red
-        Write-Host "[!] Returning empty array to prevent null" -ForegroundColor Red
-        return @()
+        Write-Host "[!] Error analyzing DCSync permissions: \$_" -ForegroundColor Red
+        return @(@{
+            Status = "Error"
+            ErrorMessage = "Failed to analyze DCSync permissions"
+            RiskLevel = "UNKNOWN"
+        })
     }
 }
 
