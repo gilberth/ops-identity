@@ -2048,7 +2048,7 @@ function Get-DNSConfiguration {
                             EnableDnsSec = $dnsServer.ServerSetting.EnableDnsSec
                             EnableEDnsProbes = $dnsServer.ServerSetting.EnableEDnsProbes
                             EventLogLevel = $dnsServer.ServerSetting.EventLogLevel
-                            ListenAddresses = @($dnsServer.ServerSetting.ListenAddresses.IPAddressToString)
+                            ListenAddresses = if ($dnsServer.ServerSetting.ListenAddresses) { @($dnsServer.ServerSetting.ListenAddresses.IPAddressToString) } else { @() }
                 }
                         
                         # Security Checks
@@ -2167,17 +2167,24 @@ function Get-DNSConfiguration {
 
                         # Get forwarders and conditional forwarders
                 if ($dnsServer.ServerSetting.Forwarders) {
+                    $fwdList = @()
+                    try {
+                        $fwdList = @($dnsServer.ServerSetting.Forwarders.IPAddressToString)
+                    } catch {
+                        $fwdList = @()
+                    }
+
                     $forwarderInfo = @{
                         DCName = $dc.Name
-                                Forwarders = @($dnsServer.ServerSetting.Forwarders.IPAddressToString)
+                                Forwarders = $fwdList
                                 ForwardingTimeout = $dnsServer.ServerSetting.ForwardingTimeout
                                 IsSlave = $dnsServer.ServerSetting.IsSlave
                     }
-                            
+
                             # Check if using public DNS (potential data leakage)
                     $publicDNS = @("8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "208.67.222.222", "208.67.220.220")
                     $usesPublicDNS = $false
-                    foreach($fwd in $dnsServer.ServerSetting.Forwarders.IPAddressToString) {
+                    foreach($fwd in $fwdList) {
                         if ($publicDNS -contains $fwd) {
                             $usesPublicDNS = $true
                             break
@@ -2196,11 +2203,15 @@ function Get-DNSConfiguration {
                     $conditionalForwarders = Get-DnsServerZone -ComputerName $dc.HostName | Where-Object { $_.ZoneType -eq "Forwarder" }
                     if ($conditionalForwarders) {
                         foreach($cf in $conditionalForwarders) {
+                            $masterList = @()
+                            if ($cf.MasterServers) {
+                                try { $masterList = @($cf.MasterServers.IPAddressToString) } catch { $masterList = @() }
+                            }
                             $dnsInfo.Forwarders += @{
                                 DCName = $dc.Name
                                         Type = "Conditional"
                                         ZoneName = $cf.ZoneName
-                                        MasterServers = @($cf.MasterServers.IPAddressToString)
+                                        MasterServers = $masterList
                             }
                         }
                     }
