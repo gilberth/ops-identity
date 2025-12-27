@@ -185,6 +185,51 @@ try {
 }
 
 # =============================================================================
+# LOGGING HELPER FUNCTION
+# =============================================================================
+
+function Write-Log {
+    <#
+    .SYNOPSIS
+        Standardized logging function for consistent output formatting
+    .PARAMETER Message
+        The message to display
+    .PARAMETER Level
+        The log level: Info, Warning, Error, Success, Progress
+    .PARAMETER FunctionName
+        Optional function name for context
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message,
+
+        [ValidateSet('Info','Warning','Error','Success','Progress')]
+        [string]$Level = 'Info',
+
+        [string]$FunctionName = ''
+    )
+
+    $prefix = switch ($Level) {
+        'Info'     { '[*]' }
+        'Warning'  { '[!]' }
+        'Error'    { '[!] ERROR:' }
+        'Success'  { '[+]' }
+        'Progress' { '[*]' }
+    }
+
+    $color = switch ($Level) {
+        'Info'     { 'Cyan' }
+        'Warning'  { 'Yellow' }
+        'Error'    { 'Red' }
+        'Success'  { 'Green' }
+        'Progress' { 'Gray' }
+    }
+
+    $context = if ($FunctionName) { "[$FunctionName] " } else { '' }
+    Write-Host "$prefix $context$Message" -ForegroundColor $color
+}
+
+# =============================================================================
 # DATA COLLECTION FUNCTIONS
 # =============================================================================
 
@@ -363,8 +408,8 @@ function Get-TrustRelationships {
 function Get-AllADUsers {
     Write-Host "\`n[*] Collecting Active Directory Users (this may take a while)..." -ForegroundColor Green
 
-    # Initialize as empty array to prevent null
-    $usersList = @()
+    # Use List<T> for O(n) performance instead of += which is O(n²)
+    $usersList = [System.Collections.Generic.List[object]]::new()
 
     try {
         $privilegedGroups = @(
@@ -491,7 +536,7 @@ function Get-AllADUsers {
                     EstimatedTokenSize = $tokenSize
                 }
 
-                $usersList += $userObj
+                $usersList.Add($userObj)
                 $processedCount++
 
                 # Progress indicator for large domains
@@ -531,8 +576,8 @@ function Get-AllADUsers {
 function Get-AllADComputers {
     Write-Host "\`n[*] Collecting Active Directory Computers..." -ForegroundColor Green
 
-    # Initialize as empty array to prevent null
-    $computersList = @()
+    # Use List<T> for O(n) performance instead of += which is O(n²)
+    $computersList = [System.Collections.Generic.List[object]]::new()
 
     try {
         # First, count computers to verify AD connectivity
@@ -596,7 +641,7 @@ function Get-AllADComputers {
                     IsStale = $isStale
                 }
 
-                $computersList += $computerObj
+                $computersList.Add($computerObj)
             } catch {
                 $errorCount++
                 if ($errorCount -le 5) {
@@ -627,8 +672,8 @@ function Get-AllADComputers {
 function Get-AllADGroups {
     Write-Host "\`n[*] Collecting Active Directory Groups..." -ForegroundColor Green
 
-    # Initialize as empty array to prevent null
-    $groupsList = @()
+    # Use List<T> for O(n) performance instead of += which is O(n²)
+    $groupsList = [System.Collections.Generic.List[object]]::new()
 
     # Define privileged groups outside the loop
     $privilegedGroupNames = @(
@@ -668,7 +713,7 @@ function Get-AllADGroups {
                     PrivilegeLevel = $privilegeLevel
                 }
 
-                $groupsList += $groupObj
+                $groupsList.Add($groupObj)
             } catch {
                 Write-Host "[!] Error processing group $($group.Name): $_" -ForegroundColor Yellow
             }
@@ -1097,36 +1142,42 @@ function Get-DCSyncPermissions {
 
 function Get-RC4EncryptionTypes {
     Write-Host "\`n[*] Detecting RC4 Kerberos Encryption (Weak Crypto)..." -ForegroundColor Green
-    try {
-        $usersWithRC4 = @()
 
-        $kerberoastableUsers = Get-ADUser -Filter {ServicePrincipalName -like "*"} -Properties \`
-            ServicePrincipalName, "msDS-SupportedEncryptionTypes", PasswordLastSet, Enabled
+    # Initialize BEFORE try block for anti-null guarantee
+    $usersWithRC4 = [System.Collections.Generic.List[object]]::new()
+
+    try {
+        $kerberoastableUsers = @(Get-ADUser -Filter {ServicePrincipalName -like "*"} -Properties \`
+            ServicePrincipalName, "msDS-SupportedEncryptionTypes", PasswordLastSet, Enabled -ErrorAction Stop)
 
         foreach ($user in $kerberoastableUsers) {
-            $encTypes = $user."msDS-SupportedEncryptionTypes"
-            $usesRC4 = ($null -eq $encTypes) -or (($encTypes -band 4) -ne 0)
+            try {
+                $encTypes = $user."msDS-SupportedEncryptionTypes"
+                $usesRC4 = ($null -eq $encTypes) -or (($encTypes -band 4) -ne 0)
 
-            if ($usesRC4) {
-                $usersWithRC4 += @{
-                    SamAccountName = $user.SamAccountName
-                    DistinguishedName = $user.DistinguishedName
-                    Enabled = $user.Enabled
-                    PasswordLastSet = $user.PasswordLastSet
-                    EncryptionTypes = $encTypes
-                    UsesRC4 = $true
-                    ServicePrincipalNames = @($user.ServicePrincipalName)
-                    RiskLevel = "HIGH"
-                    Vulnerability = "RC4_HMAC vulnerable to offline cracking"
+                if ($usesRC4) {
+                    $usersWithRC4.Add(@{
+                        SamAccountName = $user.SamAccountName
+                        DistinguishedName = $user.DistinguishedName
+                        Enabled = $user.Enabled
+                        PasswordLastSet = $user.PasswordLastSet
+                        EncryptionTypes = $encTypes
+                        UsesRC4 = $true
+                        ServicePrincipalNames = @($user.ServicePrincipalName)
+                        RiskLevel = "HIGH"
+                        Vulnerability = "RC4_HMAC vulnerable to offline cracking"
+                    })
                 }
+            } catch {
+                Write-Host "[!] Error processing user $($user.SamAccountName): $($_.Exception.Message)" -ForegroundColor Yellow
             }
         }
 
         Write-Host "[+] Found $($usersWithRC4.Count) users with RC4 encryption enabled" -ForegroundColor $(if ($usersWithRC4.Count -gt 0) { "Yellow" } else { "Green" })
-        return $usersWithRC4
+        return @($usersWithRC4)
     } catch {
-        Write-Host "[!] Error detecting RC4 encryption: $_" -ForegroundColor Red
-        return @()
+        Write-Host "[!] Error detecting RC4 encryption: $($_.Exception.Message)" -ForegroundColor Red
+        return @($usersWithRC4)
     }
 }
 
@@ -2578,6 +2629,10 @@ function Get-ReplicationHealthAllDCs {
     #>
     Write-Host "\`n[*] Collecting Replication Health from ALL Domain Controllers..." -ForegroundColor Green
 
+    # Initialize BEFORE try block with List<T> for performance and anti-null guarantee
+    $dcList = [System.Collections.Generic.List[object]]::new()
+    $failedReplList = [System.Collections.Generic.List[object]]::new()
+
     $replHealth = @{
         DomainControllers = @()
         ReplicationLinks = @()
@@ -2630,14 +2685,14 @@ function Get-ReplicationHealthAllDCs {
                         $partnerInfo.Status = "FAILED"
                         $partnerInfo.ErrorMessage = Get-ReplicationErrorMessage $partner.LastReplicationResult
 
-                        $replHealth.FailedReplications += @{
+                        $failedReplList.Add(@{
                             SourceDC = $partner.Partner
                             TargetDC = $dc.HostName
                             ErrorCode = $partner.LastReplicationResult
                             ErrorMessage = $partnerInfo.ErrorMessage
                             FailuresSince = $partner.LastReplicationSuccess
                             ConsecutiveFailures = $partner.ConsecutiveReplicationFailures
-                        }
+                        })
 
                         $replHealth.Summary.FailedLinks++
                     } else {
@@ -2678,8 +2733,12 @@ function Get-ReplicationHealthAllDCs {
                 Write-Host "[!] Could not query replication on $($dc.Name): $_" -ForegroundColor Yellow
             }
 
-            $replHealth.DomainControllers += $dcReplStatus
+            $dcList.Add($dcReplStatus)
         }
+
+        # Assign List contents to hashtable
+        $replHealth.DomainControllers = @($dcList)
+        $replHealth.FailedReplications = @($failedReplList)
 
         # Build replication link matrix
         Write-Host "[*] Building replication topology matrix..." -ForegroundColor Cyan
@@ -2689,8 +2748,12 @@ function Get-ReplicationHealthAllDCs {
         return $replHealth
 
     } catch {
-        Write-Host "[!] Error analyzing replication: $_" -ForegroundColor Red
-        return @{ Error = $_.Exception.Message }
+        Write-Host "[!] Error analyzing replication: $($_.Exception.Message)" -ForegroundColor Red
+        # Return structured object even on error
+        $replHealth.DomainControllers = @($dcList)
+        $replHealth.FailedReplications = @($failedReplList)
+        $replHealth.Error = $_.Exception.Message
+        return $replHealth
     }
 }
 
@@ -2741,6 +2804,9 @@ function Get-LingeringObjectsRisk {
     #>
     Write-Host "\`n[*] Analyzing Lingering Objects Risk..." -ForegroundColor Green
 
+    # Initialize BEFORE try block with List<T> for anti-null guarantee
+    $indicatorsList = [System.Collections.Generic.List[object]]::new()
+
     $lingeringInfo = @{
         RiskLevel = "Low"
         Indicators = @()
@@ -2759,18 +2825,20 @@ function Get-LingeringObjectsRisk {
 
                 foreach ($partner in $replStatus) {
                     if ($partner.LastReplicationResult -in @(8606, 8614)) {
-                        $lingeringInfo.Indicators += @{
+                        $indicatorsList.Add(@{
                             Type = "ReplicationError"
                             SourceDC = $partner.Partner
                             TargetDC = $dc.HostName
                             ErrorCode = $partner.LastReplicationResult
                             Severity = "HIGH"
                             Description = "Error indicates lingering objects are blocking replication"
-                        }
+                        })
                         $lingeringInfo.RiskLevel = "Critical"
                     }
                 }
-            } catch { }
+            } catch {
+                Write-Host "[!] Error checking replication on $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
 
         # Method 2: Check Event Logs for lingering object events
@@ -2785,34 +2853,38 @@ function Get-LingeringObjectsRisk {
 
                 if ($events) {
                     foreach ($event in $events) {
-                        $lingeringInfo.Indicators += @{
+                        $indicatorsList.Add(@{
                             Type = "EventLog"
                             DC = $dc.Name
                             EventID = $event.Id
                             TimeCreated = $event.TimeCreated
                             Message = $event.Message.Substring(0, [Math]::Min(200, $event.Message.Length))
                             Severity = "MEDIUM"
-                        }
+                        })
 
                         if ($lingeringInfo.RiskLevel -eq "Low") {
                             $lingeringInfo.RiskLevel = "Medium"
                         }
                     }
                 }
-            } catch { }
+            } catch {
+                Write-Host "[!] Error checking events on $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
 
         # Method 3: Compare highestCommittedUSN across DCs (large gaps = potential issues)
         Write-Host "[*] Comparing USN values across DCs..." -ForegroundColor Cyan
-        $usnValues = @()
+        $usnValues = [System.Collections.Generic.List[object]]::new()
         foreach ($dc in $allDCs) {
             try {
                 $rootDSE = Get-ADRootDSE -Server $dc.HostName
-                $usnValues += [PSCustomObject]@{
+                $usnValues.Add([PSCustomObject]@{
                     DC = $dc.Name
                     HighestUSN = [int64]$rootDSE.highestCommittedUSN
-                }
-            } catch { }
+                })
+            } catch {
+                Write-Host "[!] Error getting USN from $($dc.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
 
         if ($usnValues.Count -gt 1) {
@@ -2829,13 +2901,16 @@ function Get-LingeringObjectsRisk {
 
             # Large USN gaps might indicate replication issues
             if ($usnGap -gt 100000) {
-                $lingeringInfo.Indicators += @{
+                $indicatorsList.Add(@{
                     Type = "USNGap"
                     Description = "Large USN gap ($usnGap) detected between DCs"
                     Severity = "LOW"
-                }
+                })
             }
         }
+
+        # Assign indicators list to result
+        $lingeringInfo.Indicators = @($indicatorsList)
 
         # Generate recommendations
         if ($lingeringInfo.RiskLevel -eq "Critical") {
@@ -2862,8 +2937,11 @@ function Get-LingeringObjectsRisk {
         return $lingeringInfo
 
     } catch {
-        Write-Host "[!] Error analyzing lingering objects: $_" -ForegroundColor Red
-        return @{ Error = $_.Exception.Message }
+        Write-Host "[!] Error analyzing lingering objects: $($_.Exception.Message)" -ForegroundColor Red
+        # Return structured result even on error
+        $lingeringInfo.Indicators = @($indicatorsList)
+        $lingeringInfo.Error = $_.Exception.Message
+        return $lingeringInfo
     }
 }
 
