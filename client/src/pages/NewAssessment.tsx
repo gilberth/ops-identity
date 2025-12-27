@@ -467,6 +467,14 @@ function Get-AllADUsers {
             return @()
         }
 
+        # Filter out trust accounts (SamAccountName ending with $)
+        # These are inter-domain trust accounts, not real users
+        $trustAccounts = @($adUsers | Where-Object { $_.SamAccountName -like '*$' })
+        if ($trustAccounts.Count -gt 0) {
+            Write-Host "[*] Filtering out $($trustAccounts.Count) trust accounts (ending with \`$)" -ForegroundColor Gray
+            $adUsers = @($adUsers | Where-Object { $_.SamAccountName -notlike '*$' })
+        }
+
         Write-Host "[*] Processing $($adUsers.Count) users..." -ForegroundColor Cyan
         $processedCount = 0
         $errorCount = 0

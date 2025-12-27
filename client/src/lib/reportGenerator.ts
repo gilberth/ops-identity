@@ -433,22 +433,45 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
+          new Paragraph({
+            text: `Estado General: ${rawData.FSMORolesHealth.OverallHealth || "Desconocido"}`,
+            spacing: { after: 200 },
+          }),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["Rol", "Titular", "Estado", "Latencia"], true),
-              ...Object.entries(rawData.FSMORolesHealth).map(([role, info]: [string, any]) => {
-                const status = info.Status === "OK" ? "✅ OK" : "⚠️ Error";
-                const statusColor = info.Status === "OK" ? "low" : "critical";
+              createTableRow(["Rol", "Titular", "Alcance", "Estado", "Latencia"], true),
+              ...(rawData.FSMORolesHealth.Roles || []).map((role: any) => {
+                const status = role.Health === "Healthy" ? "✅ OK" : "⚠️ Error";
+                const statusColor = role.Health === "Healthy" ? "low" : "critical";
+                const latency = role.ADResponseTimeMs ? `${role.ADResponseTimeMs.toFixed(1)} ms` : "N/A";
                 return createTableRow([
-                  role,
-                  info.Holder || "Desconocido",
+                  role.RoleName || "Desconocido",
+                  role.Holder || "Desconocido",
+                  role.Scope || "N/A",
                   status,
-                  `${info.ResponseTime} ms`
+                  latency
                 ], false, statusColor);
               }),
             ],
           }),
+          // RID Pool Status
+          ...(rawData.FSMORolesHealth.RIDPoolStatus ? [
+            new Paragraph({
+              text: "Estado del Pool RID",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Métrica", "Valor"], true),
+                createTableRow(["RIDs Emitidos", rawData.FSMORolesHealth.RIDPoolStatus.RIDsIssued?.toString() || "N/A"]),
+                createTableRow(["RIDs Restantes", rawData.FSMORolesHealth.RIDPoolStatus.RIDsRemaining?.toString() || "N/A"]),
+                createTableRow(["% Utilizado", `${rawData.FSMORolesHealth.RIDPoolStatus.PercentUsed || 0}%`]),
+              ],
+            }),
+          ] : []),
         ] : []),
 
         // SALUD DE REPLICACIÓN
@@ -801,17 +824,52 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ],
             })
           ] : [
+            // Object format with RiskLevel, DetectionMethod, Indicators array
             new Table({
               width: { size: 100, type: WidthType.PERCENTAGE },
               rows: [
-                createTableRow(["Nivel de Riesgo", "Método de Detección", "Indicadores"], true),
+                createTableRow(["Nivel de Riesgo", "Método de Detección"], true),
                 createTableRow([
                   rawData.LingeringObjectsRisk.RiskLevel || "Desconocido",
-                  rawData.LingeringObjectsRisk.DetectionMethod || "N/A",
-                  (rawData.LingeringObjectsRisk.Indicators || []).join(", ") || "Ninguno"
+                  rawData.LingeringObjectsRisk.DetectionMethod || "N/A"
                 ], false, rawData.LingeringObjectsRisk.RiskLevel === "Low" ? "low" : "medium")
               ]
-            })
+            }),
+            // Indicators as separate list (they are objects, not strings)
+            ...(rawData.LingeringObjectsRisk.Indicators && rawData.LingeringObjectsRisk.Indicators.length > 0 ? [
+              new Paragraph({
+                text: "Indicadores Detectados:",
+                spacing: { before: 200, after: 100 },
+              }),
+              ...rawData.LingeringObjectsRisk.Indicators.map((indicator: any) =>
+                new Paragraph({
+                  text: `• [${indicator.Severity || "INFO"}] ${indicator.Description || indicator.Type || "Sin descripción"}`,
+                  spacing: { after: 50 },
+                })
+              )
+            ] : [
+              new Paragraph({
+                text: "✅ No se detectaron indicadores de riesgo.",
+                spacing: { before: 100, after: 100 },
+              })
+            ]),
+            // USN Analysis if available
+            ...(rawData.LingeringObjectsRisk.USNAnalysis ? [
+              new Paragraph({
+                text: "Análisis USN:",
+                spacing: { before: 200, after: 100 },
+              }),
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: [
+                  createTableRow(["Métrica", "Valor"], true),
+                  createTableRow(["DCs Analizados", rawData.LingeringObjectsRisk.USNAnalysis.DCsAnalyzed?.toString() || "N/A"]),
+                  createTableRow(["USN Más Alto", rawData.LingeringObjectsRisk.USNAnalysis.HighestUSN?.toString() || "N/A"]),
+                  createTableRow(["USN Más Bajo", rawData.LingeringObjectsRisk.USNAnalysis.LowestUSN?.toString() || "N/A"]),
+                  createTableRow(["Brecha USN", rawData.LingeringObjectsRisk.USNAnalysis.Gap?.toString() || "N/A"]),
+                ]
+              })
+            ] : [])
           ]),
         ] : []),
 
