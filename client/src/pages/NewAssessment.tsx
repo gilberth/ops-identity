@@ -2165,7 +2165,16 @@ function Get-DNSConfiguration {
                             EnableDnsSec = $dnsServer.ServerSetting.EnableDnsSec
                             EnableEDnsProbes = $dnsServer.ServerSetting.EnableEDnsProbes
                             EventLogLevel = $dnsServer.ServerSetting.EventLogLevel
-                            ListenAddresses = if ($dnsServer.ServerSetting.ListenAddresses) { @($dnsServer.ServerSetting.ListenAddresses.IPAddressToString) } else { @() }
+                            ListenAddresses = $(
+                                $addrList = @()
+                                if ($dnsServer.ServerSetting.ListenAddresses -and $dnsServer.ServerSetting.ListenAddresses.Count -gt 0) {
+                                    foreach ($addr in $dnsServer.ServerSetting.ListenAddresses) {
+                                        if ($addr -and $addr.IPAddressToString) { $addrList += $addr.IPAddressToString }
+                                        elseif ($addr) { $addrList += $addr.ToString() }
+                                    }
+                                }
+                                $addrList
+                            )
                 }
                         
                         # Security Checks
@@ -2283,10 +2292,16 @@ function Get-DNSConfiguration {
                 }
 
                         # Get forwarders and conditional forwarders
-                if ($dnsServer.ServerSetting.Forwarders) {
+                if ($dnsServer.ServerSetting.Forwarders -and $dnsServer.ServerSetting.Forwarders.Count -gt 0) {
                     $fwdList = @()
                     try {
-                        $fwdList = @($dnsServer.ServerSetting.Forwarders.IPAddressToString)
+                        foreach ($fwdr in $dnsServer.ServerSetting.Forwarders) {
+                            if ($fwdr -and $fwdr.IPAddressToString) {
+                                $fwdList += $fwdr.IPAddressToString
+                            } elseif ($fwdr) {
+                                $fwdList += $fwdr.ToString()
+                            }
+                        }
                     } catch {
                         $fwdList = @()
                     }
@@ -2294,8 +2309,8 @@ function Get-DNSConfiguration {
                     $forwarderInfo = @{
                         DCName = $dc.Name
                                 Forwarders = $fwdList
-                                ForwardingTimeout = $dnsServer.ServerSetting.ForwardingTimeout
-                                IsSlave = $dnsServer.ServerSetting.IsSlave
+                                ForwardingTimeout = if ($dnsServer.ServerSetting.ForwardingTimeout) { $dnsServer.ServerSetting.ForwardingTimeout } else { 0 }
+                                IsSlave = if ($null -ne $dnsServer.ServerSetting.IsSlave) { $dnsServer.ServerSetting.IsSlave } else { $false }
                     }
 
                             # Check if using public DNS (potential data leakage)
@@ -2317,12 +2332,20 @@ function Get-DNSConfiguration {
                         
                         # Get conditional forwarders
                 try {
-                    $conditionalForwarders = Get-DnsServerZone -ComputerName $dc.HostName | Where-Object { $_.ZoneType -eq "Forwarder" }
+                    $conditionalForwarders = Get-DnsServerZone -ComputerName $dc.HostName -ErrorAction SilentlyContinue | Where-Object { $_.ZoneType -eq "Forwarder" }
                     if ($conditionalForwarders) {
                         foreach($cf in $conditionalForwarders) {
                             $masterList = @()
-                            if ($cf.MasterServers) {
-                                try { $masterList = @($cf.MasterServers.IPAddressToString) } catch { $masterList = @() }
+                            if ($cf.MasterServers -and $cf.MasterServers.Count -gt 0) {
+                                try {
+                                    foreach ($ms in $cf.MasterServers) {
+                                        if ($ms -and $ms.IPAddressToString) {
+                                            $masterList += $ms.IPAddressToString
+                                        } elseif ($ms) {
+                                            $masterList += $ms.ToString()
+                                        }
+                                    }
+                                } catch { $masterList = @() }
                             }
                             $dnsInfo.Forwarders += @{
                                 DCName = $dc.Name
