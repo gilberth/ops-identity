@@ -1,13 +1,12 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Filter, Download, Loader2, UserX, UserCheck } from "lucide-react";
-
+import { Search, Filter, Download, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
+import MainLayout from "@/components/layout/MainLayout";
 
 const Users = () => {
     const [loading, setLoading] = useState(true);
@@ -26,21 +25,10 @@ const Users = () => {
                 return;
             }
 
-            // Get latest assessment
             const sorted = assessments.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
             const latestId = sorted[0].id;
-
-            // Fetch raw data
             const data = await api.getAssessmentData(latestId);
-
-            // Expected structure: data.users or data.Identity info. 
-            // Depending on the collector script, it might be in different keys.
-            // We will look for common keys.
-            // The PowerShell script exports as 'Users'
             const userList = data.Users || data.users || [];
-
-            // If raw data is flat or different, we might need to adjust.
-            // Assuming standard AD Collector format.
             setUsers(Array.isArray(userList) ? userList : []);
 
         } catch (error) {
@@ -61,84 +49,92 @@ const Users = () => {
     );
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-foreground">Users & Identities</h1>
-                    <p className="text-muted-foreground mt-1">Manage and audit Active Directory user accounts.</p>
-                </div>
-                <div className="flex gap-3">
-                    <Button variant="outline" className="rounded-full">
+        <MainLayout>
+            <div className="p-6 space-y-6">
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-2xl font-display font-bold tracking-tight text-foreground">
+                            Users & Identities
+                        </h1>
+                        <p className="text-sm text-muted-foreground mt-1">
+                            Manage and audit Active Directory user accounts
+                        </p>
+                    </div>
+                    <Button className="btn-primary">
                         <Download className="mr-2 h-4 w-4" /> Export
                     </Button>
                 </div>
-            </div>
 
-            <Card className="rounded-[2rem] border-none shadow-soft overflow-hidden bg-white">
-                <CardHeader className="bg-white px-8 pt-8 pb-4 border-b border-gray-100/50">
-                    <div className="flex items-center justify-between">
-                        <CardTitle>Directory Users ({filteredUsers.length})</CardTitle>
+                {/* Main Panel */}
+                <div className="panel">
+                    <div className="panel-header flex items-center justify-between">
+                        <h2 className="text-sm font-semibold text-foreground">
+                            Directory Users ({filteredUsers.length})
+                        </h2>
                         <div className="flex items-center gap-3">
                             <div className="relative w-64">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                                 <Input
                                     placeholder="Search users..."
-                                    className="pl-9 h-10 rounded-xl bg-gray-50 border-transparent focus:bg-white transition-all shadow-sm"
+                                    className="pl-9 h-9 rounded-lg bg-secondary/50 border-border focus:bg-secondary transition-all text-sm"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
                             </div>
-                            <Button variant="outline" size="icon" className="h-10 w-10 rounded-xl">
+                            <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-border">
                                 <Filter className="h-4 w-4 text-muted-foreground" />
                             </Button>
                         </div>
                     </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                    {loading ? (
-                        <div className="flex justify-center items-center h-64">
-                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                        </div>
-                    ) : filteredUsers.length === 0 ? (
-                        <div className="text-center py-12 text-muted-foreground">
-                            No users found in the latest assessment data.
-                        </div>
-                    ) : (
-                        <Table>
-                            <TableHeader className="bg-gray-50/50">
-                                <TableRow>
-                                    <TableHead className="pl-8 h-12">Name</TableHead>
-                                    <TableHead>Username (SAM)</TableHead>
-                                    <TableHead>Enabled</TableHead>
-                                    <TableHead>Last Logon</TableHead>
-                                    <TableHead>Password Age</TableHead>
-                                    <TableHead>Description</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {filteredUsers.slice(0, 100).map((user, idx) => (
-                                    <TableRow key={idx} className="hover:bg-gray-50/50 border-gray-100">
-                                        <TableCell className="pl-8 font-medium">{user.Name || user.name || "N/A"}</TableCell>
-                                        <TableCell className="text-muted-foreground">{user.SamAccountName || user.username || "N/A"}</TableCell>
-                                        <TableCell>
-                                            <Badge
-                                                variant={(user.Enabled === true || user.Enabled === "True" || user.status === "Active") ? "default" : "secondary"}
-                                                className={(user.Enabled === true || user.Enabled === "True" || user.status === "Active") ? "bg-primary/10 text-primary hover:bg-primary/20 shadow-none border-none font-bold" : "bg-gray-100 text-gray-500 hover:bg-gray-200 shadow-none border-none"}
-                                            >
-                                                {(user.Enabled === true || user.Enabled === "True" || user.status === "Active") ? "Active" : "Disabled"}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell>{user.LastLogonDate || user.lastLogon || "Never"}</TableCell>
-                                        <TableCell>{user.PasswordAge || user.pwdAge || "N/A"}</TableCell>
-                                        <TableCell className="max-w-xs truncate text-muted-foreground">{user.Description || user.description || "-"}</TableCell>
+
+                    <div className="p-0">
+                        {loading ? (
+                            <div className="flex justify-center items-center h-64">
+                                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                            </div>
+                        ) : filteredUsers.length === 0 ? (
+                            <div className="text-center py-12 text-muted-foreground">
+                                No users found in the latest assessment data.
+                            </div>
+                        ) : (
+                            <Table>
+                                <TableHeader>
+                                    <TableRow className="border-border hover:bg-transparent">
+                                        <TableHead className="pl-6 h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Name</TableHead>
+                                        <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Username (SAM)</TableHead>
+                                        <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Enabled</TableHead>
+                                        <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Last Logon</TableHead>
+                                        <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Password Age</TableHead>
+                                        <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Description</TableHead>
                                     </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    )}
-                </CardContent>
-            </Card>
-        </div>
+                                </TableHeader>
+                                <TableBody>
+                                    {filteredUsers.slice(0, 100).map((user, idx) => (
+                                        <TableRow key={idx} className="border-border hover:bg-secondary/30 transition-colors">
+                                            <TableCell className="pl-6 font-medium text-foreground">{user.Name || user.name || "N/A"}</TableCell>
+                                            <TableCell className="text-muted-foreground font-mono text-sm">{user.SamAccountName || user.username || "N/A"}</TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    className={(user.Enabled === true || user.Enabled === "True" || user.status === "Active")
+                                                        ? "badge-low"
+                                                        : "bg-secondary text-muted-foreground border-border"}
+                                                >
+                                                    {(user.Enabled === true || user.Enabled === "True" || user.status === "Active") ? "Active" : "Disabled"}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">{user.LastLogonDate || user.lastLogon || "Never"}</TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">{user.PasswordAge || user.pwdAge || "N/A"}</TableCell>
+                                            <TableCell className="max-w-xs truncate text-muted-foreground text-sm">{user.Description || user.description || "-"}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </MainLayout>
     );
 };
 

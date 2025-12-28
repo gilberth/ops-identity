@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, RefreshCw, Trash2, Eye, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
 import AIConfigPanel from "@/components/admin/AIConfigPanel";
+import MainLayout from "@/components/layout/MainLayout";
 import {
   Table,
   TableBody,
@@ -54,12 +54,9 @@ const AdminPanel = () => {
 
   useEffect(() => {
     loadAssessments();
-
-    // Set up polling for real-time updates
     const interval = setInterval(() => {
       loadAssessments();
-    }, 5000); // Poll every 5 seconds
-
+    }, 5000);
     return () => {
       clearInterval(interval);
     };
@@ -94,26 +91,24 @@ const AdminPanel = () => {
   };
 
   const getStatusBadge = (status: string) => {
-    const statusConfig: Record<string, { variant: any; label: string }> = {
-      pending: { variant: "secondary", label: "Pendiente" },
-      analyzing: { variant: "default", label: "En Curso" },
-      completed: { variant: "outline", label: "Completado" },
-      failed: { variant: "destructive", label: "Fallido" }
+    const statusConfig: Record<string, { className: string; label: string }> = {
+      pending: { className: "bg-secondary text-muted-foreground border-border", label: "Pendiente" },
+      analyzing: { className: "badge-medium", label: "En Curso" },
+      completed: { className: "badge-low", label: "Completado" },
+      failed: { className: "badge-critical", label: "Fallido" }
     };
 
-    const config = statusConfig[status] || { variant: "secondary", label: status };
-    return <Badge variant={config.variant}>{config.label}</Badge>;
+    const config = statusConfig[status] || { className: "bg-secondary text-muted-foreground border-border", label: status };
+    return <Badge className={config.className}>{config.label}</Badge>;
   };
 
   const handleRestartAnalysis = async (id: string) => {
     try {
       await api.resetAssessment(id);
-
       toast({
         title: "Análisis reiniciado",
         description: "El análisis se ha reiniciado correctamente.",
       });
-
       loadAssessments();
     } catch (error) {
       console.error('Error restarting analysis:', error);
@@ -127,13 +122,10 @@ const AdminPanel = () => {
 
   const handleCancelAnalysis = async (id: string) => {
     try {
-      // For now, we just reload to reflect any backend changes
-      // In future, add a dedicated cancel endpoint if needed
       toast({
         title: "Análisis cancelado",
         description: "El análisis ha sido marcado como cancelado.",
       });
-
       loadAssessments();
     } catch (error) {
       console.error('Error canceling analysis:', error);
@@ -150,12 +142,10 @@ const AdminPanel = () => {
 
     try {
       await api.deleteAssessment(selectedAssessmentId);
-
       toast({
         title: "Análisis eliminado",
         description: "El análisis ha sido eliminado exitosamente.",
       });
-
       loadAssessments();
     } catch (error) {
       console.error('Error deleting assessment:', error);
@@ -173,7 +163,6 @@ const AdminPanel = () => {
   const getProgressInfo = (assessment: Assessment) => {
     const progress = assessment.analysis_progress;
     if (!progress || !progress.total) return "N/A";
-
     const percentage = Math.round((progress.completed / progress.total) * 100);
     return `${progress.completed}/${progress.total} (${percentage}%)`;
   };
@@ -191,48 +180,48 @@ const AdminPanel = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50/50">
-
-      <main className="container py-8 max-w-[1600px]">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-2 tracking-tight text-foreground">Configuración</h1>
-          <p className="text-muted-foreground text-lg">
+    <MainLayout>
+      <div className="p-6 space-y-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-display font-bold tracking-tight text-foreground">
+            Configuración
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Gestiona la IA, integraciones y análisis del sistema
           </p>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-[2rem] shadow-soft p-6 border border-gray-100 transition-all hover:shadow-lg">
-            <p className="text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">Total Análisis</p>
-            <p className="text-4xl font-bold tracking-tight">{stats.total}</p>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="panel p-5">
+            <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Total Análisis</p>
+            <p className="text-3xl font-display font-bold text-foreground">{stats.total}</p>
           </div>
-          <div className="bg-white rounded-[2rem] shadow-soft p-6 border border-gray-100 transition-all hover:shadow-lg">
-            <p className="text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">En Curso</p>
-            <p className="text-4xl font-bold tracking-tight text-primary">{stats.analyzing}</p>
+          <div className="panel p-5">
+            <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">En Curso</p>
+            <p className="text-3xl font-display font-bold text-primary">{stats.analyzing}</p>
           </div>
-          <div className="bg-white rounded-[2rem] shadow-soft p-6 border border-gray-100 transition-all hover:shadow-lg">
-            <p className="text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">Fallidos</p>
-            <p className="text-4xl font-bold tracking-tight text-destructive">{stats.failed}</p>
+          <div className="panel p-5">
+            <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Fallidos</p>
+            <p className="text-3xl font-display font-bold text-[hsl(var(--severity-critical))]">{stats.failed}</p>
           </div>
-          <div className="bg-white rounded-[2rem] shadow-soft p-6 border border-gray-100 transition-all hover:shadow-lg">
-            <p className="text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">Completados</p>
-            <p className="text-4xl font-bold tracking-tight text-emerald-600">{stats.completed}</p>
+          <div className="panel p-5">
+            <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider">Completados</p>
+            <p className="text-3xl font-display font-bold text-accent">{stats.completed}</p>
           </div>
         </div>
 
         {/* AI Provider Configuration */}
-        <div className="mb-8">
-          <AIConfigPanel />
-        </div>
+        <AIConfigPanel />
 
         {/* Filters */}
-        <div className="bg-white rounded-[2rem] shadow-soft p-6 border border-gray-100 mb-6 flex items-center justify-between">
-          <h2 className="text-xl font-bold tracking-tight">Historial de Análisis</h2>
+        <div className="panel p-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Historial de Análisis</h2>
           <div className="flex items-center gap-4">
-            <label className="text-sm font-medium text-muted-foreground">Filtrar por estado:</label>
+            <label className="text-xs font-medium text-muted-foreground">Filtrar por estado:</label>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[200px] rounded-xl border-gray-200">
+              <SelectTrigger className="w-[180px] rounded-lg border-border bg-secondary/50 h-9 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -247,122 +236,119 @@ const AdminPanel = () => {
         </div>
 
         {/* Table */}
-        <div className="bg-white rounded-[2.5rem] shadow-soft border border-gray-100 overflow-hidden">
+        <div className="panel overflow-hidden">
           {loading ? (
-            <div className="text-center py-24">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-              <p className="text-muted-foreground font-medium">Cargando análisis...</p>
+            <div className="text-center py-16">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mx-auto mb-4"></div>
+              <p className="text-muted-foreground text-sm">Cargando análisis...</p>
             </div>
           ) : (
-            <div className="p-2">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent border-gray-100">
-                    <TableHead className="pl-6 h-14 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">Dominio</TableHead>
-                    <TableHead className="h-14 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">Estado</TableHead>
-                    <TableHead className="h-14 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">Progreso</TableHead>
-                    <TableHead className="h-14 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">Creado</TableHead>
-                    <TableHead className="h-14 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">Último Error</TableHead>
-                    <TableHead className="pr-6 text-right h-14 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">Acciones</TableHead>
+            <Table>
+              <TableHeader>
+                <TableRow className="border-border hover:bg-transparent">
+                  <TableHead className="pl-6 h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dominio</TableHead>
+                  <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Estado</TableHead>
+                  <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Progreso</TableHead>
+                  <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Creado</TableHead>
+                  <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Último Error</TableHead>
+                  <TableHead className="pr-6 text-right h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredAssessments.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                      No hay análisis que coincidan con los filtros
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAssessments.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center py-16 text-muted-foreground">
-                        No hay análisis que coincidan con los filtros
+                ) : (
+                  filteredAssessments.map((assessment) => (
+                    <TableRow key={assessment.id} className="border-border hover:bg-secondary/30 transition-colors">
+                      <TableCell className="pl-6 font-medium text-foreground py-4">{assessment.domain}</TableCell>
+                      <TableCell className="py-4">{getStatusBadge(assessment.status)}</TableCell>
+                      <TableCell className="text-sm font-mono text-muted-foreground py-4">{getProgressInfo(assessment)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground py-4">
+                        {format(new Date(assessment.created_at), "dd MMM yyyy HH:mm", { locale: es })}
                       </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredAssessments.map((assessment) => (
-                      <TableRow key={assessment.id} className="hover:bg-gray-50/50 border-gray-50 transition-colors">
-                        <TableCell className="pl-6 font-semibold text-foreground py-4">{assessment.domain}</TableCell>
-                        <TableCell className="py-4">{getStatusBadge(assessment.status)}</TableCell>
-                        <TableCell className="text-sm font-medium text-muted-foreground py-4">{getProgressInfo(assessment)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground py-4">
-                          {format(new Date(assessment.created_at), "dd MMM yyyy HH:mm", { locale: es })}
-                        </TableCell>
-                        <TableCell className="text-sm max-w-xs truncate py-4">
-                          {getLastError(assessment) !== "N/A" && (
-                            <span className="text-destructive flex items-center gap-1 font-medium bg-red-50 px-2 py-1 rounded-lg w-fit">
-                              <AlertCircle className="h-3 w-3" />
-                              {getLastError(assessment)}
-                            </span>
-                          )}
-                          {getLastError(assessment) === "N/A" && (
-                            <span className="text-muted-foreground/30">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right pr-6 py-4">
-                          <div className="flex items-center justify-end gap-1">
-                            <Link to={`/assessment/${assessment.id}`}>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors">
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                            </Link>
+                      <TableCell className="text-sm max-w-xs truncate py-4">
+                        {getLastError(assessment) !== "N/A" ? (
+                          <span className="text-[hsl(var(--severity-critical))] flex items-center gap-1 font-medium bg-[hsl(var(--severity-critical))]/10 px-2 py-1 rounded-md w-fit text-xs">
+                            <AlertCircle className="h-3 w-3" />
+                            {getLastError(assessment)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/50">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right pr-6 py-4">
+                        <div className="flex items-center justify-end gap-1">
+                          <Link to={`/assessment/${assessment.id}`}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </Link>
 
-                            {assessment.status === 'analyzing' && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleCancelAnalysis(assessment.id)}
-                                className="h-8 w-8 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors"
-                              >
-                                <XCircle className="h-4 w-4" />
-                              </Button>
-                            )}
-
-                            {(assessment.status === 'failed' || assessment.status === 'analyzing') && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleRestartAnalysis(assessment.id)}
-                                className="h-8 w-8 rounded-lg hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                              >
-                                <RefreshCw className="h-4 w-4" />
-                              </Button>
-                            )}
-
+                          {assessment.status === 'analyzing' && (
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={() => {
-                                setSelectedAssessmentId(assessment.id);
-                                setDeleteDialogOpen(true);
-                              }}
-                              className="h-8 w-8 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors"
+                              onClick={() => handleCancelAnalysis(assessment.id)}
+                              className="h-8 w-8 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <XCircle className="h-4 w-4" />
                             </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                          )}
+
+                          {(assessment.status === 'failed' || assessment.status === 'analyzing') && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleRestartAnalysis(assessment.id)}
+                              className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors"
+                            >
+                              <RefreshCw className="h-4 w-4" />
+                            </Button>
+                          )}
+
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSelectedAssessmentId(assessment.id);
+                              setDeleteDialogOpen(true);
+                            }}
+                            className="h-8 w-8 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
           )}
         </div>
-      </main>
+      </div>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent className="rounded-2xl">
+        <AlertDialogContent className="rounded-xl border-border bg-background">
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogTitle className="text-foreground">¿Estás seguro?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
               Esta acción no se puede deshacer. Se eliminarán todos los datos relacionados con este análisis.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-xl">Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteAssessment} className="rounded-xl bg-destructive hover:bg-destructive/90">
+            <AlertDialogCancel className="rounded-lg border-border">Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteAssessment} className="rounded-lg bg-destructive hover:bg-destructive/90">
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </MainLayout>
   );
 };
 
