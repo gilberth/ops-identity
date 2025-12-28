@@ -214,7 +214,206 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
 };
 
 export async function generateReport(data: ReportData): Promise<Blob> {
-  const { assessment, findings, rawData } = data;
+  const { assessment, findings: rawFindings, rawData } = data;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DEDUPLICACIÓN Y CONSOLIDACIÓN DE FINDINGS
+  // Combina findings similares para evitar redundancia en el informe
+  // ═══════════════════════════════════════════════════════════════════════════
+  const deduplicateFindings = (findings: Finding[]): Finding[] => {
+    const consolidated: Finding[] = [];
+    const processed = new Set<string>();
+
+    // Patrones de consolidación
+    const patterns = [
+      {
+        // Equipos inactivos +90 días (múltiples variantes)
+        match: (f: Finding) => /equipos?\s+(inactivos?|sin\s+actividad|habilitados?).*90\s+d[ií]as/i.test(f.title) ||
+                              /90\s+d[ií]as.*inactivos?/i.test(f.title) ||
+                              /stale.*computer/i.test(f.title),
+        key: 'stale-computers-90days',
+        consolidate: (items: Finding[]) => {
+          const totalCount = items.reduce((sum, f) => sum + (f.affected_count || parseInt(f.title.match(/\d+/)?.[0] || '0')), 0);
+          const maxSeverity = items.some(f => f.severity === 'critical') ? 'critical' :
+                             items.some(f => f.severity === 'high') ? 'high' : 'medium';
+          return {
+            ...items[0],
+            id: 'consolidated-stale-computers',
+            title: `${totalCount} equipos inactivos por más de 90 días detectados en el dominio`,
+            severity: maxSeverity,
+            description: `Se detectaron ${totalCount} equipos con cuentas habilitadas en Active Directory que no han iniciado sesión en más de 90 días. Estos equipos representan un riesgo de seguridad significativo porque mantienen credenciales válidas que pueden ser comprometidas sin detección. Incluye equipos "zombie" con años de inactividad que expanden la superficie de ataque innecesariamente.`,
+            recommendation: `Plan de remediación: 1) Generar lista completa con Get-ADComputer -Filter {LastLogonDate -lt (Get-Date).AddDays(-90)} 2) Validar con áreas de negocio qué equipos siguen en uso 3) Deshabilitar equipos confirmados como inactivos 4) Mover a OU de "Pendiente Eliminación" 5) Eliminar después de 30 días sin reclamos. Referencia: CIS Control 1.4 - Maintain Asset Inventory.`,
+            affected_count: totalCount,
+          };
+        }
+      },
+      {
+        // Windows 7 sin soporte (múltiples variantes)
+        match: (f: Finding) => /windows\s*7/i.test(f.title) && /(sin\s+soporte|obsoleto|legacy)/i.test(f.title),
+        key: 'windows7-unsupported',
+        consolidate: (items: Finding[]) => {
+          const totalCount = items.reduce((sum, f) => sum + (f.affected_count || parseInt(f.title.match(/\d+/)?.[0] || '1')), 0);
+          return {
+            ...items[0],
+            id: 'consolidated-windows7',
+            title: `${totalCount} equipos con Windows 7 sin soporte de seguridad`,
+            severity: 'critical',
+            description: `Se identificaron ${totalCount} equipos ejecutando Windows 7, sistema operativo que finalizó su soporte extendido el 14 de enero de 2020. Estos equipos no reciben actualizaciones de seguridad desde hace más de 4 años, dejándolos vulnerables a exploits conocidos como EternalBlue (WannaCry), BlueKeep (CVE-2019-0708) y vulnerabilidades posteriores.`,
+            recommendation: `Plan de migración urgente: 1) Inventariar aplicaciones críticas en cada equipo 2) Evaluar compatibilidad con Windows 10/11 3) Planificar migración o reemplazo de hardware 4) Mientras tanto, aislar en VLAN separada sin acceso a recursos sensibles. Timeline: INMEDIATO (0-30 días). Referencia: CIS Control 7.1 - Maintain Supported Operating Systems.`,
+            affected_count: totalCount,
+          };
+        }
+      },
+      {
+        // Windows Server 2008 R2 sin soporte
+        match: (f: Finding) => /windows\s*server\s*2008/i.test(f.title) && /(sin\s+soporte|obsoleto|legacy)/i.test(f.title),
+        key: 'server2008-unsupported',
+        consolidate: (items: Finding[]) => {
+          const totalCount = items.reduce((sum, f) => sum + (f.affected_count || parseInt(f.title.match(/\d+/)?.[0] || '1')), 0);
+          return {
+            ...items[0],
+            id: 'consolidated-server2008',
+            title: `${totalCount} servidores con Windows Server 2008/2008 R2 sin soporte`,
+            severity: 'critical',
+            description: `Se identificaron ${totalCount} servidores ejecutando Windows Server 2008 o 2008 R2, sistemas que finalizaron soporte extendido el 14 de enero de 2020. Vulnerables a EternalBlue (MS17-010), BlueKeep y exploits posteriores sin parches disponibles.`,
+            recommendation: `Migración urgente a Windows Server 2019/2022. Usar Storage Migration Service para migrar roles. Si no es posible migrar inmediatamente, considerar ESU (Extended Security Updates) de Microsoft como medida temporal.`,
+            affected_count: totalCount,
+          };
+        }
+      },
+      {
+        // Windows 8/8.1 sin soporte
+        match: (f: Finding) => /windows\s*8\.?1?/i.test(f.title) && /(sin\s+soporte|obsoleto|fuera)/i.test(f.title),
+        key: 'windows8-unsupported',
+        consolidate: (items: Finding[]) => {
+          const totalCount = items.reduce((sum, f) => sum + (f.affected_count || parseInt(f.title.match(/\d+/)?.[0] || '1')), 0);
+          return {
+            ...items[0],
+            id: 'consolidated-windows8',
+            title: `${totalCount} equipos con Windows 8/8.1 sin soporte extendido`,
+            severity: 'high',
+            description: `Se detectaron ${totalCount} equipos ejecutando Windows 8 o 8.1. Windows 8 finalizó soporte en 2018 y Windows 8.1 en enero 2023. No reciben actualizaciones de seguridad.`,
+            recommendation: `Actualizar a Windows 10/11. Menor urgencia que Windows 7 pero requiere atención en 60 días.`,
+            affected_count: totalCount,
+          };
+        }
+      },
+      {
+        // Windows Server 2012/2012 R2
+        match: (f: Finding) => /windows\s*server\s*2012/i.test(f.title) && /(sin\s+soporte|obsoleto|fin\s+de\s+soporte)/i.test(f.title),
+        key: 'server2012-unsupported',
+        consolidate: (items: Finding[]) => {
+          const totalCount = items.reduce((sum, f) => sum + (f.affected_count || parseInt(f.title.match(/\d+/)?.[0] || '1')), 0);
+          return {
+            ...items[0],
+            id: 'consolidated-server2012',
+            title: `${totalCount} servidores con Windows Server 2012/2012 R2 en fin de soporte`,
+            severity: 'high',
+            description: `Se identificaron ${totalCount} servidores ejecutando Windows Server 2012 o 2012 R2. El soporte extendido finalizó en octubre 2023.`,
+            recommendation: `Planificar migración a Windows Server 2019/2022 en los próximos 90 días. Considerar ESU si la migración no es inmediatamente posible.`,
+            affected_count: totalCount,
+          };
+        }
+      },
+      {
+        // Sistemas operativos obsoletos genérico
+        match: (f: Finding) => /sistemas?\s+operativos?\s+obsoletos?/i.test(f.title) && !/windows\s*(7|8|server)/i.test(f.title),
+        key: 'generic-obsolete-os',
+        consolidate: (items: Finding[]) => {
+          const totalCount = items.reduce((sum, f) => sum + (f.affected_count || parseInt(f.title.match(/\d+/)?.[0] || '1')), 0);
+          return {
+            ...items[0],
+            id: 'consolidated-obsolete-os',
+            title: `${totalCount} equipos con sistemas operativos obsoletos sin soporte`,
+            severity: 'critical',
+            description: `Se identificaron ${totalCount} equipos ejecutando sistemas operativos que ya no reciben actualizaciones de seguridad (Windows XP, Vista, Server 2003, etc.).`,
+            recommendation: `Migrar o reemplazar estos equipos con urgencia máxima. Aislar de la red mientras se planifica la migración.`,
+            affected_count: totalCount,
+          };
+        }
+      }
+    ];
+
+    // Agrupar findings por patrón
+    const groups = new Map<string, Finding[]>();
+
+    for (const finding of findings) {
+      let matched = false;
+      for (const pattern of patterns) {
+        if (pattern.match(finding)) {
+          const key = pattern.key;
+          if (!groups.has(key)) {
+            groups.set(key, []);
+          }
+          groups.get(key)!.push(finding);
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        // No coincide con ningún patrón, agregar directamente
+        consolidated.push(finding);
+      }
+    }
+
+    // Consolidar grupos
+    for (const [key, items] of groups) {
+      const pattern = patterns.find(p => p.key === key);
+      if (pattern && items.length > 0) {
+        const consolidatedFinding = pattern.consolidate(items);
+        consolidated.push(consolidatedFinding);
+      }
+    }
+
+    return consolidated;
+  };
+
+  // Aplicar deduplicación
+  const findings = deduplicateFindings(rawFindings);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TRADUCCIÓN DE MENSAJES COMUNES
+  // ═══════════════════════════════════════════════════════════════════════════
+  const translateHealthIssue = (issue: string): string => {
+    const translations: { [key: string]: string } = {
+      'Antivirus disabled or unknown': 'Antivirus deshabilitado o desconocido',
+      'Real-time protection disabled': 'Protección en tiempo real deshabilitada',
+      'High number of critical events': 'Alto número de eventos críticos',
+      'Multiple NETLOGON errors': 'Múltiples errores de NETLOGON',
+      'Time synchronization error detected': 'Error de sincronización de tiempo detectado',
+      'Recursion is ENABLED - Risk of DNS amplification attacks': 'Recursión HABILITADA - Riesgo de ataques de amplificación DNS',
+      'Event logging level too low - Insufficient audit trail': 'Nivel de registro de eventos muy bajo - Auditoría insuficiente',
+      'DNS cache poisoning vulnerability': 'Vulnerabilidad de envenenamiento de caché DNS',
+      'Zone transfer allowed to any server': 'Transferencia de zona permitida a cualquier servidor',
+    };
+
+    // Buscar traducción exacta
+    if (translations[issue]) return translations[issue];
+
+    // Buscar traducción parcial
+    for (const [eng, esp] of Object.entries(translations)) {
+      if (issue.includes(eng)) {
+        return issue.replace(eng, esp);
+      }
+    }
+
+    // Traducir patrones comunes
+    return issue
+      .replace(/High number of critical events \((\d+)\)/g, 'Alto número de eventos críticos ($1)')
+      .replace(/Multiple NETLOGON errors \((\d+)\)/g, 'Múltiples errores de NETLOGON ($1)')
+      .replace(/Recursion is ENABLED/g, 'Recursión HABILITADA')
+      .replace(/Risk of DNS amplification attacks/g, 'Riesgo de ataques de amplificación DNS')
+      .replace(/Event logging level too low/g, 'Nivel de registro muy bajo')
+      .replace(/Insufficient audit trail/g, 'Auditoría insuficiente');
+  };
+
+  const translateDNSIssue = (issue: string): string => {
+    return issue
+      .replace(/Recursion is ENABLED - Risk of DNS amplification attacks/g,
+               'Recursión HABILITADA - Riesgo de ataques de amplificación DNS. La recursión permite que el servidor DNS consulte otros servidores en nombre de clientes, pero puede ser abusada para ataques DDoS.')
+      .replace(/Event logging level too low - Insufficient audit trail/g,
+               'Nivel de registro muy bajo - Auditoría insuficiente. Se recomienda aumentar el nivel de logging para detectar actividades sospechosas.');
+  };
 
   // Extract functional levels from wherever they are in the data structure
   const extractFunctionalLevels = (data: any) => {
@@ -730,13 +929,14 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
           ...(() => {
             const recommendations = [];
+            let recNumber = 1; // Numeración dinámica
 
             // Verificar GPOs no enlazadas
             const unlinkedGPOs = rawData.GPOs.filter((gpo: any) => !gpo.Links || gpo.Links.length === 0);
             if (unlinkedGPOs.length > 0) {
               recommendations.push(
                 new Paragraph({
-                  text: `1. GPOs No Enlazadas: ${unlinkedGPOs.length} GPO(s) no están enlazadas a ninguna OU. Considere eliminarlas o enlazarlas:`,
+                  text: `${recNumber}. GPOs No Enlazadas: ${unlinkedGPOs.length} GPO(s) no están enlazadas a ninguna OU. Considere eliminarlas o enlazarlas:`,
                   spacing: { before: 100, after: 50 },
                 }),
                 ...unlinkedGPOs.slice(0, 5).map((gpo: any) =>
@@ -746,6 +946,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   })
                 )
               );
+              recNumber++;
             }
 
             // Verificar GPOs deshabilitadas
@@ -753,7 +954,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             if (disabledGPOs.length > 0) {
               recommendations.push(
                 new Paragraph({
-                  text: `2. GPOs Deshabilitadas: ${disabledGPOs.length} GPO(s) tienen todas las configuraciones deshabilitadas. Revise si aún son necesarias:`,
+                  text: `${recNumber}. GPOs Deshabilitadas: ${disabledGPOs.length} GPO(s) tienen todas las configuraciones deshabilitadas. Revise si aún son necesarias:`,
                   spacing: { before: 100, after: 50 },
                 }),
                 ...disabledGPOs.slice(0, 5).map((gpo: any) =>
@@ -763,6 +964,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   })
                 )
               );
+              recNumber++;
             }
 
             // Verificar GPOs antiguas (no modificadas en 180+ días)
@@ -776,10 +978,11 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             if (oldGPOs.length > 0) {
               recommendations.push(
                 new Paragraph({
-                  text: `3. GPOs Obsoletas: ${oldGPOs.length} GPO(s) no se han modificado en más de 180 días. Revise si siguen siendo relevantes.`,
+                  text: `${recNumber}. GPOs Obsoletas: ${oldGPOs.length} GPO(s) no se han modificado en más de 180 días. Revise si siguen siendo relevantes.`,
                   spacing: { before: 100, after: 50 },
                 })
               );
+              recNumber++;
             }
 
             // Verificar GPOs con problemas de permisos
@@ -789,7 +992,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             if (gposWithAuthUsers.length > 0) {
               recommendations.push(
                 new Paragraph({
-                  text: `4. Problemas de Permisos: ${gposWithAuthUsers.length} GPO(s) pueden tener acceso excesivamente permisivo. Revise permisos para:`,
+                  text: `${recNumber}. Problemas de Permisos: ${gposWithAuthUsers.length} GPO(s) pueden tener acceso excesivamente permisivo. Revise permisos para:`,
                   spacing: { before: 100, after: 50 },
                 }),
                 ...gposWithAuthUsers.slice(0, 5).map((gpo: any) =>
@@ -799,12 +1002,13 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   })
                 )
               );
+              recNumber++;
             }
 
-            // Recomendación general
+            // Recomendación general siempre al final
             recommendations.push(
               new Paragraph({
-                text: "5. Mejores Prácticas: Asegure que todas las GPOs sigan convenciones de nomenclatura, tengan documentación adecuada y sean revisadas regularmente para el cumplimiento de seguridad.",
+                text: `${recNumber}. Mejores Prácticas: Asegure que todas las GPOs sigan convenciones de nomenclatura, tengan documentación adecuada y sean revisadas regularmente para el cumplimiento de seguridad.`,
                 spacing: { before: 100, after: 100 },
               })
             );
@@ -1180,7 +1384,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             ...rawData.DNSConfiguration.GlobalSettings.flatMap((setting: any) =>
               (setting.SecurityIssues || []).map((issue: string) =>
                 new Paragraph({
-                  text: `• [${setting.DCName}] ${issue}`,
+                  text: `• [${setting.DCName}] ${translateDNSIssue(issue)}`,
                   spacing: { after: 50 },
                   bullet: { level: 0 }
                 })
@@ -1435,7 +1639,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 }),
                 ...dc.HealthIssues.map((issue: string) =>
                   new Paragraph({
-                    text: `  • ${issue}`,
+                    text: `  • ${translateHealthIssue(issue)}`,
                     spacing: { after: 30 },
                   })
                 )
@@ -1590,15 +1794,32 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
           new Paragraph({
             children: [new TextRun({
-              text: "Las siguientes identidades tienen permisos para ejecutar DCSync (extraer hashes de contraseñas). Solo cuentas de DC y administración crítica deberían tener estos permisos.",
-              color: COLORS.critical
+              text: "¿Qué es DCSync? ",
+              bold: true,
+              size: 22,
+            }), new TextRun({
+              text: "DCSync es una técnica de ataque donde un atacante con permisos de replicación puede extraer todos los hashes de contraseñas del dominio, incluyendo la cuenta KRBTGT (usada para ataques Golden Ticket). Solo los Controladores de Dominio y cuentas de administración crítica deberían tener estos permisos.",
+              size: 22,
+            })],
+            spacing: { after: 150 },
+            shading: { fill: COLORS.lightBg },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "Referencia MITRE ATT&CK: ",
+              bold: true,
+              size: 20,
+            }), new TextRun({
+              text: "T1003.006 - Credential Dumping: DCSync. Esta técnica permite a atacantes con privilegios de replicación simular un Controlador de Dominio y solicitar hashes de contraseñas.",
+              size: 20,
+              italics: true,
             })],
             spacing: { after: 200 },
           }),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["Identidad", "Tipo", "Técnica de Ataque"], true),
+              createTableRow(["Identidad", "Evaluación", "Riesgo"], true),
               ...rawData.DCSyncPermissions.filter((perm: any) => perm.IdentityReference || perm.Identity).map((perm: any) => {
                 // Field can be IdentityReference (from PowerShell) or Identity
                 const identity = perm.IdentityReference || perm.Identity || "N/A";
@@ -1606,20 +1827,33 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                                    identity.includes("Enterprise Admins") ||
                                    identity.includes("Domain Admins") ||
                                    identity.includes("Administrators") ||
-                                   identity.includes("ENTERPRISE DOMAIN CONTROLLERS");
+                                   identity.includes("ENTERPRISE DOMAIN CONTROLLERS") ||
+                                   identity.includes("Controladores de dominio") ||
+                                   identity.includes("Administradores");
                 const color = isExpected ? "low" : "critical";
-                const technique = perm.AttackTechnique || perm.ActiveDirectoryRights || "DCSync";
+                const riskLevel = isExpected ? "Bajo - Cuenta de sistema esperada" : "ALTO - Revisar legitimidad de este acceso";
                 return createTableRow([
                   identity,
                   isExpected ? "✅ Esperado" : "⚠️ Revisar",
-                  technique
+                  riskLevel
                 ], false, color);
               }),
             ],
           }),
           new Paragraph({
             text: `Total: ${rawData.DCSyncPermissions.filter((p: any) => p.IdentityReference || p.Identity).length} identidades con permisos DCSync`,
-            spacing: { before: 100, after: 200 },
+            spacing: { before: 100, after: 100 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "Acción recomendada: ",
+              bold: true,
+              size: 20,
+            }), new TextRun({
+              text: "Revise las identidades marcadas como '⚠️ Revisar'. Si no son cuentas de servicio legítimas (como Azure AD Connect MSOL_*), considere remover estos permisos inmediatamente.",
+              size: 20,
+            })],
+            spacing: { after: 200 },
           }),
         ] : []),
 
@@ -2221,7 +2455,55 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ],
         }),
 
-        new Paragraph({ text: "", spacing: { after: 300 } }),
+        // Explicación del cálculo del Score
+        new Paragraph({
+          children: [new TextRun({
+            text: "¿Cómo se calcula esta puntuación? ",
+            bold: true,
+            size: 20,
+          }), new TextRun({
+            text: "La puntuación inicia en 100 puntos y se deducen puntos según la severidad de los hallazgos: ",
+            size: 20,
+          }), new TextRun({
+            text: "Crítico (-20 pts), ",
+            size: 20,
+            color: COLORS.critical,
+            bold: true,
+          }), new TextRun({
+            text: "Alto (-10 pts), ",
+            size: 20,
+            color: COLORS.high,
+            bold: true,
+          }), new TextRun({
+            text: "Medio (-5 pts), ",
+            size: 20,
+            color: COLORS.medium,
+            bold: true,
+          }), new TextRun({
+            text: "Bajo (-1 pt). ",
+            size: 20,
+            color: COLORS.low,
+            bold: true,
+          }), new TextRun({
+            text: `En este caso: ${severityCounts.critical} críticos × 20 = -${severityCounts.critical * 20}, ${severityCounts.high} altos × 10 = -${severityCounts.high * 10}, ${severityCounts.medium} medios × 5 = -${severityCounts.medium * 5}, ${severityCounts.low} bajos × 1 = -${severityCounts.low}. Total: 100 - ${severityCounts.critical * 20 + severityCounts.high * 10 + severityCounts.medium * 5 + severityCounts.low} = ${healthScore}.`,
+            size: 20,
+          })],
+          spacing: { before: 200, after: 100 },
+          shading: { fill: COLORS.lightBg },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: "Interpretación: ",
+            bold: true,
+            size: 20,
+          }), new TextRun({
+            text: "90-100 = Excelente (ambiente seguro), 75-89 = Bueno (mejoras menores), 50-74 = Requiere Revisión (priorizar remediación), 0-49 = Requiere Atención (acción urgente necesaria).",
+            size: 20,
+          })],
+          spacing: { after: 300 },
+        }),
+
+        new Paragraph({ text: "", spacing: { after: 200 } }),
 
         // Test Summary Table with modern design
         new Paragraph({
