@@ -1001,12 +1001,32 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 text: "Indicadores Detectados:",
                 spacing: { before: 200, after: 100 },
               }),
-              ...rawData.LingeringObjectsRisk.Indicators.map((indicator: any) =>
-                new Paragraph({
-                  text: `• [${indicator.Severity || "INFO"}] ${indicator.Description || indicator.Type || "Sin descripción"}`,
+              // Explicación de severidades
+              new Paragraph({
+                children: [
+                  new TextRun({ text: "Niveles de severidad: ", bold: true, size: 20 }),
+                  new TextRun({ text: "[LOW] = Información/Bajo riesgo, ", size: 20, color: COLORS.low }),
+                  new TextRun({ text: "[MEDIUM] = Atención recomendada, ", size: 20, color: COLORS.medium }),
+                  new TextRun({ text: "[HIGH] = Acción requerida, ", size: 20, color: COLORS.high }),
+                  new TextRun({ text: "[CRITICAL] = Urgente", size: 20, color: COLORS.critical }),
+                ],
+                spacing: { after: 100 },
+                shading: { fill: COLORS.lightBg },
+              }),
+              ...rawData.LingeringObjectsRisk.Indicators.map((indicator: any) => {
+                const severity = (indicator.Severity || "INFO").toUpperCase();
+                const color = severity === "CRITICAL" ? COLORS.critical :
+                              severity === "HIGH" ? COLORS.high :
+                              severity === "MEDIUM" ? COLORS.medium :
+                              severity === "LOW" ? COLORS.low : COLORS.info;
+                return new Paragraph({
+                  children: [
+                    new TextRun({ text: `• [${severity}] `, bold: true, color: color, size: 22 }),
+                    new TextRun({ text: indicator.Description || indicator.Type || "Sin descripción", size: 22 }),
+                  ],
                   spacing: { after: 50 },
-                })
-              )
+                });
+              })
             ] : [
               new Paragraph({
                 text: "✅ No se detectaron indicadores de riesgo.",
@@ -1014,22 +1034,76 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               })
             ]),
             // USN Analysis if available
-            ...(rawData.LingeringObjectsRisk.USNAnalysis ? [
-              new Paragraph({
-                text: "Análisis USN:",
-                spacing: { before: 200, after: 100 },
-              }),
-              new Table({
-                width: { size: 100, type: WidthType.PERCENTAGE },
-                rows: [
-                  createTableRow(["Métrica", "Valor"], true),
-                  createTableRow(["DCs Analizados", rawData.LingeringObjectsRisk.USNAnalysis.DCsAnalyzed?.toString() || "N/A"]),
-                  createTableRow(["USN Más Alto", rawData.LingeringObjectsRisk.USNAnalysis.HighestUSN?.toString() || "N/A"]),
-                  createTableRow(["USN Más Bajo", rawData.LingeringObjectsRisk.USNAnalysis.LowestUSN?.toString() || "N/A"]),
-                  createTableRow(["Brecha USN", rawData.LingeringObjectsRisk.USNAnalysis.Gap?.toString() || "N/A"]),
-                ]
-              })
-            ] : [])
+            ...(rawData.LingeringObjectsRisk.USNAnalysis ? (() => {
+              const gap = rawData.LingeringObjectsRisk.USNAnalysis.Gap || 0;
+              const isLargeGap = gap > 1000000; // Más de 1 millón es significativo
+              const isCriticalGap = gap > 5000000; // Más de 5 millones es crítico
+
+              return [
+                new Paragraph({
+                  text: "Análisis USN (Update Sequence Number):",
+                  spacing: { before: 200, after: 100 },
+                }),
+                // EXPLICACIÓN EJECUTIVA
+                new Paragraph({
+                  children: [new TextRun({
+                    text: "¿Qué es el USN? ",
+                    bold: true,
+                    size: 21,
+                  }), new TextRun({
+                    text: "El USN es un contador que cada Controlador de Dominio usa para rastrear cambios. Cuando un DC hace un cambio (crear usuario, modificar grupo, etc.), incrementa su USN. Al comparar USNs entre DCs, podemos detectar si alguno está desincronizado.",
+                    size: 21,
+                  })],
+                  spacing: { after: 150 },
+                  shading: { fill: COLORS.lightBg },
+                }),
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  rows: [
+                    createTableRow(["Métrica", "Valor", "Significado"], true),
+                    createTableRow([
+                      "DCs Analizados",
+                      rawData.LingeringObjectsRisk.USNAnalysis.DCsAnalyzed?.toString() || "N/A",
+                      "Número de Controladores de Dominio comparados"
+                    ]),
+                    createTableRow([
+                      "USN Más Alto",
+                      rawData.LingeringObjectsRisk.USNAnalysis.HighestUSN?.toLocaleString() || "N/A",
+                      "El DC más actualizado tiene este número"
+                    ]),
+                    createTableRow([
+                      "USN Más Bajo",
+                      rawData.LingeringObjectsRisk.USNAnalysis.LowestUSN?.toLocaleString() || "N/A",
+                      "El DC menos actualizado tiene este número"
+                    ]),
+                    createTableRow([
+                      "Brecha USN",
+                      gap.toLocaleString(),
+                      isCriticalGap ? "⚠️ Brecha CRÍTICA - Posible desincronización severa" :
+                        isLargeGap ? "⚠️ Brecha significativa - Monitorear replicación" :
+                        "✅ Diferencia normal entre DCs"
+                    ], false, isCriticalGap ? "critical" : isLargeGap ? "high" : "low"),
+                  ]
+                }),
+                // Interpretación
+                new Paragraph({
+                  children: [new TextRun({
+                    text: "Interpretación: ",
+                    bold: true,
+                    size: 21,
+                  }), new TextRun({
+                    text: isCriticalGap ?
+                      `La brecha de ${gap.toLocaleString()} cambios entre DCs es MUY ALTA. Esto puede indicar que un DC estuvo offline por mucho tiempo o tiene problemas de replicación graves. Se recomienda investigar inmediatamente con 'repadmin /showrepl' y 'dcdiag'.` :
+                      isLargeGap ?
+                      `La brecha de ${gap.toLocaleString()} cambios es significativa pero puede ser normal en ambientes grandes con muchos cambios. Verifique que la replicación esté funcionando correctamente.` :
+                      `La brecha de ${gap.toLocaleString()} cambios está dentro de rangos normales. Los DCs están razonablemente sincronizados.`,
+                    size: 21,
+                    color: isCriticalGap ? COLORS.critical : isLargeGap ? COLORS.high : undefined,
+                  })],
+                  spacing: { before: 150, after: 200 },
+                }),
+              ];
+            })() : [])
           ]),
         ] : []),
 
