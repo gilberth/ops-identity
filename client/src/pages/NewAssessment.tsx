@@ -1640,8 +1640,8 @@ function Get-DNSScavengingStatus {
                             # Silently continue to WMI fallback
                         }
                         if ($dnsServer -and $dnsServer.ServerSetting) {
-                            $scavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
-                            $scavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
+                            $scavengingEnabled = if ($dnsServer.ServerSetting.ScavengingInterval) { $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0 } else { $false }
+                            $scavengingInterval = if ($dnsServer.ServerSetting.ScavengingInterval) { $dnsServer.ServerSetting.ScavengingInterval.TotalHours } else { 0 }
                             $checkMethod = "DNSServer Module"
                         }
                     } 
@@ -3507,10 +3507,10 @@ function Get-DNSScavengingDetailedAnalysis {
                 if ($dnsServer -and $dnsServer.ServerSetting) {
                     $serverConfig = @{
                         DCName = $dc.Name
-                        ScavengingInterval = $dnsServer.ServerSetting.ScavengingInterval.TotalHours
-                        ScavengingEnabled = $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
-                        DefaultNoRefreshInterval = $dnsServer.ServerSetting.DefaultNoRefreshInterval.TotalHours
-                        DefaultRefreshInterval = $dnsServer.ServerSetting.DefaultRefreshInterval.TotalHours
+                        ScavengingInterval = if ($dnsServer.ServerSetting.ScavengingInterval) { $dnsServer.ServerSetting.ScavengingInterval.TotalHours } else { 0 }
+                        ScavengingEnabled = if ($dnsServer.ServerSetting.ScavengingInterval) { $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0 } else { $false }
+                        DefaultNoRefreshInterval = if ($dnsServer.ServerSetting.DefaultNoRefreshInterval) { $dnsServer.ServerSetting.DefaultNoRefreshInterval.TotalHours } else { 0 }
+                        DefaultRefreshInterval = if ($dnsServer.ServerSetting.DefaultRefreshInterval) { $dnsServer.ServerSetting.DefaultRefreshInterval.TotalHours } else { 0 }
                         LastScavengeTime = $dnsServer.ServerSetting.LastScavengeTime
                     }
                     $scavengingAnalysis.ServerSettings += $serverConfig
@@ -3524,7 +3524,7 @@ function Get-DNSScavengingDetailedAnalysis {
                 }
 
                 # Zone-level settings (only if we got server config successfully)
-                $serverScavengingEnabled = if ($dnsServer -and $dnsServer.ServerSetting) {
+                $serverScavengingEnabled = if ($dnsServer -and $dnsServer.ServerSetting -and $dnsServer.ServerSetting.ScavengingInterval) {
                     $dnsServer.ServerSetting.ScavengingInterval.TotalHours -gt 0
                 } else {
                     $false
@@ -3540,9 +3540,9 @@ function Get-DNSScavengingDetailedAnalysis {
                         DCName = $dc.Name
                         ZoneName = $zone.ZoneName
                         AgingEnabled = if ($zoneAging) { $zoneAging.AgingEnabled } else { $null }
-                        NoRefreshInterval = if ($zoneAging) { $zoneAging.NoRefreshInterval.TotalHours } else { 0 }
-                        RefreshInterval = if ($zoneAging) { $zoneAging.RefreshInterval.TotalHours } else { 0 }
-                        ScavengeServers = if ($zoneAging) { $zoneAging.ScavengeServers } else { @() }
+                        NoRefreshInterval = if ($zoneAging -and $zoneAging.NoRefreshInterval) { $zoneAging.NoRefreshInterval.TotalHours } else { 0 }
+                        RefreshInterval = if ($zoneAging -and $zoneAging.RefreshInterval) { $zoneAging.RefreshInterval.TotalHours } else { 0 }
+                        ScavengeServers = if ($zoneAging -and $zoneAging.ScavengeServers) { $zoneAging.ScavengeServers } else { @() }
                     }
 
                     # Detect configuration mismatches
@@ -3560,7 +3560,7 @@ function Get-DNSScavengingDetailedAnalysis {
 }
 
                     # Check for unusual intervals
-                    if ($zoneAging -and $zoneAging.AgingEnabled) {
+                    if ($zoneAging -and $zoneAging.AgingEnabled -and $zoneAging.NoRefreshInterval -and $zoneAging.RefreshInterval) {
         $totalCycleHours = $zoneAging.NoRefreshInterval.TotalHours + $zoneAging.RefreshInterval.TotalHours
 
         if ($totalCycleHours -lt 168) {  # Less than 7 days
