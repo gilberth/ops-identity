@@ -434,7 +434,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // AD FOREST AND DOMAIN SUMMARY
         new Paragraph({
           children: [new TextRun({
-            text: "🌳 AD Forest and Domain Summary",
+            text: "🌳 Resumen del Bosque y Dominio AD",
             size: 36,
             bold: true,
             color: COLORS.primary,
@@ -811,7 +811,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
             return recommendations.length > 0 ? recommendations : [
               new Paragraph({
-                text: "No specific GPO improvements identified at this time. Continue monitoring GPO health regularly.",
+                text: "No se identificaron mejoras específicas de GPO en este momento. Continúe monitoreando la salud de las GPO regularmente.",
                 spacing: { after: 100 },
               })
             ];
@@ -819,58 +819,121 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ] : []),
 
         // RELACIONES DE CONFIANZA Y OBJETOS HUÉRFANOS
-        ...(rawData?.TrustHealth ? [
-          new Paragraph({
-            text: "Salud de Relaciones de Confianza",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          ...(rawData.TrustHealth.length > 0 ? [
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Target", "Tipo", "Dirección", "Estado"], true),
-                ...rawData.TrustHealth.map((trust: any) => {
-                  const status = trust.Status === "Success" || trust.Status === "Ok" ? "✅ Activo" : "⚠️ Error";
-                  const color = trust.Status === "Success" || trust.Status === "Ok" ? "low" : "high";
-                  return createTableRow([
-                    trust.Target || "N/A",
-                    trust.TrustType || "N/A",
-                    trust.TrustDirection || "N/A",
-                    status
-                  ], false, color);
-                }),
-              ],
-            }),
-          ] : [
-            new Paragraph({
-              text: "No se detectaron relaciones de confianza externas configuradas.",
-              spacing: { after: 200 },
-            })
-          ]),
+        // Buscar trusts en múltiples ubicaciones posibles del JSON
+        ...(() => {
+          const trustData = rawData?.TrustHealth || rawData?.Trusts || rawData?.DomainTrusts || [];
+          const trusts = Array.isArray(trustData) ? trustData : [];
 
-          ...(rawData?.OrphanedTrusts && rawData.OrphanedTrusts.length > 0 ? [
+          if (trusts.length === 0 && !rawData?.TrustHealth && !rawData?.Trusts) {
+            return []; // No hay sección de trusts en absoluto
+          }
+
+          return [
             new Paragraph({
-              text: "⚠️ Relaciones de Confianza Huérfanas Detectadas",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
+              text: "Salud de Relaciones de Confianza",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
             }),
+            // EXPLICACIÓN EJECUTIVA
             new Paragraph({
               children: [new TextRun({
-                text: "Se han detectado objetos TDO (Trusted Domain Objects) que no parecen tener una relación activa correspondiente. Revise estos objetos:",
-                color: COLORS.high
+                text: "¿Qué es esto? ",
+                bold: true,
+                size: 22,
+              }), new TextRun({
+                text: "Las relaciones de confianza (Trusts) permiten que usuarios de un dominio accedan a recursos de otro dominio. Son fundamentales para organizaciones con múltiples dominios o que colaboran con partners externos. Una relación mal configurada puede ser una puerta de entrada para atacantes.",
+                size: 22,
               })],
-              spacing: { after: 100 },
+              spacing: { after: 200 },
+              shading: { fill: COLORS.lightBg },
             }),
-            ...rawData.OrphanedTrusts.map((orphan: any) =>
+            ...(trusts.length > 0 ? [
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: [
+                  createTableRow(["Dominio Destino", "Tipo", "Dirección", "Estado"], true),
+                  ...trusts.map((trust: any) => {
+                    const targetName = trust.Target || trust.TrustedDomain || trust.Name || trust.TargetName || "N/A";
+                    const trustType = trust.TrustType || trust.Type || "N/A";
+                    const direction = trust.TrustDirection || trust.Direction || "N/A";
+                    const isHealthy = trust.Status === "Success" || trust.Status === "Ok" || trust.ValidationStatus === "Healthy" || !trust.Issues || trust.Issues?.length === 0;
+                    const status = isHealthy ? "✅ Activo" : "⚠️ Revisar";
+                    const color = isHealthy ? "low" : "high";
+                    return createTableRow([
+                      targetName,
+                      trustType,
+                      direction,
+                      status
+                    ], false, color);
+                  }),
+                ],
+              }),
+              // Interpretación
               new Paragraph({
-                text: `• ${orphan.Name} (DN: ${orphan.DistinguishedName})`,
-                bullet: { level: 0 },
-                spacing: { after: 50 },
-              })
-            )
-          ] : []),
-        ] : []),
+                children: [new TextRun({
+                  text: "Interpretación: ",
+                  bold: true,
+                  size: 22,
+                }), new TextRun({
+                  text: `Se encontraron ${trusts.length} relación(es) de confianza configurada(s). ✅ "Activo" significa que la relación funciona correctamente. ⚠️ "Revisar" indica posibles problemas de conectividad o configuración que requieren atención.`,
+                  size: 22,
+                })],
+                spacing: { before: 150, after: 200 },
+              }),
+            ] : [
+              new Paragraph({
+                text: "No se detectaron relaciones de confianza externas configuradas.",
+                spacing: { after: 100 },
+              }),
+              new Paragraph({
+                children: [new TextRun({
+                  text: "Nota: ",
+                  bold: true,
+                  size: 22,
+                }), new TextRun({
+                  text: "Esto puede ser normal si su organización opera con un único dominio aislado. Si esperaba ver relaciones de confianza aquí, verifique que el script de recolección tenga permisos suficientes para consultarlas.",
+                  size: 22,
+                  italics: true,
+                })],
+                spacing: { after: 200 },
+              }),
+            ]),
+
+            ...(rawData?.OrphanedTrusts && rawData.OrphanedTrusts.length > 0 ? [
+              new Paragraph({
+                text: "⚠️ Relaciones de Confianza Huérfanas Detectadas",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Paragraph({
+                children: [new TextRun({
+                  text: "¿Qué significa? ",
+                  bold: true,
+                }), new TextRun({
+                  text: "Se encontraron objetos de confianza (TDO) que apuntan a dominios que ya no existen o no responden. Esto puede indicar relaciones obsoletas que deberían eliminarse por seguridad.",
+                  color: COLORS.high
+                })],
+                spacing: { after: 100 },
+              }),
+              ...rawData.OrphanedTrusts.map((orphan: any) =>
+                new Paragraph({
+                  text: `• ${orphan.Name} (DN: ${orphan.DistinguishedName})`,
+                  bullet: { level: 0 },
+                  spacing: { after: 50 },
+                })
+              ),
+              new Paragraph({
+                children: [new TextRun({
+                  text: "Acción recomendada: ",
+                  bold: true,
+                }), new TextRun({
+                  text: "Verifique si estos dominios aún existen. Si no, elimine las relaciones huérfanas con Remove-ADTrust.",
+                })],
+                spacing: { before: 100, after: 200 },
+              }),
+            ] : []),
+          ];
+        })(),
 
         // RIESGO DE OBJETOS PERSISTENTES (LINGERING OBJECTS)
         ...(rawData?.LingeringObjectsRisk ? [
@@ -879,8 +942,28 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
+          // EXPLICACIÓN EJECUTIVA
           new Paragraph({
-            text: "El análisis de 'Lingering Objects' verifica inconsistencias de replicación críticas que pueden reintroducir objetos eliminados.",
+            children: [new TextRun({
+              text: "¿Qué son los Objetos Persistentes? ",
+              bold: true,
+              size: 22,
+            }), new TextRun({
+              text: "Cuando un objeto (usuario, computador, etc.) se elimina en un Controlador de Dominio pero otro DC no recibe la actualización a tiempo, puede \"resucitar\" el objeto eliminado. Esto causa inconsistencias de datos y potenciales problemas de seguridad si se reactivan cuentas que deberían estar eliminadas.",
+              size: 22,
+            })],
+            spacing: { after: 150 },
+            shading: { fill: COLORS.lightBg },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "¿Por qué importa? ",
+              bold: true,
+              size: 22,
+            }), new TextRun({
+              text: "Objetos persistentes pueden causar errores de replicación, bloqueos de autenticación, y en casos extremos, reactivar cuentas de usuario eliminadas permitiendo accesos no autorizados.",
+              size: 22,
+            })],
             spacing: { after: 200 },
           }),
           ...(Array.isArray(rawData.LingeringObjectsRisk) ? [
@@ -958,7 +1041,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             spacing: { before: 400, after: 200 },
           }),
           new Paragraph({
-            text: `Se analizó la configuración DNS en los controladores de dominio. Método utilizado: ${rawData.DNSConfiguration.Method || "Desconocido"}.`,
+            text: `Se analizó la configuración DNS en los controladores de dominio. Método utilizado: ${rawData.DNSConfiguration.Method || "DNSServer Module"}.`,
             spacing: { after: 200 },
           }),
 
@@ -982,6 +1065,34 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   ]);
                 }),
               ],
+            }),
+            // EXPLICACIÓN DE COLUMNAS PARA EJECUTIVOS
+            new Paragraph({
+              children: [new TextRun({
+                text: "Guía de interpretación:",
+                bold: true,
+                size: 22,
+              })],
+              spacing: { before: 200, after: 100 },
+              shading: { fill: COLORS.lightBg },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: "• Actualización Dinámica: ", bold: true, size: 21 }),
+                new TextRun({ text: '"Secure" es lo recomendado (solo equipos autenticados pueden crear registros). ', size: 21 }),
+                new TextRun({ text: '"NonsecureAndSecure" permite que cualquier dispositivo cree registros DNS, lo cual es un riesgo de seguridad moderado. ', size: 21, color: COLORS.medium }),
+                new TextRun({ text: '"None" significa que los registros se gestionan manualmente.', size: 21 }),
+              ],
+              spacing: { after: 80 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: "• DNSSEC: ", bold: true, size: 21 }),
+                new TextRun({ text: '"Signed" significa que la zona tiene firma digital para prevenir suplantación de DNS (recomendado para zonas críticas). ', size: 21 }),
+                new TextRun({ text: '"Not Signed" indica que la zona no tiene protección contra ataques de envenenamiento DNS. ', size: 21, color: COLORS.medium }),
+                new TextRun({ text: 'Para zonas internas de Active Directory, DNSSEC es opcional pero recomendado en ambientes de alta seguridad.', size: 21 }),
+              ],
+              spacing: { after: 200 },
             }),
           ] : []),
 
@@ -1850,7 +1961,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["Usuario", "SPN", "Password Age"], true),
+              createTableRow(["Usuario", "SPN", "Antigüedad Contraseña"], true),
               ...rawData.KerberoastableUsers.slice(0, 15).map((user: any) => {
                 const spns = Array.isArray(user.ServicePrincipalNames) ? user.ServicePrincipalNames[0] : user.ServicePrincipalName || "N/A";
                 return createTableRow([
