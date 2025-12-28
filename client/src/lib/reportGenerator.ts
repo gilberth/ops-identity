@@ -32,18 +32,51 @@ interface ReportData {
   rawData: any;
 }
 
-// Modern 'Health Check' color palette
+// Professional color palette based on AD Assessment Document Skill
 const COLORS = {
-  primary: "005A9C",      // Microsoft Blue (Professional/Corporate)
-  secondary: "0078D4",    // Lighter Blue
+  // Primary branding
+  primary: "1E3A5F",      // Navy - Titles, primary headings
+  secondary: "2563EB",    // Ocean Blue - Links, interactive
   accent: "107C10",       // Office Green (Healthy)
-  critical: "D83B01",     // Office Orange/Red (Attention Needed) - Less alarming than pure red
-  high: "EA4300",         // Orange (Warning)
-  medium: "FFB900",       // Yellow/Amber (Deviation)
-  low: "0078D4",          // Blue (Info/Suggestion)
-  info: "505050",         // Dark Gray
-  lightBg: "F3F2F1",      // Light Gray Background (Microsoft UI style)
-  border: "E1DFDD",       // Border Gray
+
+  // Severity colors (text)
+  critical: "991B1B",     // Dark red text
+  high: "92400E",         // Dark amber text
+  medium: "854D0E",       // Dark yellow/brown text
+  low: "1E40AF",          // Dark blue text
+  info: "374151",         // Gray-700
+
+  // Background colors
+  lightBg: "F3F4F6",      // Gray-100
+  border: "D1D5DB",       // Gray-300
+  headerBg: "E8F4FD",     // Light blue header
+
+  // Severity backgrounds (for cells)
+  criticalBg: "FEE2E2",   // Light red
+  highBg: "FEF3C7",       // Light amber
+  mediumBg: "FEF9C3",     // Light yellow
+  lowBg: "DBEAFE",        // Light blue
+  successBg: "D1FAE5",    // Light green
+  successText: "065F46",  // Dark green
+};
+
+// Utility function to sanitize values - CRITICAL: Never show undefined/null/[object Object]
+const sanitizeValue = (value: any): string => {
+  if (value === undefined || value === null || value === '') return 'N/A';
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return value.length > 0 ? value.map(v => sanitizeValue(v)).join(', ') : 'N/A';
+    }
+    // Try to extract meaningful properties
+    if (value.Name) return String(value.Name);
+    if (value.SamAccountName) return String(value.SamAccountName);
+    if (value.DisplayName) return String(value.DisplayName);
+    return JSON.stringify(value);
+  }
+  const str = String(value);
+  if (str === 'undefined' || str === '[object Object]' || str === 'null') return 'N/A';
+  if (str.includes('undefined ms')) return str.replace('undefined ms', 'N/A');
+  return str;
 };
 
 const createTableRow = (cells: string[], isHeader = false, status?: string) => {
@@ -83,19 +116,21 @@ const getStatusColor = (status: string): string => {
   switch (status.toLowerCase()) {
     case 'critical': return COLORS.critical;
     case 'high': return COLORS.high;
-    case 'medium': return "#8A6D05"; // Darker yellow for text readability
+    case 'medium': return COLORS.medium;
     case 'low': return COLORS.low;
+    case 'success': return COLORS.successText;
     default: return COLORS.info;
   }
 };
 
 const getStatusBg = (status: string): string => {
   switch (status.toLowerCase()) {
-    case 'critical': return "FDE7E9"; // Very light red
-    case 'high': return "FFF4CE";     // Very light orange
-    case 'medium': return "FFF4CE";   // Light yellow
-    case 'low': return "DEECF9";      // Light blue
-    default: return "F3F2F1";
+    case 'critical': return COLORS.criticalBg;
+    case 'high': return COLORS.highBg;
+    case 'medium': return COLORS.mediumBg;
+    case 'low': return COLORS.lowBg;
+    case 'success': return COLORS.successBg;
+    default: return COLORS.lightBg;
   }
 };
 
@@ -1567,9 +1602,9 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ...rawData.OldPasswords.slice(0, 15).map((user: any) => {
                 const days = user.PasswordAgeDays || user.DaysSinceChange || "N/A";
                 return createTableRow([
-                  user.SamAccountName || user.Name || "N/A",
+                  sanitizeValue(user.SamAccountName || user.Name),
                   user.PasswordLastSet ? new Date(user.PasswordLastSet).toLocaleDateString('es-ES') : "Nunca",
-                  days.toString()
+                  sanitizeValue(days)
                 ], false, "medium");
               }),
             ],
@@ -1580,6 +1615,305 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               spacing: { before: 100, after: 200 },
             }),
           ] : []),
+        ] : []),
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SECCIONES ADICIONALES DE SEGURIDAD (basadas en Coverage Matrix)
+        // ═══════════════════════════════════════════════════════════════════
+
+        // DELEGACIONES (Unconstrained/Constrained) - Critical según Coverage Matrix
+        ...(rawData?.DelegationIssues && (rawData.DelegationIssues.UnconstrainedDelegation?.length > 0 || rawData.DelegationIssues.ConstrainedDelegation?.length > 0) ? [
+          new Paragraph({
+            text: "🔓 Análisis de Delegación Kerberos",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "La delegación Kerberos permite a servicios actuar en nombre de usuarios. La delegación sin restricciones (Unconstrained) es un riesgo crítico de seguridad.",
+            spacing: { after: 200 },
+          }),
+          // Unconstrained Delegation
+          ...(rawData.DelegationIssues.UnconstrainedDelegation?.length > 0 ? [
+            new Paragraph({
+              children: [new TextRun({
+                text: `🔴 Delegación Sin Restricciones: ${rawData.DelegationIssues.UnconstrainedDelegation.length} objeto(s)`,
+                bold: true,
+                color: COLORS.critical
+              })],
+              spacing: { before: 200, after: 100 },
+            }),
+            new Paragraph({
+              text: "CRÍTICO: Estos objetos pueden suplantar a CUALQUIER usuario que se autentique contra ellos (incluidos Domain Admins).",
+              spacing: { after: 100 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Nombre", "Tipo", "DN"], true),
+                ...rawData.DelegationIssues.UnconstrainedDelegation.slice(0, 10).map((obj: any) =>
+                  createTableRow([
+                    sanitizeValue(obj.Name || obj.SamAccountName),
+                    sanitizeValue(obj.ObjectClass || "Computer"),
+                    sanitizeValue(obj.DistinguishedName).substring(0, 50) + "..."
+                  ], false, "critical")
+                ),
+              ],
+            }),
+          ] : []),
+          // Constrained Delegation
+          ...(rawData.DelegationIssues.ConstrainedDelegation?.length > 0 ? [
+            new Paragraph({
+              children: [new TextRun({
+                text: `⚠️ Delegación Restringida: ${rawData.DelegationIssues.ConstrainedDelegation.length} objeto(s)`,
+                bold: true,
+                color: COLORS.high
+              })],
+              spacing: { before: 200, after: 100 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["Nombre", "Servicios Permitidos"], true),
+                ...rawData.DelegationIssues.ConstrainedDelegation.slice(0, 10).map((obj: any) =>
+                  createTableRow([
+                    sanitizeValue(obj.Name || obj.SamAccountName),
+                    sanitizeValue(obj.AllowedToDelegateTo)
+                  ], false, "high")
+                ),
+              ],
+            }),
+          ] : []),
+        ] : []),
+
+        // GRUPOS PRIVILEGIADOS - Critical según Coverage Matrix
+        ...(rawData?.PrivilegedGroups && rawData.PrivilegedGroups.length > 0 ? [
+          new Paragraph({
+            text: "👑 Análisis de Grupos Privilegiados (Tier 0)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "Los grupos Tier 0 tienen control total sobre el dominio. El acceso debe ser mínimo y auditado regularmente.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Grupo", "Miembros", "Estado"], true),
+              ...rawData.PrivilegedGroups.map((group: any) => {
+                const memberCount = group.MemberCount || group.Members?.length || 0;
+                const status = memberCount > 10 ? "🔴 Excesivo" : memberCount > 5 ? "⚠️ Alto" : "✅ OK";
+                const color = memberCount > 10 ? "critical" : memberCount > 5 ? "high" : "low";
+                return createTableRow([
+                  sanitizeValue(group.Name || group.GroupName),
+                  memberCount.toString(),
+                  status
+                ], false, color);
+              }),
+            ],
+          }),
+          // Detalles de miembros si existen
+          ...rawData.PrivilegedGroups.filter((g: any) => g.Members && g.Members.length > 0).slice(0, 3).flatMap((group: any) => [
+            new Paragraph({
+              text: `Miembros de ${sanitizeValue(group.Name)}:`,
+              spacing: { before: 200, after: 100 },
+            }),
+            ...group.Members.slice(0, 5).map((member: any) =>
+              new Paragraph({
+                text: `  • ${sanitizeValue(member.Name || member.SamAccountName || member)}`,
+                spacing: { after: 30 },
+              })
+            ),
+            ...(group.Members.length > 5 ? [
+              new Paragraph({
+                text: `  ... y ${group.Members.length - 5} más`,
+                spacing: { after: 100 },
+              })
+            ] : [])
+          ]),
+        ] : []),
+
+        // CUENTAS DE SERVICIO EN GRUPOS ADMIN - Critical según Coverage Matrix
+        ...(rawData?.ServiceAccountsInAdminGroups && rawData.ServiceAccountsInAdminGroups.length > 0 ? [
+          new Paragraph({
+            text: "🚨 Cuentas de Servicio en Grupos Administrativos",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "CRÍTICO: Las cuentas de servicio NO deberían ser miembros de grupos administrativos. Esto viola el principio de mínimo privilegio y aumenta el riesgo de compromiso.",
+              color: COLORS.critical
+            })],
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Cuenta de Servicio", "Grupo Admin", "Tipo"], true),
+              ...rawData.ServiceAccountsInAdminGroups.slice(0, 15).map((svc: any) =>
+                createTableRow([
+                  sanitizeValue(svc.ServiceAccount || svc.Name),
+                  sanitizeValue(svc.AdminGroup || svc.Group),
+                  sanitizeValue(svc.AccountType || "Service")
+                ], false, "critical")
+              ),
+            ],
+          }),
+        ] : []),
+
+        // ADMINSDSHOLDER ORPHANS - High según Coverage Matrix
+        ...(rawData?.AdminSDHolderOrphans && rawData.AdminSDHolderOrphans.length > 0 ? [
+          new Paragraph({
+            text: "👤 Objetos Huérfanos de AdminSDHolder",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "Estos objetos tienen el flag AdminCount=1 pero ya NO son miembros de grupos protegidos. Sus ACLs no se restauran automáticamente, creando inconsistencias de seguridad.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Nombre", "Tipo", "Último Grupo Protegido"], true),
+              ...rawData.AdminSDHolderOrphans.slice(0, 15).map((orphan: any) =>
+                createTableRow([
+                  sanitizeValue(orphan.Name || orphan.SamAccountName),
+                  sanitizeValue(orphan.ObjectClass || "User"),
+                  sanitizeValue(orphan.LastProtectedGroup || "Desconocido")
+                ], false, "high")
+              ),
+            ],
+          }),
+          new Paragraph({
+            text: "Recomendación: Ejecutar 'Set-ADUser -Identity <user> -Replace @{AdminCount=0}' y restablecer ACLs heredadas.",
+            spacing: { before: 100, after: 200 },
+          }),
+        ] : []),
+
+        // USUARIOS KERBEROASTABLE - Ya existe parcialmente, mejoramos
+        ...(rawData?.KerberoastableUsers && rawData.KerberoastableUsers.length > 0 ? [
+          new Paragraph({
+            text: "🎫 Usuarios Kerberoastable (SPN configurado)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: `Se encontraron ${rawData.KerberoastableUsers.length} cuentas de usuario con SPNs configurados. Atacantes pueden solicitar tickets TGS y realizar ataques offline de fuerza bruta.`,
+              color: rawData.KerberoastableUsers.length > 20 ? COLORS.critical : COLORS.high
+            })],
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Usuario", "SPN", "Password Age"], true),
+              ...rawData.KerberoastableUsers.slice(0, 15).map((user: any) => {
+                const spns = Array.isArray(user.ServicePrincipalNames) ? user.ServicePrincipalNames[0] : user.ServicePrincipalName || "N/A";
+                return createTableRow([
+                  sanitizeValue(user.SamAccountName || user.Name),
+                  sanitizeValue(spns).substring(0, 40),
+                  user.PasswordAge ? `${user.PasswordAge} días` : "N/A"
+                ], false, "high");
+              }),
+            ],
+          }),
+          new Paragraph({
+            text: "Recomendación: Migrar a Group Managed Service Accounts (gMSA) cuando sea posible.",
+            spacing: { before: 100, after: 200 },
+          }),
+        ] : []),
+
+        // USUARIOS AS-REP ROASTABLE - PreAuth disabled
+        ...(rawData?.ASREPRoastableUsers && rawData.ASREPRoastableUsers.length > 0 ? [
+          new Paragraph({
+            text: "🔑 Usuarios AS-REP Roastable (PreAuth Disabled)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: `CRÍTICO: ${rawData.ASREPRoastableUsers.length} cuentas tienen pre-autenticación Kerberos deshabilitada. Atacantes pueden solicitar AS-REP sin conocer la contraseña.`,
+              color: COLORS.critical
+            })],
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Usuario", "Estado", "Última Autenticación"], true),
+              ...rawData.ASREPRoastableUsers.slice(0, 15).map((user: any) =>
+                createTableRow([
+                  sanitizeValue(user.SamAccountName || user.Name),
+                  "🔴 PreAuth Disabled",
+                  user.LastLogon ? new Date(user.LastLogon).toLocaleDateString('es-ES') : "N/A"
+                ], false, "critical")
+              ),
+            ],
+          }),
+          new Paragraph({
+            text: "Recomendación: Habilitar pre-autenticación Kerberos: Set-ADAccountControl -Identity <user> -DoesNotRequirePreAuth $false",
+            spacing: { before: 100, after: 200 },
+          }),
+        ] : []),
+
+        // TOKEN BLOAT RISK - Critical según Coverage Matrix
+        ...(rawData?.TokenBloatRisk && rawData.TokenBloatRisk.length > 0 ? [
+          new Paragraph({
+            text: "📊 Riesgo de Token Bloat (>40 grupos)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "Usuarios con membresía en más de 40 grupos pueden experimentar problemas de autenticación debido al tamaño del token Kerberos (límite ~12KB).",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Usuario", "# Grupos", "Tamaño Estimado", "Estado"], true),
+              ...rawData.TokenBloatRisk.slice(0, 15).map((user: any) => {
+                const groupCount = user.GroupCount || user.TotalGroups || 0;
+                const tokenSize = user.EstimatedTokenSize || (groupCount * 40 + 1200);
+                const status = tokenSize > 12000 ? "🔴 Crítico" : tokenSize > 8000 ? "⚠️ Alto" : "✅ OK";
+                const color = tokenSize > 12000 ? "critical" : tokenSize > 8000 ? "high" : "low";
+                return createTableRow([
+                  sanitizeValue(user.SamAccountName || user.Name),
+                  groupCount.toString(),
+                  `~${Math.round(tokenSize / 1024)} KB`,
+                  status
+                ], false, color);
+              }),
+            ],
+          }),
+        ] : []),
+
+        // NESTED GROUPS DEPTH - High según Coverage Matrix
+        ...(rawData?.NestedGroupsAnalysis && rawData.NestedGroupsAnalysis.DeepNesting?.length > 0 ? [
+          new Paragraph({
+            text: "📁 Análisis de Anidamiento de Grupos (Depth >3)",
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+          new Paragraph({
+            text: "El anidamiento excesivo de grupos dificulta la auditoría de permisos y puede causar problemas de rendimiento.",
+            spacing: { after: 200 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Grupo", "Profundidad", "Ruta de Anidamiento"], true),
+              ...rawData.NestedGroupsAnalysis.DeepNesting.slice(0, 10).map((group: any) =>
+                createTableRow([
+                  sanitizeValue(group.Name || group.GroupName),
+                  (group.NestingDepth || group.Depth || 0).toString(),
+                  sanitizeValue(group.NestingPath || "N/A").substring(0, 50)
+                ], false, (group.NestingDepth || group.Depth || 0) > 5 ? "critical" : "high")
+              ),
+            ],
+          }),
         ] : []),
 
         // RESUMEN EJECUTIVO
