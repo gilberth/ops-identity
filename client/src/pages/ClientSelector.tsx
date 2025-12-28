@@ -1,211 +1,274 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/utils/api";
 import { useClient } from "@/context/ClientContext";
 import { useNavigate } from "react-router-dom";
-import { Plus, ArrowRight, Briefcase, Zap, Shield, Activity, Building2 } from "lucide-react";
+import {
+  Plus,
+  ArrowRight,
+  Terminal,
+  Shield,
+  Activity,
+  Building2,
+  Loader2,
+} from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 export default function ClientSelector() {
-    const [clients, setClients] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const { selectClient } = useClient();
-    const navigate = useNavigate();
+  const [clients, setClients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { selectClient } = useClient();
+  const navigate = useNavigate();
 
-    const [newClientName, setNewClientName] = useState("");
-    const [newClientEmail, setNewClientEmail] = useState("");
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientEmail, setNewClientEmail] = useState("");
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-    useEffect(() => {
-        loadClients();
-    }, []);
+  useEffect(() => {
+    loadClients();
+  }, []);
 
-    const loadClients = async () => {
-        try {
-            setLoading(true);
-            const data = await api.getClients();
-            setClients(data);
-        } catch (error) {
-            console.error(error);
-            toast({
-                title: "Error",
-                description: "Could not load clients",
-                variant: "destructive"
-            });
-        } finally {
-            setLoading(false);
-        }
-    };
+  const loadClients = async () => {
+    try {
+      setLoading(true);
+      const data = await api.getClients();
+      setClients(data);
+    } catch (error) {
+      console.error(error);
+      toast({
+        title: "Error",
+        description: "Could not load organizations",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const handleSelectClient = (client: any) => {
-        selectClient(client);
-        toast({
-            title: `Selected: ${client.name}`,
-            description: "Accessing security dashboard...",
-        });
-        navigate("/dashboard");
-    };
+  const handleSelectClient = (client: any) => {
+    selectClient(client);
+    toast({
+      title: `Connected: ${client.name}`,
+      description: "Loading security dashboard...",
+    });
+    navigate("/dashboard");
+  };
 
-    const handleCreateClient = async () => {
-        if (!newClientName.trim()) return;
+  const handleCreateClient = async () => {
+    if (!newClientName.trim()) return;
 
-        try {
-            const newClient = await api.createClient({
-                name: newClientName,
-                contact_email: newClientEmail
-            });
-            setClients([...clients, newClient]);
-            setIsDialogOpen(false);
-            setNewClientName("");
-            setNewClientEmail("");
-            toast({
-                title: "Client Created",
-                description: `${newClient.name} has been registered successfully.`
-            });
-        } catch (error) {
-            toast({
-                title: "Error",
-                description: "Could not create client",
-                variant: "destructive"
-            });
-        }
-    };
+    try {
+      setIsCreating(true);
+      const newClient = await api.createClient({
+        name: newClientName,
+        contact_email: newClientEmail,
+      });
+      setClients([...clients, newClient]);
+      setIsDialogOpen(false);
+      setNewClientName("");
+      setNewClientEmail("");
+      toast({
+        title: "Organization Created",
+        description: `${newClient.name} has been registered.`,
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Could not create organization",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
 
-    return (
-        <div className="min-h-screen bg-[hsl(222,47%,6%)] flex flex-col items-center justify-center p-6 relative overflow-hidden">
-            {/* Background Effects */}
-            <div className="absolute inset-0 bg-grid-pattern opacity-20" />
-            <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-emerald-500/10" />
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-cyan-500/20 rounded-full blur-[120px] -translate-y-1/2" />
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 relative overflow-hidden">
+      {/* Background Effects */}
+      <div className="absolute inset-0 bg-grid-tactical opacity-20" />
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" />
 
-            <div className="w-full max-w-5xl space-y-8 relative z-10">
-                {/* Header */}
-                <div className="text-center space-y-4">
-                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/20 mb-4">
-                        <Zap className="h-4 w-4 text-cyan-400" />
-                        <span className="text-sm font-medium text-cyan-400">Security Command Center</span>
-                    </div>
-                    <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white">
-                        OpsIdentity
-                    </h1>
-                    <p className="text-lg text-slate-400 max-w-2xl mx-auto">
-                        Select an organization to monitor its Active Directory health and security posture
+      {/* Top glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-primary/10 rounded-full blur-[100px] -translate-y-1/2" />
+
+      <div className="w-full max-w-4xl space-y-8 relative z-10">
+        {/* Header */}
+        <div className="text-center space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 mb-4">
+            <Terminal className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-mono font-medium text-primary uppercase tracking-wider">
+              Tactical Operations Console
+            </span>
+          </div>
+
+          <h1 className="text-3xl md:text-4xl font-display font-bold tracking-wide text-foreground">
+            OPSIDENTITY
+          </h1>
+
+          <p className="text-muted-foreground max-w-lg mx-auto">
+            Select an organization to analyze Active Directory operational hygiene
+          </p>
+        </div>
+
+        {/* Loading */}
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground font-mono">
+              Loading organizations...
+            </p>
+          </div>
+        ) : (
+          /* Client Grid */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Create New Client Card */}
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+              <DialogTrigger asChild>
+                <button className="group panel p-6 h-[200px] flex flex-col items-center justify-center gap-4 border-dashed border-2 border-border hover:border-primary/50 transition-all cursor-pointer">
+                  <div className="h-14 w-14 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Plus className="h-6 w-6 text-primary" />
+                  </div>
+                  <div className="text-center">
+                    <h3 className="font-medium text-foreground">
+                      New Organization
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Register a new workspace
                     </p>
+                  </div>
+                </button>
+              </DialogTrigger>
+
+              <DialogContent className="bg-card border-border">
+                <DialogHeader>
+                  <DialogTitle className="font-display">
+                    Register Organization
+                  </DialogTitle>
+                  <DialogDescription>
+                    Create an isolated workspace for a new client.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Organization Name</Label>
+                    <Input
+                      id="name"
+                      placeholder="e.g. Acme Corp"
+                      value={newClientName}
+                      onChange={(e) => setNewClientName(e.target.value)}
+                      className="bg-secondary border-border"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Contact Email (Optional)</Label>
+                    <Input
+                      id="email"
+                      placeholder="admin@acme.com"
+                      value={newClientEmail}
+                      onChange={(e) => setNewClientEmail(e.target.value)}
+                      className="bg-secondary border-border"
+                    />
+                  </div>
                 </div>
 
-                {/* Client Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {/* Create New Client Card */}
-                    <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                        <DialogTrigger asChild>
-                            <Card className="border-dashed border-2 border-white/10 bg-white/[0.02] cursor-pointer hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all duration-300 flex flex-col items-center justify-center p-8 h-[280px] group">
-                                <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-cyan-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                    <Plus className="h-8 w-8 text-cyan-400" />
-                                </div>
-                                <h3 className="text-xl font-semibold text-white">New Organization</h3>
-                                <p className="text-slate-500 text-sm mt-2 text-center">Register a new client workspace</p>
-                            </Card>
-                        </DialogTrigger>
-                        <DialogContent className="bg-[hsl(222,47%,8%)] border-white/10 text-white">
-                            <DialogHeader>
-                                <DialogTitle className="text-white">Register New Client</DialogTitle>
-                                <DialogDescription className="text-slate-400">
-                                    Create an isolated workspace for a new organization.
-                                </DialogDescription>
-                            </DialogHeader>
-                            <div className="space-y-4 py-4">
-                                <div className="space-y-2">
-                                    <Label htmlFor="name" className="text-slate-300">Organization Name</Label>
-                                    <Input
-                                        id="name"
-                                        placeholder="e.g. Acme Corp"
-                                        value={newClientName}
-                                        onChange={(e) => setNewClientName(e.target.value)}
-                                        className="bg-white/5 border-white/10 text-white placeholder:text-slate-500 focus-visible:ring-cyan-500/50"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <Label htmlFor="email" className="text-slate-300">Contact Email (Optional)</Label>
-                                    <Input
-                                        id="email"
-                                        placeholder="admin@acme.com"
-                                        value={newClientEmail}
-                                        onChange={(e) => setNewClientEmail(e.target.value)}
-                                        className="bg-white/5 border-white/10 text-white placeholder:text-slate-500 focus-visible:ring-cyan-500/50"
-                                    />
-                                </div>
-                            </div>
-                            <DialogFooter>
-                                <Button variant="outline" onClick={() => setIsDialogOpen(false)} className="border-white/10 text-slate-300 hover:bg-white/5">
-                                    Cancel
-                                </Button>
-                                <Button onClick={handleCreateClient} className="bg-gradient-to-r from-cyan-500 to-emerald-500 text-[hsl(222,47%,6%)] font-semibold hover:from-cyan-400 hover:to-emerald-400">
-                                    Create Client
-                                </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsDialogOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleCreateClient}
+                    disabled={isCreating || !newClientName.trim()}
+                    className="btn-primary"
+                  >
+                    {isCreating ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    Create
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
-                    {/* Client Cards */}
-                    {clients.map((client, index) => (
-                        <Card
-                            key={client.id}
-                            className="bg-white/[0.03] border-white/5 cursor-pointer hover:border-cyan-500/30 hover:bg-white/[0.05] transition-all duration-300 h-[280px] flex flex-col justify-between group animate-fade-in"
-                            style={{ animationDelay: `${index * 0.1}s` }}
-                            onClick={() => handleSelectClient(client)}
-                        >
-                            <CardHeader className="pb-2">
-                                <div className="flex justify-between items-start">
-                                    <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 border border-white/10 flex items-center justify-center group-hover:border-cyan-500/30 transition-colors">
-                                        <Building2 className="h-6 w-6 text-cyan-400" />
-                                    </div>
-                                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
-                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                        <span className="text-emerald-400 text-[10px] font-semibold uppercase tracking-wider">Active</span>
-                                    </div>
-                                </div>
-                                <CardTitle className="mt-4 text-xl text-white group-hover:text-cyan-400 transition-colors">
-                                    {client.name}
-                                </CardTitle>
-                                <CardDescription className="text-slate-500">
-                                    {client.contact_email || "No contact registered"}
-                                </CardDescription>
-                            </CardHeader>
+            {/* Client Cards */}
+            {clients.map((client, index) => (
+              <button
+                key={client.id}
+                className={cn(
+                  "group panel p-5 h-[200px] flex flex-col justify-between text-left",
+                  "hover:border-primary/30 transition-all cursor-pointer",
+                  "animate-slide-up opacity-0"
+                )}
+                style={{
+                  animationDelay: `${index * 50}ms`,
+                  animationFillMode: "forwards",
+                }}
+                onClick={() => handleSelectClient(client)}
+              >
+                {/* Header */}
+                <div>
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+                      <Building2 className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/10 border border-accent/20">
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent pulse-live" />
+                      <span className="text-[9px] font-mono font-medium text-accent uppercase">
+                        Active
+                      </span>
+                    </div>
+                  </div>
 
-                            <CardContent className="pt-2">
-                                <div className="flex items-center gap-4 text-xs text-slate-500">
-                                    <div className="flex items-center gap-1.5">
-                                        <Shield className="h-3.5 w-3.5" />
-                                        <span>Protected</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <Activity className="h-3.5 w-3.5" />
-                                        <span>Monitored</span>
-                                    </div>
-                                </div>
-                            </CardContent>
-
-                            <CardFooter className="border-t border-white/5 bg-white/[0.02] p-4">
-                                <Button variant="ghost" className="w-full justify-between text-slate-400 group-hover:text-cyan-400 hover:bg-transparent">
-                                    View Security Dashboard
-                                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-                                </Button>
-                            </CardFooter>
-                        </Card>
-                    ))}
+                  <h3 className="font-medium text-foreground group-hover:text-primary transition-colors truncate">
+                    {client.name}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                    {client.contact_email || "No contact registered"}
+                  </p>
                 </div>
 
                 {/* Footer */}
-                <div className="text-center pt-8">
-                    <p className="text-slate-600 text-sm font-mono">
-                        OpsIdentity Security Platform v2.0
-                    </p>
+                <div className="flex items-center justify-between pt-3 border-t border-border">
+                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Shield className="h-3 w-3" />
+                      Protected
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Activity className="h-3 w-3" />
+                      Monitored
+                    </span>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
                 </div>
-            </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="text-center pt-8">
+          <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+            OpsIdentity Security Platform v3.0
+          </p>
         </div>
-    );
+      </div>
+    </div>
+  );
 }

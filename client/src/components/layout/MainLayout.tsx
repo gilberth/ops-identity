@@ -1,79 +1,104 @@
-import React from 'react';
-import Sidebar from './Sidebar';
-import { Search, Bell, Settings, Terminal } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import React from "react";
+import Sidebar from "./Sidebar";
+import { Bell, Settings, User } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface MainLayoutProps {
-    children: React.ReactNode;
+  children: React.ReactNode;
 }
 
 export const MainLayout = ({ children }: MainLayoutProps) => {
-    return (
-        <div className="min-h-screen bg-background text-foreground font-sans selection:bg-primary/20">
-            {/* Background effects */}
-            <div className="fixed inset-0 bg-grid-pattern opacity-20 pointer-events-none" />
-            <div className="fixed inset-0 bg-gradient-to-br from-cyan-500/5 via-transparent to-emerald-500/5 pointer-events-none" />
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      {/* Background effects */}
+      <div className="fixed inset-0 bg-grid-tactical opacity-15 pointer-events-none" />
+      <div className="fixed inset-0 bg-gradient-to-br from-primary/3 via-transparent to-accent/3 pointer-events-none" />
 
-            <Sidebar />
+      <Sidebar />
 
-            {/* Main Content Wrapper */}
-            <main className="pl-64 min-h-screen flex flex-col transition-all duration-300 relative">
+      {/* Main Content Wrapper */}
+      <main className="pl-60 min-h-screen flex flex-col transition-all duration-300 relative">
+        {/* Top Header Bar */}
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-end px-6 bg-background/80 backdrop-blur-xl border-b border-border">
+          <div className="flex items-center gap-2">
+            {/* Notifications */}
+            <button className="relative p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+              <Bell className="h-4 w-4" />
+              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
+            </button>
 
-                {/* Top Header */}
-                <header className="sticky top-0 z-30 flex h-16 items-center justify-between px-6 bg-[hsl(222,47%,6%)]/80 backdrop-blur-xl border-b border-white/5">
+            {/* Settings */}
+            <button className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+              <Settings className="h-4 w-4" />
+            </button>
 
-                    {/* Search Bar */}
-                    <div className="relative w-80 group">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 group-focus-within:text-cyan-400 transition-colors" />
-                        <Input
-                            placeholder="Search assessments, findings..."
-                            className="h-9 w-full rounded-lg border-white/10 bg-white/5 pl-10 pr-10 text-sm text-white placeholder:text-slate-500 focus-visible:ring-1 focus-visible:ring-cyan-500/50 focus-visible:border-cyan-500/30 transition-all"
-                        />
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-mono text-slate-500 flex items-center gap-1">
-                            <Terminal className="h-2.5 w-2.5" /> /
-                        </div>
-                    </div>
+            {/* Divider */}
+            <div className="h-5 w-px bg-border mx-1" />
 
-                    {/* Right Actions */}
-                    <div className="flex items-center gap-3">
-                        {/* Notifications */}
-                        <button className="relative p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors">
-                            <Bell className="h-5 w-5" />
-                            <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-cyan-400 border-2 border-[hsl(222,47%,6%)]" />
-                        </button>
+            {/* User Menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-secondary transition-colors">
+                  <Avatar className="h-7 w-7 border border-border">
+                    <AvatarImage src="" />
+                    <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
+                      OP
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="hidden md:block text-left">
+                    <p className="text-xs font-medium text-foreground leading-none">
+                      Operator
+                    </p>
+                    <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                      admin@local
+                    </p>
+                  </div>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium">Operator</p>
+                    <p className="text-xs text-muted-foreground font-mono">
+                      admin@local
+                    </p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                  <User className="h-4 w-4 mr-2" />
+                  Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem>
+                  <Settings className="h-4 w-4 mr-2" />
+                  Settings
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="text-destructive focus:text-destructive">
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
 
-                        {/* Settings */}
-                        <button className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors">
-                            <Settings className="h-5 w-5" />
-                        </button>
-
-                        {/* Divider */}
-                        <div className="h-6 w-px bg-white/10 mx-2" />
-
-                        {/* User */}
-                        <div className="flex items-center gap-3">
-                            <div className="hidden md:block text-right">
-                                <p className="text-sm font-semibold text-white leading-none">Admin User</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5 font-mono">sysadmin@local</p>
-                            </div>
-                            <Avatar className="h-8 w-8 border border-white/10 cursor-pointer hover:border-cyan-500/50 transition-colors">
-                                <AvatarImage src="https://github.com/shadcn.png" />
-                                <AvatarFallback className="bg-gradient-to-br from-cyan-500 to-emerald-500 text-[hsl(222,47%,6%)] text-xs font-bold">
-                                    AD
-                                </AvatarFallback>
-                            </Avatar>
-                        </div>
-                    </div>
-                </header>
-
-                {/* Page Content */}
-                <div className="flex-1 p-6 relative">
-                    {children}
-                </div>
-            </main>
+        {/* Page Content */}
+        <div className="flex-1 relative">
+          {/* Scanline effect */}
+          <div className="scanline pointer-events-none" />
+          {children}
         </div>
-    );
+      </main>
+    </div>
+  );
 };
 
 export default MainLayout;

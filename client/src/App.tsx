@@ -24,7 +24,7 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
+    <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
       <ClientProvider>
         <TooltipProvider>
           <Toaster />
@@ -45,8 +45,8 @@ const App = () => (
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>
-            <div className="fixed bottom-0 right-0 p-2 text-[10px] text-slate-600 bg-[hsl(222,47%,6%)]/90 backdrop-blur-sm border-t border-l border-white/5 rounded-tl-lg z-50 font-mono">
-              v2.0.0 (Build {new Date().toLocaleDateString()})
+            <div className="fixed bottom-0 right-0 p-1.5 text-[9px] text-muted-foreground bg-background/80 backdrop-blur-sm border-t border-l border-border rounded-tl-lg z-50 font-mono">
+              v3.0.0
             </div>
           </BrowserRouter>
         </TooltipProvider>

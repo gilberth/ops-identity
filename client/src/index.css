@@ -1,113 +1,122 @@
+/*
+  OpsIdentity Design System v3.0 - "Tactical Operations Console"
+  Inspired by: NASA Mission Control, Bloomberg Terminals, SOC Dashboards
+  Typography: Orbitron (display) + IBM Plex Mono (data) + IBM Plex Sans (UI)
+  Palette: Near-black with luminescent tactical accents
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/*
-  OpsIdentity Design System v2.0 - "Cyber Command Center"
-  A sophisticated dark theme inspired by elite security operation centers
-  Typography: JetBrains Mono (technical) + Inter (UI)
-  Colors: Deep navy base with electric cyan accents
-*/
-
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
-
 @layer base {
   :root {
-    /* === CORE PALETTE === */
-    --background: 222 47% 6%;          /* #0B0F1A - Deep space navy */
-    --foreground: 210 40% 96%;         /* #F1F5F9 - Crisp white-blue */
+    /* === TACTICAL PALETTE === */
+    --background: 220 20% 4%;           /* #08090C - Near black */
+    --background-elevated: 220 18% 7%;  /* #0E1014 - Raised surfaces */
+    --foreground: 210 20% 92%;          /* #E8EAED - Off-white */
 
-    --card: 222 47% 8%;                /* #0D1321 - Elevated surface */
-    --card-foreground: 210 40% 96%;
+    --card: 220 18% 8%;                 /* #111418 - Card surface */
+    --card-foreground: 210 20% 92%;
 
-    --popover: 222 47% 10%;
-    --popover-foreground: 210 40% 96%;
+    --popover: 220 18% 10%;
+    --popover-foreground: 210 20% 92%;
 
-    /* Primary: Electric Cyan */
-    --primary: 186 100% 50%;           /* #00E5FF - Cyber cyan */
-    --primary-foreground: 222 47% 6%;
-    --primary-hover: 186 100% 60%;
-    --primary-glow: 186 100% 50%;
+    /* Primary: Tactical Cyan */
+    --primary: 185 100% 45%;            /* #00D4E5 - Electric cyan */
+    --primary-foreground: 220 20% 4%;
+    --primary-muted: 185 60% 25%;
 
-    /* Secondary: Muted slate-blue */
-    --secondary: 217 33% 17%;          /* #1E293B */
-    --secondary-foreground: 215 20% 65%;
+    /* Secondary: Slate */
+    --secondary: 220 15% 15%;           /* #22252A */
+    --secondary-foreground: 210 15% 70%;
 
-    /* Accent: Neon green for success states */
-    --accent: 142 76% 46%;             /* #22C55E - Matrix green */
+    /* Accent: Signal Green */
+    --accent: 145 80% 42%;              /* #1FBF5F - Bright green */
     --accent-foreground: 0 0% 100%;
 
-    /* Destructive: Warning red */
-    --destructive: 0 84% 60%;          /* #EF4444 */
+    /* Destructive: Alarm Red */
+    --destructive: 0 85% 55%;           /* #E53935 */
     --destructive-foreground: 0 0% 100%;
 
-    /* Muted surfaces */
-    --muted: 217 33% 12%;
-    --muted-foreground: 215 20% 55%;
+    /* Muted */
+    --muted: 220 15% 12%;
+    --muted-foreground: 220 10% 50%;
 
-    /* Borders & inputs */
-    --border: 217 33% 18%;
-    --input: 217 33% 15%;
-    --ring: 186 100% 50%;
+    /* Borders & Inputs */
+    --border: 220 15% 18%;
+    --border-glow: 185 100% 45%;
+    --input: 220 15% 12%;
+    --ring: 185 100% 45%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
-    /* === SEVERITY SYSTEM === */
-    --severity-critical: 0 90% 60%;      /* #FF3B3B - Alarm red */
-    --severity-high: 25 95% 55%;         /* #FF8C00 - Warning orange */
-    --severity-medium: 45 100% 50%;      /* #FFD700 - Caution yellow */
-    --severity-low: 186 100% 50%;        /* #00E5FF - Info cyan */
-    --severity-info: 217 33% 40%;        /* Neutral slate */
+    /* === SEVERITY SPECTRUM === */
+    --severity-critical: 0 85% 55%;       /* #E53935 - Alarm */
+    --severity-critical-glow: 0 85% 55%;
+    --severity-high: 28 95% 50%;          /* #F57C00 - Warning */
+    --severity-high-glow: 28 95% 50%;
+    --severity-medium: 45 100% 48%;       /* #F5B800 - Caution */
+    --severity-medium-glow: 45 100% 48%;
+    --severity-low: 185 100% 45%;         /* #00D4E5 - Info */
+    --severity-low-glow: 185 100% 45%;
+    --severity-pass: 145 80% 42%;         /* #1FBF5F - OK */
+    --severity-pass-glow: 145 80% 42%;
+
+    /* === GRADE COLORS === */
+    --grade-a: 145 80% 42%;
+    --grade-b: 145 60% 50%;
+    --grade-c: 45 100% 48%;
+    --grade-d: 28 95% 50%;
+    --grade-f: 0 85% 55%;
+
+    /* === CATEGORY COLORS (for radar) === */
+    --cat-identity: 185 100% 45%;
+    --cat-gpo: 280 70% 55%;
+    --cat-infrastructure: 145 80% 42%;
+    --cat-kerberos: 28 95% 50%;
+    --cat-dns: 210 80% 55%;
+    --cat-groups: 320 70% 55%;
 
     /* === GRADIENTS === */
-    --gradient-primary: linear-gradient(135deg, hsl(186 100% 50%) 0%, hsl(142 76% 46%) 100%);
-    --gradient-surface: linear-gradient(180deg, hsl(222 47% 8%) 0%, hsl(222 47% 6%) 100%);
-    --gradient-glow: radial-gradient(ellipse at center, hsl(186 100% 50% / 0.15) 0%, transparent 70%);
-    --gradient-hero: linear-gradient(135deg, hsl(222 47% 10%) 0%, hsl(217 33% 8%) 100%);
-    --gradient-card: linear-gradient(145deg, hsl(222 47% 10%) 0%, hsl(222 47% 7%) 100%);
+    --gradient-primary: linear-gradient(135deg, hsl(185 100% 45%) 0%, hsl(145 80% 42%) 100%);
+    --gradient-surface: linear-gradient(180deg, hsl(220 18% 10%) 0%, hsl(220 20% 4%) 100%);
+    --gradient-glow: radial-gradient(ellipse at center, hsl(185 100% 45% / 0.12) 0%, transparent 70%);
+    --gradient-card: linear-gradient(165deg, hsl(220 18% 11%) 0%, hsl(220 18% 7%) 100%);
+    --gradient-score-a: linear-gradient(135deg, hsl(145 80% 42%) 0%, hsl(165 80% 38%) 100%);
+    --gradient-score-b: linear-gradient(135deg, hsl(145 60% 50%) 0%, hsl(170 60% 45%) 100%);
+    --gradient-score-c: linear-gradient(135deg, hsl(45 100% 48%) 0%, hsl(55 90% 45%) 100%);
+    --gradient-score-d: linear-gradient(135deg, hsl(28 95% 50%) 0%, hsl(15 90% 50%) 100%);
+    --gradient-score-f: linear-gradient(135deg, hsl(0 85% 55%) 0%, hsl(350 80% 50%) 100%);
 
     /* === SHADOWS === */
-    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
-    --shadow-md: 0 4px 12px hsl(0 0% 0% / 0.4);
-    --shadow-lg: 0 8px 24px hsl(0 0% 0% / 0.5);
-    --shadow-glow: 0 0 20px hsl(186 100% 50% / 0.3);
-    --shadow-card: 0 4px 20px hsl(0 0% 0% / 0.3), 0 0 1px hsl(186 100% 50% / 0.1);
-    --shadow-elevated: 0 8px 32px hsl(0 0% 0% / 0.4), inset 0 1px 0 hsl(217 33% 25% / 0.1);
+    --shadow-sm: 0 1px 3px hsl(0 0% 0% / 0.4);
+    --shadow-md: 0 4px 16px hsl(0 0% 0% / 0.5);
+    --shadow-lg: 0 8px 32px hsl(0 0% 0% / 0.6);
+    --shadow-glow-cyan: 0 0 30px hsl(185 100% 45% / 0.25);
+    --shadow-glow-green: 0 0 30px hsl(145 80% 42% / 0.25);
+    --shadow-glow-red: 0 0 30px hsl(0 85% 55% / 0.25);
+    --shadow-inset: inset 0 1px 0 hsl(220 15% 25% / 0.15);
 
     /* === SIDEBAR === */
-    --sidebar-background: 222 47% 5%;
-    --sidebar-foreground: 210 40% 90%;
-    --sidebar-primary: 186 100% 50%;
-    --sidebar-primary-foreground: 222 47% 6%;
-    --sidebar-accent: 217 33% 12%;
-    --sidebar-accent-foreground: 210 40% 96%;
-    --sidebar-border: 217 33% 15%;
-    --sidebar-ring: 186 100% 50%;
+    --sidebar-background: 220 20% 5%;
+    --sidebar-foreground: 210 20% 85%;
+    --sidebar-primary: 185 100% 45%;
+    --sidebar-primary-foreground: 220 20% 4%;
+    --sidebar-accent: 220 15% 12%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 220 15% 15%;
+    --sidebar-ring: 185 100% 45%;
 
     /* === CHART COLORS === */
-    --chart-1: 186 100% 50%;   /* Cyan */
-    --chart-2: 142 76% 46%;    /* Green */
-    --chart-3: 280 80% 60%;    /* Purple */
-    --chart-4: 25 95% 55%;     /* Orange */
-    --chart-5: 0 90% 60%;      /* Red */
-  }
-
-  /* Dark mode is default - light mode override for accessibility */
-  .light {
-    --background: 210 30% 98%;
-    --foreground: 222 47% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --primary: 186 100% 35%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 47% 11%;
+    --chart-1: 185 100% 45%;    /* Cyan */
+    --chart-2: 145 80% 42%;     /* Green */
+    --chart-3: 280 70% 55%;     /* Purple */
+    --chart-4: 28 95% 50%;      /* Orange */
+    --chart-5: 0 85% 55%;       /* Red */
+    --chart-6: 210 80% 55%;     /* Blue */
   }
 }
 
@@ -118,272 +127,467 @@
 
   html {
     @apply antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-feature-settings: "tnum", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
   }
 
-  /* Technical/code elements use JetBrains Mono */
-  code, pre, .font-mono, .font-code {
-    font-family: 'JetBrains Mono', monospace;
+  /* Display headings use Orbitron */
+  h1, h2, .font-display {
+    font-family: 'Orbitron', sans-serif;
+    letter-spacing: 0.02em;
+  }
+
+  /* Technical/data elements use IBM Plex Mono */
+  code, pre, .font-mono, .font-data, kbd {
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  /* Tabular numbers for data */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 }
 
 @layer utilities {
-  /* === GLASS MORPHISM === */
-  .glass {
-    @apply bg-card/80 backdrop-blur-xl border border-white/5;
+  /* === TACTICAL PANEL === */
+  .panel {
+    @apply bg-card border border-border rounded-lg;
+    background: var(--gradient-card);
+    box-shadow: var(--shadow-md), var(--shadow-inset);
   }
 
-  .glass-card {
-    background: linear-gradient(145deg, hsl(222 47% 10% / 0.9), hsl(222 47% 7% / 0.9));
-    @apply backdrop-blur-xl border border-white/5 rounded-2xl;
-    box-shadow: var(--shadow-card);
+  .panel-header {
+    @apply px-5 py-3 border-b border-border flex items-center justify-between;
+    background: hsl(220 18% 9%);
+  }
+
+  .panel-title {
+    @apply text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .panel-body {
+    @apply p-5;
+  }
+
+  /* === METRIC DISPLAY === */
+  .metric-value {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .metric-label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground;
+    font-family: 'IBM Plex Mono', monospace;
   }
 
   /* === GLOW EFFECTS === */
-  .text-glow {
-    text-shadow: 0 0 20px hsl(186 100% 50% / 0.5), 0 0 40px hsl(186 100% 50% / 0.3);
-  }
-
-  .text-glow-sm {
-    text-shadow: 0 0 10px hsl(186 100% 50% / 0.4);
-  }
-
-  .border-glow {
-    box-shadow: 0 0 15px -3px hsl(186 100% 50% / 0.4), inset 0 0 15px -3px hsl(186 100% 50% / 0.1);
-  }
-
   .glow-cyan {
-    box-shadow: 0 0 30px hsl(186 100% 50% / 0.3);
+    box-shadow: 0 0 20px hsl(185 100% 45% / 0.3), 0 0 40px hsl(185 100% 45% / 0.15);
   }
 
   .glow-green {
-    box-shadow: 0 0 30px hsl(142 76% 46% / 0.3);
+    box-shadow: 0 0 20px hsl(145 80% 42% / 0.3), 0 0 40px hsl(145 80% 42% / 0.15);
+  }
+
+  .glow-orange {
+    box-shadow: 0 0 20px hsl(28 95% 50% / 0.3), 0 0 40px hsl(28 95% 50% / 0.15);
   }
 
   .glow-red {
-    box-shadow: 0 0 30px hsl(0 90% 60% / 0.3);
+    box-shadow: 0 0 20px hsl(0 85% 55% / 0.3), 0 0 40px hsl(0 85% 55% / 0.15);
   }
 
-  /* === ANIMATED BACKGROUNDS === */
-  .bg-grid-pattern {
+  .text-glow-cyan {
+    text-shadow: 0 0 20px hsl(185 100% 45% / 0.6), 0 0 40px hsl(185 100% 45% / 0.3);
+  }
+
+  .text-glow-green {
+    text-shadow: 0 0 20px hsl(145 80% 42% / 0.6), 0 0 40px hsl(145 80% 42% / 0.3);
+  }
+
+  /* === GRID PATTERNS === */
+  .bg-grid-tactical {
     background-image:
-      linear-gradient(hsl(217 33% 15% / 0.3) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(217 33% 15% / 0.3) 1px, transparent 1px);
-    background-size: 40px 40px;
+      linear-gradient(hsl(220 15% 15% / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(220 15% 15% / 0.5) 1px, transparent 1px);
+    background-size: 24px 24px;
   }
 
-  .bg-dots-pattern {
-    background-image: radial-gradient(hsl(217 33% 25% / 0.5) 1px, transparent 1px);
-    background-size: 20px 20px;
+  .bg-grid-fine {
+    background-image:
+      linear-gradient(hsl(220 15% 12% / 0.8) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(220 15% 12% / 0.8) 1px, transparent 1px);
+    background-size: 8px 8px;
   }
 
-  .bg-scan-line {
+  .bg-dots {
+    background-image: radial-gradient(hsl(220 15% 20% / 0.5) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+
+  /* === SCAN LINE EFFECT === */
+  .scanline {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .scanline::after {
+    content: '';
+    position: absolute;
+    inset: 0;
     background: linear-gradient(
       180deg,
       transparent 0%,
-      hsl(186 100% 50% / 0.03) 50%,
+      hsl(185 100% 45% / 0.03) 50%,
       transparent 100%
     );
-    animation: scan 8s linear infinite;
+    animation: scanline-move 6s linear infinite;
+    pointer-events: none;
   }
 
-  @keyframes scan {
+  @keyframes scanline-move {
     0% { transform: translateY(-100%); }
-    100% { transform: translateY(100vh); }
+    100% { transform: translateY(100%); }
   }
 
-  /* === PULSE ANIMATIONS === */
-  .pulse-glow {
-    animation: pulse-glow 2s ease-in-out infinite;
+  /* === STATUS BADGES === */
+  .badge-critical {
+    @apply bg-red-500/15 text-red-400 border border-red-500/30;
+    box-shadow: 0 0 10px hsl(0 85% 55% / 0.15);
   }
 
-  @keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 5px hsl(186 100% 50% / 0.5); }
-    50% { box-shadow: 0 0 20px hsl(186 100% 50% / 0.8), 0 0 40px hsl(186 100% 50% / 0.4); }
+  .badge-high {
+    @apply bg-orange-500/15 text-orange-400 border border-orange-500/30;
+    box-shadow: 0 0 10px hsl(28 95% 50% / 0.15);
   }
 
-  .pulse-dot {
-    animation: pulse-dot 2s ease-in-out infinite;
+  .badge-medium {
+    @apply bg-yellow-500/15 text-yellow-400 border border-yellow-500/30;
+    box-shadow: 0 0 10px hsl(45 100% 48% / 0.15);
   }
 
-  @keyframes pulse-dot {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.5; transform: scale(1.2); }
+  .badge-low {
+    @apply bg-cyan-500/15 text-cyan-400 border border-cyan-500/30;
+    box-shadow: 0 0 10px hsl(185 100% 45% / 0.15);
   }
 
-  /* === STATUS INDICATORS === */
-  .status-critical {
-    @apply bg-red-500/20 text-red-400 border-red-500/30;
+  .badge-pass {
+    @apply bg-emerald-500/15 text-emerald-400 border border-emerald-500/30;
+    box-shadow: 0 0 10px hsl(145 80% 42% / 0.15);
   }
 
-  .status-high {
-    @apply bg-orange-500/20 text-orange-400 border-orange-500/30;
+  /* === GRADE DISPLAY === */
+  .grade-a { background: var(--gradient-score-a); }
+  .grade-b { background: var(--gradient-score-b); }
+  .grade-c { background: var(--gradient-score-c); }
+  .grade-d { background: var(--gradient-score-d); }
+  .grade-f { background: var(--gradient-score-f); }
+
+  /* === BORDER ACCENTS === */
+  .border-l-accent {
+    position: relative;
   }
 
-  .status-medium {
-    @apply bg-yellow-500/20 text-yellow-400 border-yellow-500/30;
+  .border-l-accent::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--gradient-primary);
+    border-radius: 0 2px 2px 0;
   }
 
-  .status-low {
-    @apply bg-cyan-500/20 text-cyan-400 border-cyan-500/30;
+  /* === ANIMATED PULSE === */
+  .pulse-live {
+    animation: pulse-live 2s ease-in-out infinite;
   }
 
-  .status-success {
-    @apply bg-emerald-500/20 text-emerald-400 border-emerald-500/30;
+  @keyframes pulse-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
   }
 
-  /* === CARD VARIANTS === */
-  .card-elevated {
-    background: var(--gradient-card);
-    box-shadow: var(--shadow-elevated);
-    @apply border border-white/5 rounded-2xl;
+  .pulse-ring {
+    animation: pulse-ring 1.5s ease-out infinite;
   }
 
-  .card-interactive {
-    @apply card-elevated transition-all duration-300;
-  }
-
-  .card-interactive:hover {
-    @apply border-primary/30;
-    box-shadow: var(--shadow-glow);
-    transform: translateY(-2px);
-  }
-
-  /* === TYPOGRAPHY === */
-  .text-gradient {
-    @apply bg-clip-text text-transparent;
-    background-image: var(--gradient-primary);
-  }
-
-  .heading-display {
-    @apply font-bold tracking-tight;
-    font-family: 'Inter', system-ui, sans-serif;
-  }
-
-  .label-mono {
-    @apply text-xs font-medium uppercase tracking-widest;
-    font-family: 'JetBrains Mono', monospace;
+  @keyframes pulse-ring {
+    0% { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(2); opacity: 0; }
   }
 
   /* === SCROLLBAR === */
-  .scrollbar-cyber::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  .scrollbar-tactical::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
   }
 
-  .scrollbar-cyber::-webkit-scrollbar-track {
-    background: hsl(217 33% 10%);
-    border-radius: 3px;
+  .scrollbar-tactical::-webkit-scrollbar-track {
+    background: hsl(220 15% 8%);
+    border-radius: 4px;
   }
 
-  .scrollbar-cyber::-webkit-scrollbar-thumb {
-    background: hsl(217 33% 25%);
-    border-radius: 3px;
+  .scrollbar-tactical::-webkit-scrollbar-thumb {
+    background: hsl(220 15% 20%);
+    border-radius: 4px;
+    border: 2px solid hsl(220 15% 8%);
   }
 
-  .scrollbar-cyber::-webkit-scrollbar-thumb:hover {
-    background: hsl(186 100% 50% / 0.5);
+  .scrollbar-tactical::-webkit-scrollbar-thumb:hover {
+    background: hsl(185 100% 45% / 0.5);
   }
 
-  /* === FADE ANIMATIONS === */
+  /* === ENTRY ANIMATIONS === */
   .animate-fade-in {
-    animation: fadeIn 0.5s ease-out;
+    animation: fade-in 0.4s ease-out forwards;
   }
 
   .animate-slide-up {
-    animation: slideUp 0.5s ease-out;
+    animation: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  .animate-slide-in-right {
-    animation: slideInRight 0.3s ease-out;
+  .animate-slide-left {
+    animation: slide-left 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  @keyframes fadeIn {
+  .animate-scale-in {
+    animation: scale-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
   }
 
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px); }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(16px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  @keyframes slideInRight {
-    from { opacity: 0; transform: translateX(20px); }
+  @keyframes slide-left {
+    from { opacity: 0; transform: translateX(16px); }
     to { opacity: 1; transform: translateX(0); }
   }
 
-  /* === STAGGER DELAYS === */
-  .stagger-1 { animation-delay: 0.1s; }
-  .stagger-2 { animation-delay: 0.2s; }
-  .stagger-3 { animation-delay: 0.3s; }
-  .stagger-4 { animation-delay: 0.4s; }
-  .stagger-5 { animation-delay: 0.5s; }
-}
-
-/* === GLOBAL OVERRIDES === */
-@layer components {
-  /* Primary button override */
-  .btn-primary {
-    @apply bg-primary text-primary-foreground font-semibold;
-    @apply hover:bg-primary-hover transition-all duration-200;
-    @apply shadow-lg shadow-primary/25;
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
   }
 
-  .btn-primary:hover {
-    box-shadow: 0 0 20px hsl(186 100% 50% / 0.4);
-  }
+  /* Stagger delays */
+  .delay-1 { animation-delay: 50ms; }
+  .delay-2 { animation-delay: 100ms; }
+  .delay-3 { animation-delay: 150ms; }
+  .delay-4 { animation-delay: 200ms; }
+  .delay-5 { animation-delay: 250ms; }
+  .delay-6 { animation-delay: 300ms; }
 
-  /* Ghost button with glow */
-  .btn-ghost-glow {
-    @apply text-primary border border-primary/30 bg-transparent;
-    @apply hover:bg-primary/10 hover:border-primary/50;
-    @apply transition-all duration-200;
-  }
-
-  /* Metric card base */
-  .metric-card {
-    @apply card-elevated p-6 relative overflow-hidden;
-  }
-
-  .metric-card::before {
-    content: '';
-    @apply absolute inset-0 opacity-0 transition-opacity duration-300;
-    background: var(--gradient-glow);
-  }
-
-  .metric-card:hover::before {
-    @apply opacity-100;
-  }
-
-  /* Data table styling */
+  /* === DATA TABLE === */
   .data-table {
     @apply w-full;
   }
 
+  .data-table thead {
+    background: hsl(220 18% 8%);
+  }
+
   .data-table th {
-    @apply text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4;
-    @apply border-b border-border/50;
-    font-family: 'JetBrains Mono', monospace;
+    @apply text-left text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground py-3 px-4;
+    @apply border-b border-border;
+    font-family: 'IBM Plex Mono', monospace;
   }
 
   .data-table td {
-    @apply py-4 px-4 text-sm;
-    @apply border-b border-border/30;
+    @apply py-3 px-4 text-sm;
+    @apply border-b border-border/50;
   }
 
-  .data-table tr:hover td {
-    @apply bg-white/[0.02];
+  .data-table tbody tr {
+    @apply transition-colors duration-150;
   }
 
-  /* Navigation active state */
+  .data-table tbody tr:hover {
+    background: hsl(220 15% 10%);
+  }
+
+  /* === COMMAND PALETTE === */
+  .command-overlay {
+    @apply fixed inset-0 bg-black/70 backdrop-blur-sm z-50;
+  }
+
+  .command-dialog {
+    @apply fixed top-[20%] left-1/2 -translate-x-1/2 w-full max-w-xl;
+    @apply bg-card border border-border rounded-xl shadow-2xl z-50;
+    box-shadow: 0 25px 80px -12px hsl(0 0% 0% / 0.8), 0 0 40px hsl(185 100% 45% / 0.1);
+  }
+
+  /* === TOOLTIP === */
+  .tooltip-tactical {
+    @apply bg-card border border-border rounded px-2 py-1 text-xs;
+    box-shadow: var(--shadow-md);
+  }
+
+  /* === INTERACTIVE STATES === */
+  .interactive {
+    @apply transition-all duration-200;
+  }
+
+  .interactive:hover {
+    @apply border-primary/40;
+    box-shadow: 0 0 20px hsl(185 100% 45% / 0.1);
+  }
+
+  .interactive:active {
+    transform: scale(0.98);
+  }
+
+  /* === SEVERITY INDICATOR DOTS === */
+  .dot-critical { @apply bg-red-500; box-shadow: 0 0 8px hsl(0 85% 55%); }
+  .dot-high { @apply bg-orange-500; box-shadow: 0 0 8px hsl(28 95% 50%); }
+  .dot-medium { @apply bg-yellow-500; box-shadow: 0 0 8px hsl(45 100% 48%); }
+  .dot-low { @apply bg-cyan-500; box-shadow: 0 0 8px hsl(185 100% 45%); }
+  .dot-pass { @apply bg-emerald-500; box-shadow: 0 0 8px hsl(145 80% 42%); }
+}
+
+@layer components {
+  /* === PRIMARY BUTTON === */
+  .btn-primary {
+    @apply bg-primary text-primary-foreground font-semibold px-4 py-2 rounded;
+    @apply transition-all duration-200;
+    box-shadow: 0 0 20px hsl(185 100% 45% / 0.2);
+  }
+
+  .btn-primary:hover {
+    @apply brightness-110;
+    box-shadow: 0 0 30px hsl(185 100% 45% / 0.4);
+  }
+
+  /* === GHOST BUTTON === */
+  .btn-ghost {
+    @apply text-foreground bg-transparent border border-border px-4 py-2 rounded;
+    @apply transition-all duration-200;
+  }
+
+  .btn-ghost:hover {
+    @apply bg-secondary border-primary/30;
+  }
+
+  /* === METRIC CARD === */
+  .metric-card {
+    @apply panel p-5 relative overflow-hidden;
+  }
+
+  .metric-card::before {
+    content: '';
+    @apply absolute top-0 right-0 w-32 h-32 opacity-10;
+    background: radial-gradient(circle at top right, hsl(185 100% 45%), transparent 70%);
+  }
+
+  /* === NAV ITEM === */
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium;
+    @apply text-muted-foreground transition-all duration-200;
+  }
+
+  .nav-item:hover {
+    @apply text-foreground bg-secondary;
+  }
+
   .nav-item-active {
-    @apply bg-primary/10 text-primary border-l-2 border-primary;
-    box-shadow: inset 4px 0 12px hsl(186 100% 50% / 0.1);
+    @apply text-primary bg-primary/10;
+    box-shadow: inset 3px 0 0 hsl(185 100% 45%);
   }
+
+  /* === FINDING ROW === */
+  .finding-row {
+    @apply flex items-center gap-4 p-4 rounded-lg border border-transparent;
+    @apply transition-all duration-200 cursor-pointer;
+    background: hsl(220 18% 7%);
+  }
+
+  .finding-row:hover {
+    @apply border-border;
+    background: hsl(220 18% 9%);
+  }
+
+  /* === TAB SYSTEM === */
+  .tab-bar {
+    @apply flex gap-1 p-1 bg-secondary/50 rounded-lg;
+  }
+
+  .tab-item {
+    @apply px-4 py-2 rounded-md text-sm font-medium text-muted-foreground;
+    @apply transition-all duration-200;
+  }
+
+  .tab-item:hover {
+    @apply text-foreground;
+  }
+
+  .tab-item-active {
+    @apply bg-card text-foreground;
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* === HEATMAP CELL === */
+  .heatmap-cell {
+    @apply w-8 h-8 rounded flex items-center justify-center text-xs font-bold;
+    @apply transition-all duration-200;
+  }
+
+  .heatmap-pass { @apply bg-emerald-500/20 text-emerald-400 border border-emerald-500/30; }
+  .heatmap-partial { @apply bg-yellow-500/20 text-yellow-400 border border-yellow-500/30; }
+  .heatmap-fail { @apply bg-red-500/20 text-red-400 border border-red-500/30; }
+  .heatmap-na { @apply bg-secondary text-muted-foreground border border-border; }
+}
+
+/* === RECHARTS OVERRIDES === */
+.recharts-default-tooltip {
+  background: hsl(220 18% 10%) !important;
+  border: 1px solid hsl(220 15% 18%) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 32px hsl(0 0% 0% / 0.5) !important;
+}
+
+.recharts-tooltip-label {
+  color: hsl(210 20% 92%) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+}
+
+.recharts-tooltip-item {
+  color: hsl(210 20% 80%) !important;
+  font-family: 'IBM Plex Sans', sans-serif !important;
+}
+
+.recharts-radar-polygon {
+  fill-opacity: 0.15 !important;
+}
+
+.recharts-polar-grid-angle line {
+  stroke: hsl(220 15% 18%) !important;
+}
+
+.recharts-polar-grid-concentric-circle {
+  stroke: hsl(220 15% 15%) !important;
+}
+
+.recharts-polar-angle-axis-tick-value {
+  fill: hsl(220 10% 50%) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-size: 10px !important;
+  text-transform: uppercase !important;
 }
