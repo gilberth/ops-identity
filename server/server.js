@@ -619,8 +619,21 @@ function extractCategoryData(jsonData, categoryName) {
 
 async function analyzeCategory(assessmentId, category, data, options = {}) {
   try {
-    const provider = process.env.AI_PROVIDER || 'anthropic';
-    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
+    // v1.9.5: Read API keys from database (system_config) with env fallback
+    const provider = await getConfig('ai_provider') || process.env.AI_PROVIDER || 'anthropic';
+
+    let apiKey;
+    if (provider === 'anthropic') {
+      apiKey = await getConfig('anthropic_api_key') || process.env.ANTHROPIC_API_KEY;
+    } else if (provider === 'openai') {
+      apiKey = await getConfig('openai_api_key') || process.env.OPENAI_API_KEY;
+    } else if (provider === 'deepseek') {
+      apiKey = await getConfig('deepseek_api_key') || process.env.DEEPSEEK_API_KEY;
+    } else if (provider === 'google') {
+      apiKey = await getConfig('google_api_key') || process.env.GOOGLE_API_KEY;
+    } else {
+      apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
+    }
 
     // v1.8.0: Dynamic model selection for Anthropic
     let model;
