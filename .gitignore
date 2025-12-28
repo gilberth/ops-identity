@@ -39,3 +39,4 @@ dist-ssr
 # Environment files (ONLY vps-deploy/.env contains secrets)
 vps-deploy/.env
 .env
+*.json
