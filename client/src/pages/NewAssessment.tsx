@@ -2266,12 +2266,24 @@ function Get-DNSConfiguration {
                         $zoneStats = Get-DnsServerStatistics -ComputerName $dc.HostName -ZoneName $zone.ZoneName -ErrorAction SilentlyContinue
                     } catch { }
 
+                    # Safely extract MasterServers
+                    $masterServerList = @()
+                    if ($zone.MasterServers -and $zone.MasterServers.Count -gt 0) {
+                        foreach ($masterSrv in $zone.MasterServers) {
+                            if ($masterSrv -and $masterSrv.IPAddressToString) {
+                                $masterServerList += $masterSrv.IPAddressToString
+                            } elseif ($masterSrv) {
+                                $masterServerList += $masterSrv.ToString()
+                            }
+                        }
+                    }
+
                     $dnsInfo.Zones += @{
                         DCName = $dc.Name
                                 ZoneName = $zone.ZoneName
-                                ZoneType = $zone.ZoneType.ToString()
+                                ZoneType = if ($zone.ZoneType) { $zone.ZoneType.ToString() } else { "Unknown" }
                                 IsReverseLookupZone = $zone.IsReverseLookupZone
-                                DynamicUpdate = $zone.DynamicUpdate.ToString()
+                                DynamicUpdate = if ($zone.DynamicUpdate) { $zone.DynamicUpdate.ToString() } else { "Unknown" }
                                 DynamicUpdateRisk = $dynamicUpdateRisk
                                 SecureSecondaries = $zoneTransfer
                                 ZoneTransferRisk = $zoneTransferRisk
@@ -2285,7 +2297,7 @@ function Get-DNSConfiguration {
                                 DNSSECRisk = $dnssecRisk
                                 AgingEnabled = $agingEnabled
                                 NotifyServers = @($zone.NotifyServers)
-                                MasterServers = @($zone.MasterServers.IPAddressToString)
+                                MasterServers = $masterServerList
                                 SecurityIssues = $zoneIssues
                                 ZoneFile = $zone.ZoneFile
                     }
@@ -2378,9 +2390,9 @@ function Get-DNSConfiguration {
                             $dnsInfo.Zones += @{
                                 DCName = $dc.Name
                                 ZoneName = $zone.ZoneName
-                                ZoneType = $zone.ZoneType.ToString()
+                                ZoneType = if ($zone.ZoneType) { $zone.ZoneType.ToString() } else { "Unknown" }
                                 IsReverseLookupZone = $zone.IsReverseLookupZone
-                                DynamicUpdate = $zone.DynamicUpdate.ToString()
+                                DynamicUpdate = if ($zone.DynamicUpdate) { $zone.DynamicUpdate.ToString() } else { "Unknown" }
                                 IsDSIntegrated = $zone.IsDsIntegrated
                                 Method = "Partial (Zone only)"
                             }
