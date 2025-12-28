@@ -2,123 +2,112 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
+/*
+  OpsIdentity Design System v2.0 - "Cyber Command Center"
+  A sophisticated dark theme inspired by elite security operation centers
+  Typography: JetBrains Mono (technical) + Inter (UI)
+  Colors: Deep navy base with electric cyan accents
 */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
 
 @layer base {
   :root {
-    --background: 210 30% 98%;
-    --foreground: 215 25% 15%;
+    /* === CORE PALETTE === */
+    --background: 222 47% 6%;          /* #0B0F1A - Deep space navy */
+    --foreground: 210 40% 96%;         /* #F1F5F9 - Crisp white-blue */
 
-    --card: 0 0% 100%;
-    --card-foreground: 215 25% 15%;
+    --card: 222 47% 8%;                /* #0D1321 - Elevated surface */
+    --card-foreground: 210 40% 96%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 215 25% 15%;
+    --popover: 222 47% 10%;
+    --popover-foreground: 210 40% 96%;
 
-    --primary: 215 85% 35%;
-    --primary-foreground: 0 0% 100%;
-    --primary-hover: 215 85% 45%;
+    /* Primary: Electric Cyan */
+    --primary: 186 100% 50%;           /* #00E5FF - Cyber cyan */
+    --primary-foreground: 222 47% 6%;
+    --primary-hover: 186 100% 60%;
+    --primary-glow: 186 100% 50%;
 
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 215 25% 15%;
+    /* Secondary: Muted slate-blue */
+    --secondary: 217 33% 17%;          /* #1E293B */
+    --secondary-foreground: 215 20% 65%;
 
-    --muted: 210 35% 92%;
-    --muted-foreground: 215 15% 45%;
-
-    --accent: 200 85% 45%;
+    /* Accent: Neon green for success states */
+    --accent: 142 76% 46%;             /* #22C55E - Matrix green */
     --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 75% 45%;
+    /* Destructive: Warning red */
+    --destructive: 0 84% 60%;          /* #EF4444 */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 215 20% 88%;
-    --input: 215 20% 90%;
-    --ring: 215 85% 35%;
+    /* Muted surfaces */
+    --muted: 217 33% 12%;
+    --muted-foreground: 215 20% 55%;
 
-    --radius: 0.5rem;
+    /* Borders & inputs */
+    --border: 217 33% 18%;
+    --input: 217 33% 15%;
+    --ring: 186 100% 50%;
 
-    /* Severity colors */
-    --severity-critical: 0 85% 55%;
-    --severity-high: 25 90% 55%;
-    --severity-medium: 45 95% 55%;
-    --severity-low: 140 70% 45%;
-    --severity-info: 200 85% 55%;
+    --radius: 0.75rem;
 
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(157, 50%, 20%) 100%);
-    --gradient-subtle: linear-gradient(180deg, hsl(210 20% 98%), hsl(210 20% 96%));
-    --gradient-hero: linear-gradient(135deg, hsl(157 55% 25%) 0%, hsl(157 60% 45%) 100%);
+    /* === SEVERITY SYSTEM === */
+    --severity-critical: 0 90% 60%;      /* #FF3B3B - Alarm red */
+    --severity-high: 25 95% 55%;         /* #FF8C00 - Warning orange */
+    --severity-medium: 45 100% 50%;      /* #FFD700 - Caution yellow */
+    --severity-low: 186 100% 50%;        /* #00E5FF - Info cyan */
+    --severity-info: 217 33% 40%;        /* Neutral slate */
 
-    /* Shadows */
-    --shadow-sm: 0 1px 2px 0 hsl(215 25% 15% / 0.05);
-    --shadow-md: 0 4px 6px -1px hsl(215 25% 15% / 0.1);
-    --shadow-lg: 0 10px 15px -3px hsl(215 25% 15% / 0.1);
-    --shadow-card: 0 2px 8px hsl(215 25% 15% / 0.08);
+    /* === GRADIENTS === */
+    --gradient-primary: linear-gradient(135deg, hsl(186 100% 50%) 0%, hsl(142 76% 46%) 100%);
+    --gradient-surface: linear-gradient(180deg, hsl(222 47% 8%) 0%, hsl(222 47% 6%) 100%);
+    --gradient-glow: radial-gradient(ellipse at center, hsl(186 100% 50% / 0.15) 0%, transparent 70%);
+    --gradient-hero: linear-gradient(135deg, hsl(222 47% 10%) 0%, hsl(217 33% 8%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(222 47% 10%) 0%, hsl(222 47% 7%) 100%);
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    /* === SHADOWS === */
+    --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.3);
+    --shadow-md: 0 4px 12px hsl(0 0% 0% / 0.4);
+    --shadow-lg: 0 8px 24px hsl(0 0% 0% / 0.5);
+    --shadow-glow: 0 0 20px hsl(186 100% 50% / 0.3);
+    --shadow-card: 0 4px 20px hsl(0 0% 0% / 0.3), 0 0 1px hsl(186 100% 50% / 0.1);
+    --shadow-elevated: 0 8px 32px hsl(0 0% 0% / 0.4), inset 0 1px 0 hsl(217 33% 25% / 0.1);
+
+    /* === SIDEBAR === */
+    --sidebar-background: 222 47% 5%;
+    --sidebar-foreground: 210 40% 90%;
+    --sidebar-primary: 186 100% 50%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 217 33% 12%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 217 33% 15%;
+    --sidebar-ring: 186 100% 50%;
+
+    /* === CHART COLORS === */
+    --chart-1: 186 100% 50%;   /* Cyan */
+    --chart-2: 142 76% 46%;    /* Green */
+    --chart-3: 280 80% 60%;    /* Purple */
+    --chart-4: 25 95% 55%;     /* Orange */
+    --chart-5: 0 90% 60%;      /* Red */
   }
 
-  .dark {
-    /* FORCING LIGHT MODE TO MATCH 'DONEZO' REFERENCE REGARDLESS OF SYSTEM PREFERENCE */
-    --background: 210 20% 98%;
-    /* #F9FAFB */
-    --foreground: 155 40% 15%;
-    /* #153E2E */
-
+  /* Dark mode is default - light mode override for accessibility */
+  .light {
+    --background: 210 30% 98%;
+    --foreground: 222 47% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 155 40% 15%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 155 40% 15%;
-
-    --primary: 157 55% 25%;
-    /* #1C6346 - Donezo Green */
+    --card-foreground: 222 47% 11%;
+    --primary: 186 100% 35%;
     --primary-foreground: 0 0% 100%;
-    --primary-hover: 157 55% 20%;
-
-    --secondary: 150 20% 96%;
-    --secondary-foreground: 157 55% 25%;
-
-    --muted: 210 20% 96%;
-    --muted-foreground: 215 15% 50%;
-
-    --accent: 157 60% 45%;
-    --accent-foreground: 0 0% 100%;
-
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 98%;
-
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 157 55% 25%;
-    --sidebar-ring: 210 100% 50%;
-  }
-}
-
-@layer utilities {
-  .glass {
-    @apply bg-white/70 backdrop-blur-md border border-white/20;
-  }
-
-  .glass-card {
-    @apply bg-white border border-gray-100 shadow-sm rounded-[2rem];
-  }
-
-  .text-glow {
-    text-shadow: 0 0 10px currentColor;
-  }
-
-  .border-glow {
-    box-shadow: 0 0 10px -2px currentColor;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
   }
 }
 
@@ -127,7 +116,274 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    @apply antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
   body {
     @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  /* Technical/code elements use JetBrains Mono */
+  code, pre, .font-mono, .font-code {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@layer utilities {
+  /* === GLASS MORPHISM === */
+  .glass {
+    @apply bg-card/80 backdrop-blur-xl border border-white/5;
+  }
+
+  .glass-card {
+    background: linear-gradient(145deg, hsl(222 47% 10% / 0.9), hsl(222 47% 7% / 0.9));
+    @apply backdrop-blur-xl border border-white/5 rounded-2xl;
+    box-shadow: var(--shadow-card);
+  }
+
+  /* === GLOW EFFECTS === */
+  .text-glow {
+    text-shadow: 0 0 20px hsl(186 100% 50% / 0.5), 0 0 40px hsl(186 100% 50% / 0.3);
+  }
+
+  .text-glow-sm {
+    text-shadow: 0 0 10px hsl(186 100% 50% / 0.4);
+  }
+
+  .border-glow {
+    box-shadow: 0 0 15px -3px hsl(186 100% 50% / 0.4), inset 0 0 15px -3px hsl(186 100% 50% / 0.1);
+  }
+
+  .glow-cyan {
+    box-shadow: 0 0 30px hsl(186 100% 50% / 0.3);
+  }
+
+  .glow-green {
+    box-shadow: 0 0 30px hsl(142 76% 46% / 0.3);
+  }
+
+  .glow-red {
+    box-shadow: 0 0 30px hsl(0 90% 60% / 0.3);
+  }
+
+  /* === ANIMATED BACKGROUNDS === */
+  .bg-grid-pattern {
+    background-image:
+      linear-gradient(hsl(217 33% 15% / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(217 33% 15% / 0.3) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .bg-dots-pattern {
+    background-image: radial-gradient(hsl(217 33% 25% / 0.5) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .bg-scan-line {
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      hsl(186 100% 50% / 0.03) 50%,
+      transparent 100%
+    );
+    animation: scan 8s linear infinite;
+  }
+
+  @keyframes scan {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+  }
+
+  /* === PULSE ANIMATIONS === */
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 5px hsl(186 100% 50% / 0.5); }
+    50% { box-shadow: 0 0 20px hsl(186 100% 50% / 0.8), 0 0 40px hsl(186 100% 50% / 0.4); }
+  }
+
+  .pulse-dot {
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.2); }
+  }
+
+  /* === STATUS INDICATORS === */
+  .status-critical {
+    @apply bg-red-500/20 text-red-400 border-red-500/30;
+  }
+
+  .status-high {
+    @apply bg-orange-500/20 text-orange-400 border-orange-500/30;
+  }
+
+  .status-medium {
+    @apply bg-yellow-500/20 text-yellow-400 border-yellow-500/30;
+  }
+
+  .status-low {
+    @apply bg-cyan-500/20 text-cyan-400 border-cyan-500/30;
+  }
+
+  .status-success {
+    @apply bg-emerald-500/20 text-emerald-400 border-emerald-500/30;
+  }
+
+  /* === CARD VARIANTS === */
+  .card-elevated {
+    background: var(--gradient-card);
+    box-shadow: var(--shadow-elevated);
+    @apply border border-white/5 rounded-2xl;
+  }
+
+  .card-interactive {
+    @apply card-elevated transition-all duration-300;
+  }
+
+  .card-interactive:hover {
+    @apply border-primary/30;
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
+  }
+
+  /* === TYPOGRAPHY === */
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-primary);
+  }
+
+  .heading-display {
+    @apply font-bold tracking-tight;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .label-mono {
+    @apply text-xs font-medium uppercase tracking-widest;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* === SCROLLBAR === */
+  .scrollbar-cyber::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-cyber::-webkit-scrollbar-track {
+    background: hsl(217 33% 10%);
+    border-radius: 3px;
+  }
+
+  .scrollbar-cyber::-webkit-scrollbar-thumb {
+    background: hsl(217 33% 25%);
+    border-radius: 3px;
+  }
+
+  .scrollbar-cyber::-webkit-scrollbar-thumb:hover {
+    background: hsl(186 100% 50% / 0.5);
+  }
+
+  /* === FADE ANIMATIONS === */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.5s ease-out;
+  }
+
+  .animate-slide-in-right {
+    animation: slideInRight 0.3s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes slideInRight {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  /* === STAGGER DELAYS === */
+  .stagger-1 { animation-delay: 0.1s; }
+  .stagger-2 { animation-delay: 0.2s; }
+  .stagger-3 { animation-delay: 0.3s; }
+  .stagger-4 { animation-delay: 0.4s; }
+  .stagger-5 { animation-delay: 0.5s; }
+}
+
+/* === GLOBAL OVERRIDES === */
+@layer components {
+  /* Primary button override */
+  .btn-primary {
+    @apply bg-primary text-primary-foreground font-semibold;
+    @apply hover:bg-primary-hover transition-all duration-200;
+    @apply shadow-lg shadow-primary/25;
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 0 20px hsl(186 100% 50% / 0.4);
+  }
+
+  /* Ghost button with glow */
+  .btn-ghost-glow {
+    @apply text-primary border border-primary/30 bg-transparent;
+    @apply hover:bg-primary/10 hover:border-primary/50;
+    @apply transition-all duration-200;
+  }
+
+  /* Metric card base */
+  .metric-card {
+    @apply card-elevated p-6 relative overflow-hidden;
+  }
+
+  .metric-card::before {
+    content: '';
+    @apply absolute inset-0 opacity-0 transition-opacity duration-300;
+    background: var(--gradient-glow);
+  }
+
+  .metric-card:hover::before {
+    @apply opacity-100;
+  }
+
+  /* Data table styling */
+  .data-table {
+    @apply w-full;
+  }
+
+  .data-table th {
+    @apply text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4;
+    @apply border-b border-border/50;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .data-table td {
+    @apply py-4 px-4 text-sm;
+    @apply border-b border-border/30;
+  }
+
+  .data-table tr:hover td {
+    @apply bg-white/[0.02];
+  }
+
+  /* Navigation active state */
+  .nav-item-active {
+    @apply bg-primary/10 text-primary border-l-2 border-primary;
+    box-shadow: inset 4px 0 12px hsl(186 100% 50% / 0.1);
   }
 }

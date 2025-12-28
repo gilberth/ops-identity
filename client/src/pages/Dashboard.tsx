@@ -2,17 +2,29 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Shield, AlertTriangle, CheckCircle, ArrowRight, Download, Activity, Users, FileText, Globe, Loader2 } from "lucide-react";
+import {
+  Shield,
+  AlertTriangle,
+  CheckCircle,
+  ArrowRight,
+  Activity,
+  Users,
+  FileText,
+  Globe,
+  Loader2,
+  Zap,
+  TrendingUp,
+  TrendingDown,
+  Server,
+  Lock,
+  Eye
+} from "lucide-react";
 import { CategoriesChart } from "@/components/assessment/CategoriesChart";
-import { RiskTrendChart } from "@/components/assessment/RiskTrendChart";
 import { api } from "@/utils/api";
 import { Link } from "react-router-dom";
-import { toast } from "@/hooks/use-toast";
 import { Hammer } from "lucide-react";
 import { RemediationModal } from "@/components/assessment/RemediationModal";
 import { cn } from "@/lib/utils";
-import { MaturityRadar } from "@/components/assessment/MaturityRadar";
-import { ComplianceMatrix } from "@/components/assessment/ComplianceMatrix";
 import { useClient } from "@/context/ClientContext";
 
 const Dashboard = () => {
@@ -32,9 +44,7 @@ const Dashboard = () => {
   });
   const [topRisks, setTopRisks] = useState<any[]>([]);
   const [categoryScores, setCategoryScores] = useState<any[]>([]);
-  const [trendData, setTrendData] = useState<any[]>([]);
   const [latestAssessment, setLatestAssessment] = useState<any>(null);
-  const [allFindings, setAllFindings] = useState<any[]>([]);
   const [selectedFinding, setSelectedFinding] = useState<any>(null);
   const [isRemediationOpen, setIsRemediationOpen] = useState(false);
 
@@ -51,25 +61,13 @@ const Dashboard = () => {
         return;
       }
 
-      // Sort assessments by date desc
       const sorted = assessments.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       const latest = sorted[0];
       setLatestAssessment(latest);
 
-      // Fetch raw data for the latest assessment to compute deeper stats
-      let rawData: any = {};
-      try {
-        rawData = await api.getAssessmentData(latest.id);
-      } catch (e) {
-        console.error("Failed to fetch raw data for dashboard stats", e);
-      }
-
-      // --- INTELLIGENCE LAYER ---
       const findings = await api.getFindings(latest.id);
       let critical = 0, high = 0, medium = 0, low = 0;
       let risksList: any[] = [];
-
-      // Dynamic Metrics State
       let domainAdminsCount = 0;
       let hasDomainAdminFinding = false;
       let replStatus = { status: "Healthy", label: "Converged", color: "green" };
@@ -83,33 +81,26 @@ const Dashboard = () => {
           else if (sev === "medium") medium++;
           else low++;
 
-          // Extract Domain Admin Count
-          // Looks for findings related to "Domain Admins" or "Administrators" group size
-          // Broadened keywords to catch Spanish "Administradores" and "detectados"
           if (
-            (f.title?.toLowerCase().includes("domain admin") || f.title?.toLowerCase().includes("administrators") || f.title?.toLowerCase().includes("administradores") || f.title?.toLowerCase().includes("admin count")) &&
-            (f.title?.toLowerCase().includes("member") || f.title?.toLowerCase().includes("miembro") || f.title?.toLowerCase().includes("count") || f.title?.toLowerCase().includes("usuarios") || f.title?.toLowerCase().includes("detectados"))
+            (f.title?.toLowerCase().includes("domain admin") || f.title?.toLowerCase().includes("administrators") || f.title?.toLowerCase().includes("administradores")) &&
+            (f.title?.toLowerCase().includes("member") || f.title?.toLowerCase().includes("miembro") || f.title?.toLowerCase().includes("count") || f.title?.toLowerCase().includes("usuarios"))
           ) {
             hasDomainAdminFinding = true;
-            // Try to grab from evidence first
             if (f.evidence?.count) {
               domainAdminsCount = Math.max(domainAdminsCount, f.evidence.count);
             } else if (f.affected_count) {
               domainAdminsCount = Math.max(domainAdminsCount, f.affected_count);
             } else {
-              // Fallback: extract number from title (e.g., "7 administradores...", "4 miembros...")
               const match = f.title.match(/(\d+)/);
               if (match) domainAdminsCount = Math.max(domainAdminsCount, parseInt(match[1]));
             }
           }
 
-          // Analyze Replication/Topology Health
-          if (f.title?.toLowerCase().includes("replication") || f.title?.toLowerCase().includes("sincronización") || f.title?.toLowerCase().includes("time")) {
+          if (f.title?.toLowerCase().includes("replication") || f.title?.toLowerCase().includes("sincronización")) {
             replStatus = { status: "Issues Found", label: "Sync Errors", color: "red" };
           }
 
-          // Analyze Domain Controller Health
-          if (f.title?.toLowerCase().includes("operating system") || f.title?.toLowerCase().includes("version") || f.title?.toLowerCase().includes("end of life")) {
+          if (f.title?.toLowerCase().includes("operating system") || f.title?.toLowerCase().includes("end of life")) {
             dcStatus = { status: "Action Needed", label: "Legacy OS Found", color: "amber" };
           }
 
@@ -117,31 +108,26 @@ const Dashboard = () => {
         });
       }
 
-      // Calculate Debt Score
       const penalty = (critical * 15) + (high * 8) + (medium * 3) + (low * 1);
       let calculatedScore = Math.max(0, 100 - penalty);
       if (critical > 0 && calculatedScore > 80) calculatedScore = 80;
 
-      // Update Stats State
       setStats({
         score: calculatedScore,
         totalFindings: critical + high + medium + low,
         critical, high, medium, low,
-        // Add dynamic extra stats
         domainAdmins: hasDomainAdminFinding ? domainAdminsCount : 0,
         hasPrivilegedFinding: hasDomainAdminFinding,
         replStatus,
         dcStatus
       });
 
-      setAllFindings(Array.isArray(findings) ? findings : []);
-      // Filter for top items
       setTopRisks(risksList.filter((r: any) => r.severity === "critical" || r.severity === "high").slice(0, 5));
 
       setCategoryScores([
-        { name: "Identity Hygiene", score: Math.max(30, 100 - (critical * 5)), color: "#3b82f6" },
-        { name: "Infrastructure Health", score: Math.max(40, 100 - (high * 3)), color: "#10b981" },
-        { name: "GPO Management", score: Math.max(50, 100 - (medium * 2)), color: "#8b5cf6" },
+        { name: "Identity", score: Math.max(30, 100 - (critical * 5)), color: "#00E5FF" },
+        { name: "Infrastructure", score: Math.max(40, 100 - (high * 3)), color: "#22C55E" },
+        { name: "GPO", score: Math.max(50, 100 - (medium * 2)), color: "#A855F7" },
       ]);
 
     } catch (error) {
@@ -151,207 +137,333 @@ const Dashboard = () => {
     }
   };
 
-  const MetricCard = ({ title, value, subtext, icon: Icon, color, trend }: any) => (
-    <Card className="rounded-2xl border-none shadow-sm bg-white hover:shadow-md transition-shadow">
-      <CardContent className="p-5 flex items-start justify-between">
-        <div>
-          <p className="text-sm font-medium text-slate-500 mb-1">{title}</p>
-          <div className="flex items-baseline gap-2">
-            <h4 className="text-2xl font-bold text-slate-800">{value}</h4>
-            {trend && <span className={cn("text-xs font-medium", trend === 'up' ? "text-red-500" : "text-green-500")}>{trend === 'up' ? '↑' : '↓'} vs last</span>}
-          </div>
-          {subtext && <p className="text-xs text-slate-400 mt-1">{subtext}</p>}
-        </div>
-        <div className={cn("p-2.5 rounded-xl bg-opacity-10", color)}>
-          <Icon className={cn("h-5 w-5", color.replace('bg-', 'text-').replace('/10', ''))} />
-        </div>
-      </CardContent>
-    </Card>
-  );
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return "text-emerald-400";
+    if (score >= 60) return "text-yellow-400";
+    if (score >= 40) return "text-orange-400";
+    return "text-red-400";
+  };
+
+  const getScoreGlow = (score: number) => {
+    if (score >= 80) return "shadow-emerald-500/30";
+    if (score >= 60) return "shadow-yellow-500/30";
+    if (score >= 40) return "shadow-orange-500/30";
+    return "shadow-red-500/30";
+  };
 
   return (
     <div className="space-y-6 animate-fade-in pb-10">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-200/60 pb-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Infrastructure Health Control</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Tracking Configuration Drift & Operational Hygiene for <span className="font-semibold text-slate-700">{currentClient?.name || 'Unknown Client'}</span>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+              <Zap className="h-5 w-5 text-cyan-400" />
+            </div>
+            <h1 className="text-2xl font-bold text-white tracking-tight">
+              Security Command Center
+            </h1>
+          </div>
+          <p className="text-slate-400 text-sm">
+            Real-time infrastructure health monitoring for{" "}
+            <span className="text-cyan-400 font-medium">{currentClient?.name || 'Unknown Client'}</span>
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Link to="/reports">
-            <Button variant="outline" className="h-9 text-xs rounded-lg border-slate-200">
-              <FileText className="mr-2 h-3.5 w-3.5 text-slate-500" /> Export Audit Report
+            <Button variant="outline" className="h-9 text-xs rounded-lg border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white">
+              <FileText className="mr-2 h-3.5 w-3.5" /> Export Report
             </Button>
           </Link>
           <Link to="/new-assessment">
-            <Button className="h-9 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-white shadow-lg shadow-slate-900/20">
-              <Activity className="mr-2 h-3.5 w-3.5" /> New Health Check
+            <Button className="h-9 text-xs rounded-lg bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-[hsl(222,47%,6%)] font-semibold shadow-lg shadow-cyan-500/25">
+              <Activity className="mr-2 h-3.5 w-3.5" /> New Scan
             </Button>
           </Link>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center h-64 items-center">
-          <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+        <div className="flex flex-col justify-center items-center h-64 gap-4">
+          <div className="relative">
+            <Loader2 className="h-10 w-10 animate-spin text-cyan-400" />
+            <div className="absolute inset-0 h-10 w-10 animate-ping rounded-full bg-cyan-400/20" />
+          </div>
+          <p className="text-slate-500 text-sm font-mono">Loading security metrics...</p>
         </div>
+      ) : !latestAssessment ? (
+        <Card className="card-elevated border-dashed border-white/10">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 mb-4">
+              <Shield className="h-8 w-8 text-cyan-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-white mb-2">No Assessments Yet</h3>
+            <p className="text-slate-400 text-sm text-center max-w-md mb-6">
+              Run your first security assessment to see your infrastructure health metrics
+            </p>
+            <Link to="/new-assessment">
+              <Button className="bg-gradient-to-r from-cyan-500 to-emerald-500 text-[hsl(222,47%,6%)] font-semibold">
+                <Zap className="mr-2 h-4 w-4" /> Start Assessment
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
       ) : (
         <>
           {/* KPI Row */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="rounded-2xl border-none shadow-sm bg-gradient-to-br from-indigo-600 to-indigo-700 text-white">
-              <CardContent className="p-6 relative overflow-hidden">
-                <div className="absolute right-0 top-0 h-32 w-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-2xl" />
-                <div className="relative z-10">
-                  <p className="text-indigo-100 text-sm font-medium mb-2">Technical Debt Score</p>
-                  <div className="flex items-end gap-3">
-                    <h2 className="text-5xl font-bold tracking-tighter">{100 - stats.score}</h2>
-                    <span className="text-lg font-medium text-indigo-200 mb-2">/ 100</span>
+            {/* Security Score Card */}
+            <Card className="card-elevated relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-emerald-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <CardContent className="p-6 relative">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono">
+                    Health Score
+                  </span>
+                  <div className={cn("flex items-center gap-1 text-xs font-medium", stats.score >= 50 ? "text-emerald-400" : "text-red-400")}>
+                    {stats.score >= 50 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                    {stats.score >= 50 ? "Stable" : "At Risk"}
                   </div>
-                  <div className="mt-4 flex items-center gap-2 text-indigo-100 text-xs bg-white/10 w-fit px-2 py-1 rounded-lg backdrop-blur-sm">
-                    <Activity className="h-3 w-3" />
-                    {stats.score >= 80 ? 'Low Debt' : 'High Debt'}
+                </div>
+                <div className="flex items-end gap-2">
+                  <span className={cn("text-5xl font-bold tracking-tighter", getScoreColor(stats.score))}>
+                    {stats.score}
+                  </span>
+                  <span className="text-slate-500 text-lg mb-2">/100</span>
+                </div>
+                <div className="mt-4 h-2 bg-white/5 rounded-full overflow-hidden">
+                  <div
+                    className={cn("h-full rounded-full transition-all duration-1000", stats.score >= 80 ? "bg-emerald-500" : stats.score >= 60 ? "bg-yellow-500" : stats.score >= 40 ? "bg-orange-500" : "bg-red-500")}
+                    style={{ width: `${stats.score}%` }}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Critical Issues */}
+            <Card className={cn("card-elevated relative overflow-hidden group", stats.critical > 0 && "border-red-500/30")}>
+              {stats.critical > 0 && <div className="absolute inset-0 bg-red-500/5" />}
+              <CardContent className="p-6 relative">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono">Critical</span>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className={cn("text-4xl font-bold", stats.critical > 0 ? "text-red-400" : "text-slate-500")}>
+                        {stats.critical}
+                      </span>
+                      {stats.critical > 0 && (
+                        <span className="text-xs text-red-400 font-medium">Issues</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">Immediate action required</p>
+                  </div>
+                  <div className={cn("p-3 rounded-xl", stats.critical > 0 ? "bg-red-500/20 glow-red" : "bg-white/5")}>
+                    <AlertTriangle className={cn("h-6 w-6", stats.critical > 0 ? "text-red-400" : "text-slate-500")} />
                   </div>
                 </div>
               </CardContent>
             </Card>
 
-            <MetricCard
-              title="Config Gaps"
-              value={stats.critical}
-              subtext="Requires Optimization"
-              icon={AlertTriangle}
-              color="bg-red-500/10 text-red-600"
-              trend={stats.critical > 0 ? 'up' : 'down'}
-            />
-            <MetricCard
-              title="Privileged Bloat"
-              value={stats.hasPrivilegedFinding ? stats.domainAdmins : "OK"}
-              subtext={stats.hasPrivilegedFinding ? "High Risk Accounts" : "Least Privilege Met"}
-              icon={Users}
-              color={stats.hasPrivilegedFinding ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600"}
-            />
-            <MetricCard
-              title="Topology"
-              value={stats.replStatus?.status || "Healthy"}
-              subtext={stats.replStatus?.label || "Replication"}
-              icon={Globe}
-              color={stats.replStatus?.color === 'red' ? "bg-red-500/10 text-red-600" : "bg-emerald-500/10 text-emerald-600"}
-            />
+            {/* Privileged Accounts */}
+            <Card className="card-elevated relative overflow-hidden group">
+              <CardContent className="p-6 relative">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono">Privileged</span>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className={cn("text-4xl font-bold", stats.hasPrivilegedFinding ? "text-orange-400" : "text-emerald-400")}>
+                        {stats.hasPrivilegedFinding ? stats.domainAdmins : "OK"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {stats.hasPrivilegedFinding ? "High-risk accounts" : "Least privilege met"}
+                    </p>
+                  </div>
+                  <div className={cn("p-3 rounded-xl", stats.hasPrivilegedFinding ? "bg-orange-500/20" : "bg-emerald-500/20")}>
+                    <Users className={cn("h-6 w-6", stats.hasPrivilegedFinding ? "text-orange-400" : "text-emerald-400")} />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Replication Status */}
+            <Card className="card-elevated relative overflow-hidden group">
+              <CardContent className="p-6 relative">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider font-mono">Topology</span>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className={cn("text-2xl font-bold", stats.replStatus?.color === 'red' ? "text-red-400" : "text-emerald-400")}>
+                        {stats.replStatus?.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">{stats.replStatus?.label}</p>
+                  </div>
+                  <div className={cn("p-3 rounded-xl", stats.replStatus?.color === 'red' ? "bg-red-500/20" : "bg-emerald-500/20")}>
+                    <Globe className={cn("h-6 w-6", stats.replStatus?.color === 'red' ? "text-red-400" : "text-emerald-400")} />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Main Dashboard Content */}
+          {/* Main Content Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-            {/* Left: Top Risks Table */}
-            <Card className="col-span-1 lg:col-span-2 rounded-2xl border border-slate-100 shadow-sm bg-white">
-              <CardHeader className="px-6 py-5 border-b border-slate-50 flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-base font-bold text-slate-800">Architectural & Hygiene Gaps</CardTitle>
-                  <CardDescription className="text-xs">Top misconfigurations affecting stability</CardDescription>
+            {/* Findings Table */}
+            <Card className="col-span-1 lg:col-span-2 card-elevated">
+              <CardHeader className="px-6 py-5 border-b border-white/5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base font-bold text-white flex items-center gap-2">
+                      <Eye className="h-4 w-4 text-cyan-400" />
+                      Security Findings
+                    </CardTitle>
+                    <CardDescription className="text-slate-500 text-xs mt-1">
+                      Top priority issues requiring attention
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="text-cyan-400 border-cyan-500/30 bg-cyan-500/10 font-mono text-[10px]">
+                    {topRisks.length} ACTIVE
+                  </Badge>
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                <div className="divide-y divide-slate-50">
-                  {topRisks.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400 text-sm">No architectural issues found.</div>
-                  ) : (
-                    topRisks.map((risk, i) => (
-                      <div key={i} className="p-4 hover:bg-slate-50 transition-colors flex items-start gap-4">
-                        <div className={cn("mt-1 h-2 w-2 rounded-full shrink-0",
-                          risk.severity === 'critical' ? "bg-red-500 animate-pulse" : "bg-orange-500"
-                        )} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-1">
-                            <h4 className="text-sm font-semibold text-slate-800 truncate pr-4">{risk.title}</h4>
-                            <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider px-2 h-5 border-slate-200 text-slate-500">
-                              {risk.category || 'General'}
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-slate-500 line-clamp-2">{risk.description}</p>
+                {topRisks.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 inline-flex mb-4">
+                      <CheckCircle className="h-8 w-8 text-emerald-400" />
+                    </div>
+                    <p className="text-slate-400 text-sm">No critical issues found</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-white/5">
+                    {topRisks.map((risk, i) => (
+                      <div key={i} className="p-4 hover:bg-white/[0.02] transition-colors group">
+                        <div className="flex items-start gap-4">
+                          <div className={cn(
+                            "mt-1 h-2 w-2 rounded-full shrink-0",
+                            risk.severity === 'critical' ? "bg-red-500 animate-pulse shadow-lg shadow-red-500/50" : "bg-orange-500"
+                          )} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-sm font-semibold text-white truncate pr-4 group-hover:text-cyan-400 transition-colors">
+                                {risk.title}
+                              </h4>
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-[10px] uppercase font-bold tracking-wider px-2 h-5 font-mono shrink-0",
+                                  risk.severity === 'critical'
+                                    ? "border-red-500/30 text-red-400 bg-red-500/10"
+                                    : "border-orange-500/30 text-orange-400 bg-orange-500/10"
+                                )}
+                              >
+                                {risk.severity}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-slate-400 line-clamp-2 mb-3">{risk.description}</p>
 
-                          <div className="flex items-center gap-3 mt-3">
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              className="h-7 text-[10px] bg-slate-100 text-slate-600 hover:bg-slate-200"
-                              onClick={() => {
-                                setSelectedFinding(risk);
-                                setIsRemediationOpen(true);
-                              }}
-                            >
-                              <Hammer className="h-3 w-3 mr-1.5" /> View Fix
-                            </Button>
-                            {risk.microsoft_docs && (
-                              <a href={risk.microsoft_docs} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 hover:underline flex items-center">
-                                Best Practice Ref <ArrowRight className="h-2 w-2 ml-0.5" />
-                              </a>
-                            )}
+                            <div className="flex items-center gap-3">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-[10px] text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10 px-3"
+                                onClick={() => {
+                                  setSelectedFinding(risk);
+                                  setIsRemediationOpen(true);
+                                }}
+                              >
+                                <Hammer className="h-3 w-3 mr-1.5" /> Remediate
+                              </Button>
+                              {risk.category && (
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {risk.category}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
-            {/* Right: Charts & Category Breakdown */}
+            {/* Right Column */}
             <div className="space-y-6">
-              <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white overflow-hidden">
-                <CardHeader className="px-6 py-5 border-b border-slate-50">
-                  <CardTitle className="text-sm font-bold text-slate-800">Operational Maturity</CardTitle>
+              {/* Category Scores */}
+              <Card className="card-elevated overflow-hidden">
+                <CardHeader className="px-6 py-5 border-b border-white/5">
+                  <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-cyan-400" />
+                    Category Health
+                  </CardTitle>
                 </CardHeader>
-                <div className="p-4 bg-slate-50/50">
+                <CardContent className="p-4">
                   <CategoriesChart data={categoryScores} />
-                </div>
+                </CardContent>
               </Card>
 
-              <Card className="rounded-2xl border border-slate-100 shadow-sm bg-white p-6">
-                <h4 className="text-xs font-bold uppercase text-slate-400 tracking-wider mb-4">Infrastructure Status</h4>
-                <div className="space-y-4">
-                  <div className={cn("flex items-center justify-between p-3 rounded-xl border",
-                    stats.replStatus?.color === 'red' ? "bg-red-50 border-red-100" : "bg-green-50 border-green-100")}>
+              {/* Quick Status */}
+              <Card className="card-elevated p-5">
+                <h4 className="text-[10px] font-bold uppercase text-slate-500 tracking-wider mb-4 font-mono">
+                  Infrastructure Status
+                </h4>
+                <div className="space-y-3">
+                  <div className={cn(
+                    "flex items-center justify-between p-3 rounded-xl border transition-colors",
+                    stats.replStatus?.color === 'red'
+                      ? "bg-red-500/10 border-red-500/20"
+                      : "bg-emerald-500/10 border-emerald-500/20"
+                  )}>
                     <div className="flex items-center gap-3">
-                      <div className={cn("h-8 w-8 rounded-full flex items-center justify-center",
-                        stats.replStatus?.color === 'red' ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600")}>
-                        <Globe className="h-4 w-4" />
+                      <div className={cn(
+                        "p-2 rounded-lg",
+                        stats.replStatus?.color === 'red' ? "bg-red-500/20" : "bg-emerald-500/20"
+                      )}>
+                        <Server className={cn("h-4 w-4", stats.replStatus?.color === 'red' ? "text-red-400" : "text-emerald-400")} />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-slate-700">Replication Topology</p>
-                        <p className={cn("text-[10px] font-medium", stats.replStatus?.color === 'red' ? "text-red-600" : "text-green-600")}>
+                        <p className="text-sm font-medium text-white">Replication</p>
+                        <p className={cn("text-[10px]", stats.replStatus?.color === 'red' ? "text-red-400" : "text-emerald-400")}>
                           {stats.replStatus?.label}
                         </p>
                       </div>
                     </div>
-                    {stats.replStatus?.color === 'red' ?
-                      <AlertTriangle className="h-4 w-4 text-red-500" /> :
-                      <CheckCircle className="h-4 w-4 text-green-500" />
+                    {stats.replStatus?.color === 'red'
+                      ? <AlertTriangle className="h-4 w-4 text-red-400" />
+                      : <CheckCircle className="h-4 w-4 text-emerald-400" />
                     }
                   </div>
 
-                  <div className={cn("flex items-center justify-between p-3 rounded-xl border",
-                    stats.dcStatus?.color === 'amber' ? "bg-amber-50 border-amber-100" : "bg-slate-50 border-slate-100")}>
+                  <div className={cn(
+                    "flex items-center justify-between p-3 rounded-xl border transition-colors",
+                    stats.dcStatus?.color === 'amber'
+                      ? "bg-orange-500/10 border-orange-500/20"
+                      : "bg-white/5 border-white/10"
+                  )}>
                     <div className="flex items-center gap-3">
-                      <div className={cn("h-8 w-8 rounded-full flex items-center justify-center",
-                        stats.dcStatus?.color === 'amber' ? "bg-amber-100 text-amber-600" : "bg-slate-200 text-slate-600")}>
-                        <Shield className="h-4 w-4" />
+                      <div className={cn(
+                        "p-2 rounded-lg",
+                        stats.dcStatus?.color === 'amber' ? "bg-orange-500/20" : "bg-white/10"
+                      )}>
+                        <Lock className={cn("h-4 w-4", stats.dcStatus?.color === 'amber' ? "text-orange-400" : "text-slate-400")} />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-slate-700">Domain Controllers</p>
-                        <p className="text-[10px] text-slate-500">{stats.dcStatus?.label}</p>
+                        <p className="text-sm font-medium text-white">Domain Controllers</p>
+                        <p className="text-[10px] text-slate-400">{stats.dcStatus?.label}</p>
                       </div>
                     </div>
-                    <Badge variant="secondary" className="bg-white text-slate-600">{stats.dcStatus?.status}</Badge>
+                    <Badge variant="secondary" className="bg-white/5 text-slate-300 text-[10px] font-mono">
+                      {stats.dcStatus?.status}
+                    </Badge>
                   </div>
                 </div>
               </Card>
             </div>
           </div>
 
-          {/* Remediation Modal */}
           <RemediationModal
             isOpen={isRemediationOpen}
             onClose={() => setIsRemediationOpen(false)}
