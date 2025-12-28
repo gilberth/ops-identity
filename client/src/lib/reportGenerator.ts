@@ -79,6 +79,48 @@ const sanitizeValue = (value: any): string => {
   return str;
 };
 
+// Parse PowerShell dates - handles multiple formats including /Date(timestamp)/ and ISO strings
+const parseDate = (dateValue: any): string => {
+  if (!dateValue) return 'N/A';
+
+  try {
+    // Handle PowerShell /Date(1234567890000)/ format
+    if (typeof dateValue === 'string') {
+      const match = dateValue.match(/\/Date\((-?\d+)\)\//);
+      if (match) {
+        const timestamp = parseInt(match[1], 10);
+        const date = new Date(timestamp);
+        if (!isNaN(date.getTime())) {
+          return date.toLocaleDateString('es-ES');
+        }
+      }
+
+      // Try ISO string or other standard formats
+      const date = new Date(dateValue);
+      if (!isNaN(date.getTime()) && date.getFullYear() > 1970) {
+        return date.toLocaleDateString('es-ES');
+      }
+    }
+
+    // Handle Date object
+    if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+      return dateValue.toLocaleDateString('es-ES');
+    }
+
+    // Handle timestamp number
+    if (typeof dateValue === 'number' && dateValue > 0) {
+      const date = new Date(dateValue);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString('es-ES');
+      }
+    }
+
+    return 'N/A';
+  } catch {
+    return 'N/A';
+  }
+};
+
 const createTableRow = (cells: string[], isHeader = false, status?: string) => {
   const headerColor = isHeader ? COLORS.primary : undefined;
   const cellBg = isHeader ? COLORS.primary : (status ? getStatusBg(status) : undefined);
@@ -1371,28 +1413,27 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["Identidad", "Tipo", "Permisos"], true),
-              ...rawData.DCSyncPermissions.map((perm: any) => {
-                const isExpected = perm.Identity?.includes("Domain Controllers") ||
-                                   perm.Identity?.includes("Enterprise Admins") ||
-                                   perm.Identity?.includes("Domain Admins") ||
-                                   perm.Identity?.includes("Administrators");
+              createTableRow(["Identidad", "Tipo", "Técnica de Ataque"], true),
+              ...rawData.DCSyncPermissions.filter((perm: any) => perm.IdentityReference || perm.Identity).map((perm: any) => {
+                // Field can be IdentityReference (from PowerShell) or Identity
+                const identity = perm.IdentityReference || perm.Identity || "N/A";
+                const isExpected = identity.includes("Domain Controllers") ||
+                                   identity.includes("Enterprise Admins") ||
+                                   identity.includes("Domain Admins") ||
+                                   identity.includes("Administrators") ||
+                                   identity.includes("ENTERPRISE DOMAIN CONTROLLERS");
                 const color = isExpected ? "low" : "critical";
-                const permissions = [
-                  perm.GetChanges ? "GetChanges" : "",
-                  perm.GetChangesAll ? "GetChangesAll" : "",
-                  perm.GetChangesInFilteredSet ? "FilteredSet" : ""
-                ].filter(Boolean).join(", ");
+                const technique = perm.AttackTechnique || perm.ActiveDirectoryRights || "DCSync";
                 return createTableRow([
-                  perm.Identity || "N/A",
+                  identity,
                   isExpected ? "✅ Esperado" : "⚠️ Revisar",
-                  permissions
+                  technique
                 ], false, color);
               }),
             ],
           }),
           new Paragraph({
-            text: `Total: ${rawData.DCSyncPermissions.length} identidades con permisos DCSync`,
+            text: `Total: ${rawData.DCSyncPermissions.filter((p: any) => p.IdentityReference || p.Identity).length} identidades con permisos DCSync`,
             spacing: { before: 100, after: 200 },
           }),
         ] : []),
@@ -1603,7 +1644,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 const days = user.PasswordAgeDays || user.DaysSinceChange || "N/A";
                 return createTableRow([
                   sanitizeValue(user.SamAccountName || user.Name),
-                  user.PasswordLastSet ? new Date(user.PasswordLastSet).toLocaleDateString('es-ES') : "Nunca",
+                  parseDate(user.PasswordLastSet),
                   sanitizeValue(days)
                 ], false, "medium");
               }),
