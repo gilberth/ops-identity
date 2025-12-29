@@ -213,6 +213,119 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
   });
 };
 
+// Función para crear tabla de evidencia (objetos afectados)
+const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph | Table)[] => {
+  if (!evidence) return [];
+
+  // Si evidence es un array de objetos
+  if (Array.isArray(evidence) && evidence.length > 0) {
+    // Detectar las columnas disponibles del primer objeto
+    const firstItem = evidence[0];
+    const columns: string[] = [];
+    const columnLabels: { [key: string]: string } = {
+      'SamAccountName': 'Usuario/Cuenta',
+      'Name': 'Nombre',
+      'name': 'Nombre',
+      'ComputerName': 'Equipo',
+      'HostName': 'Hostname',
+      'OperatingSystem': 'Sistema Operativo',
+      'LastLogonDate': 'Último Inicio',
+      'PasswordLastSet': 'Contraseña Cambiada',
+      'Enabled': 'Habilitado',
+      'ServicePrincipalName': 'SPN',
+      'SPN': 'SPN',
+      'DistinguishedName': 'DN',
+      'Description': 'Descripción',
+      'DaysSinceLastLogon': 'Días Inactivo',
+      'DaysInactive': 'Días Inactivo',
+      'IPv4Address': 'IP',
+    };
+
+    // Seleccionar columnas relevantes (máximo 4)
+    const priorityColumns = ['SamAccountName', 'Name', 'name', 'ComputerName', 'HostName', 'OperatingSystem', 'LastLogonDate', 'DaysSinceLastLogon', 'DaysInactive', 'Enabled'];
+    for (const col of priorityColumns) {
+      if (firstItem[col] !== undefined && columns.length < 4) {
+        columns.push(col);
+      }
+    }
+
+    // Si no hay columnas prioritarias, usar las primeras disponibles
+    if (columns.length === 0) {
+      const availableKeys = Object.keys(firstItem).filter(k =>
+        typeof firstItem[k] !== 'object' && k !== 'id' && k !== 'Id'
+      );
+      columns.push(...availableKeys.slice(0, 4));
+    }
+
+    if (columns.length === 0) return [];
+
+    const headerLabels = columns.map(col => columnLabels[col] || col);
+
+    return [
+      new Paragraph({
+        children: [new TextRun({
+          text: "📋 Objetos Afectados:",
+          bold: true,
+          size: 22,
+          color: severityColor,
+        })],
+        spacing: { before: 150, after: 100 },
+      }),
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [
+          createTableRow(headerLabels, true),
+          ...evidence.slice(0, 15).map((item: any) => {
+            const values = columns.map(col => {
+              const val = item[col];
+              if (val === undefined || val === null) return 'N/A';
+              if (typeof val === 'boolean') return val ? 'Sí' : 'No';
+              if (val instanceof Date) return val.toLocaleDateString('es-ES');
+              // Parsear fechas de PowerShell
+              if (typeof val === 'string' && val.includes('/Date(')) {
+                const match = val.match(/\/Date\((-?\d+)\)\//);
+                if (match) {
+                  return new Date(parseInt(match[1])).toLocaleDateString('es-ES');
+                }
+              }
+              return String(val).substring(0, 40);
+            });
+            return createTableRow(values, false);
+          }),
+        ],
+      }),
+      ...(evidence.length > 15 ? [
+        new Paragraph({
+          text: `... y ${evidence.length - 15} objetos más.`,
+          spacing: { before: 50, after: 150 },
+        }),
+      ] : []),
+      new Paragraph({ text: "", spacing: { after: 100 } }),
+    ];
+  }
+
+  // Si evidence es un string o tiene formato especial
+  if (typeof evidence === 'string' && evidence.length > 0) {
+    return [
+      new Paragraph({
+        children: [new TextRun({
+          text: "📋 Objetos Afectados: ",
+          bold: true,
+          size: 22,
+          color: severityColor,
+        }), new TextRun({
+          text: evidence,
+          size: 22,
+        })],
+        spacing: { before: 150, after: 150 },
+        shading: { fill: COLORS.lightBg },
+      }),
+    ];
+  }
+
+  return [];
+};
+
 export async function generateReport(data: ReportData): Promise<Blob> {
   const { assessment, findings: rawFindings, rawData } = data;
 
@@ -2630,6 +2743,9 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             createDetailTable("Descripción", finding.description, COLORS.critical),
             new Paragraph({ text: "", spacing: { after: 100 } }),
 
+            // Tabla de evidencia (objetos afectados)
+            ...createEvidenceTable(finding.evidence, COLORS.critical),
+
             ...(finding.impact_business ? [
               createDetailTable("💼 Impacto en el Negocio", finding.impact_business, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
@@ -2727,6 +2843,9 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
             createDetailTable("Descripción", finding.description, COLORS.high),
             new Paragraph({ text: "", spacing: { after: 100 } }),
+
+            // Tabla de evidencia (objetos afectados)
+            ...createEvidenceTable(finding.evidence, COLORS.high),
 
             ...(finding.impact_business ? [
               createDetailTable("💼 Impacto en el Negocio", finding.impact_business, COLORS.high),
@@ -2829,6 +2948,9 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
             createDetailTable("Descripción", finding.description, COLORS.medium),
             new Paragraph({ text: "", spacing: { after: 100 } }),
+
+            // Tabla de evidencia (objetos afectados)
+            ...createEvidenceTable(finding.evidence, COLORS.medium),
 
             ...(finding.current_vs_recommended ? [
               createDetailTable("📏 Actual vs Recomendado", finding.current_vs_recommended, COLORS.medium),
