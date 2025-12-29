@@ -217,6 +217,48 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
 const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph | Table)[] => {
   if (!evidence) return [];
 
+  // Si evidence tiene el formato { count, affected_objects } del backend
+  if (typeof evidence === 'object' && !Array.isArray(evidence) && evidence.affected_objects) {
+    const objects = evidence.affected_objects;
+    const totalCount = evidence.count || objects.length;
+
+    if (Array.isArray(objects) && objects.length > 0) {
+      // Si affected_objects es un array de strings simples
+      if (typeof objects[0] === 'string') {
+        return [
+          new Paragraph({
+            children: [new TextRun({
+              text: `📋 Objetos Afectados (${totalCount}):`,
+              bold: true,
+              size: 22,
+              color: severityColor,
+            })],
+            spacing: { before: 150, after: 100 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(['#', 'Nombre/Cuenta'], true),
+              ...objects.slice(0, 15).map((name: string, idx: number) =>
+                createTableRow([(idx + 1).toString(), name], false)
+              ),
+            ],
+          }),
+          ...(totalCount > 15 ? [
+            new Paragraph({
+              text: `... y ${totalCount - 15} objetos más.`,
+              spacing: { before: 50, after: 150 },
+              shading: { fill: COLORS.lightBg },
+            }),
+          ] : []),
+          new Paragraph({ text: "", spacing: { after: 100 } }),
+        ];
+      }
+      // Si affected_objects es un array de objetos complejos, procesar abajo
+      return createEvidenceTable(objects, severityColor);
+    }
+  }
+
   // Si evidence es un array de objetos
   if (Array.isArray(evidence) && evidence.length > 0) {
     // Detectar las columnas disponibles del primer objeto
