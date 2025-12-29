@@ -228,7 +228,7 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
         return [
           new Paragraph({
             children: [new TextRun({
-              text: `📋 Objetos Afectados (${totalCount}):`,
+              text: `Objetos Afectados (${totalCount}):`,
               bold: true,
               size: 22,
               color: severityColor,
@@ -306,7 +306,7 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
     return [
       new Paragraph({
         children: [new TextRun({
-          text: "📋 Objetos Afectados:",
+          text: "Objetos Afectados:",
           bold: true,
           size: 22,
           color: severityColor,
@@ -351,7 +351,7 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
     return [
       new Paragraph({
         children: [new TextRun({
-          text: "📋 Objetos Afectados: ",
+          text: "Objetos Afectados: ",
           bold: true,
           size: 22,
           color: severityColor,
@@ -700,7 +700,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               children: [
                 new TableCell({
                   children: [new Paragraph({
-                    children: [new TextRun({ text: "📅 Fecha de Evaluación", bold: true, size: 24 })],
+                    children: [new TextRun({ text: "Fecha de Evaluación", bold: true, size: 24 })],
                     alignment: AlignmentType.LEFT,
                   })],
                   shading: { fill: COLORS.lightBg },
@@ -732,7 +732,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               children: [
                 new TableCell({
                   children: [new Paragraph({
-                    children: [new TextRun({ text: "📊 Estado de Salud", bold: true, size: 24 })],
+                    children: [new TextRun({ text: "Estado de Salud", bold: true, size: 24 })],
                     alignment: AlignmentType.LEFT,
                   })],
                   shading: { fill: COLORS.lightBg },
@@ -776,7 +776,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         }),
         new Paragraph({
           children: [new TextRun({
-            text: "🔒 CONFIDENTIAL",
+            text: "CONFIDENCIAL",
             bold: true,
             color: COLORS.critical,
             size: 28,
@@ -788,7 +788,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // AD FOREST AND DOMAIN SUMMARY
         new Paragraph({
           children: [new TextRun({
-            text: "🌳 Resumen del Bosque y Dominio AD",
+            text: "1. Resumen del Bosque y Dominio AD",
             size: 36,
             bold: true,
             color: COLORS.primary,
@@ -843,7 +843,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 // Simulate health checks based on available data
                 // In a real scenario, we would check specific health flags
                 const isHealthy = true; // Default to true for layout demo
-                const statusText = isHealthy ? "✅ Operativo" : "⚠️ Revisar";
+                const statusText = isHealthy ? "OK" : "REVISAR";
                 const statusColor = isHealthy ? "low" : "high"; // Blue for healthy (info), Orange for warning
 
                 return createTableRow([
@@ -873,7 +873,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             rows: [
               createTableRow(["Rol", "Titular", "Alcance", "Estado", "Latencia"], true),
               ...(rawData.FSMORolesHealth.Roles || []).map((role: any) => {
-                const status = role.Health === "Healthy" ? "✅ OK" : "⚠️ Error";
+                const status = role.Health === "Healthy" ? "OK" : "ERROR";
                 const statusColor = role.Health === "Healthy" ? "low" : "critical";
                 const latency = role.ADResponseTimeMs ? `${role.ADResponseTimeMs.toFixed(1)} ms` : "N/A";
                 return createTableRow([
@@ -923,7 +923,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ...rawData.ReplicationHealthAllDCs.flatMap((dc: any) =>
                 (dc.ReplicationPartners || []).map((partner: any) => {
                   const isHealthy = partner.LastReplicationResult === 0;
-                  const statusText = isHealthy ? "✅ Éxito" : `❌ Error ${partner.LastReplicationResult}`;
+                  const statusText = isHealthy ? "OK" : `ERROR ${partner.LastReplicationResult}`;
                   const color = isHealthy ? "low" : "critical";
                   return createTableRow([
                     dc.SourceDC || "N/A",
@@ -948,7 +948,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           // Sitios sin Subnets
           ...(rawData.SiteTopology.SitesWithoutSubnets && rawData.SiteTopology.SitesWithoutSubnets.length > 0 ? [
             new Paragraph({
-              text: "⚠️ Sitios Sin Subnets Asociadas",
+              text: "Sitios Sin Subnets Asociadas",
               heading: HeadingLevel.HEADING_2,
               spacing: { before: 300, after: 100 },
             }),
@@ -969,7 +969,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           // Subnets sin Sitio
           ...(rawData.SiteTopology.SubnetsWithoutSite && rawData.SiteTopology.SubnetsWithoutSite.length > 0 ? [
             new Paragraph({
-              text: "⚠️ Subredes No Asociadas a Sitios",
+              text: "Subredes No Asociadas a Sitios",
               heading: HeadingLevel.HEADING_2,
               spacing: { before: 300, after: 100 },
             }),
@@ -989,7 +989,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           // Sitios Vacíos (Sin DCs)
           ...(rawData.SiteTopology.EmptySites && rawData.SiteTopology.EmptySites.length > 0 ? [
             new Paragraph({
-              text: "ℹ️ Sitios Vacíos (Sin Controladores de Dominio)",
+              text: "Sitios Vacíos (Sin Controladores de Dominio)",
               heading: HeadingLevel.HEADING_2,
               spacing: { before: 300, after: 100 },
             }),
@@ -1216,7 +1216,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     const trustType = trust.TrustType || trust.Type || "N/A";
                     const direction = trust.TrustDirection || trust.Direction || "N/A";
                     const isHealthy = trust.Status === "Success" || trust.Status === "Ok" || trust.ValidationStatus === "Healthy" || !trust.Issues || trust.Issues?.length === 0;
-                    const status = isHealthy ? "✅ Activo" : "⚠️ Revisar";
+                    const status = isHealthy ? "ACTIVO" : "REVISAR";
                     const color = isHealthy ? "low" : "high";
                     return createTableRow([
                       targetName,
@@ -1234,7 +1234,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   bold: true,
                   size: 22,
                 }), new TextRun({
-                  text: `Se encontraron ${trusts.length} relación(es) de confianza configurada(s). ✅ "Activo" significa que la relación funciona correctamente. ⚠️ "Revisar" indica posibles problemas de conectividad o configuración que requieren atención.`,
+                  text: `Se encontraron ${trusts.length} relación(es) de confianza configurada(s). "ACTIVO" significa que la relación funciona correctamente. "REVISAR" indica posibles problemas de conectividad o configuración que requieren atención.`,
                   size: 22,
                 })],
                 spacing: { before: 150, after: 200 },
@@ -1260,7 +1260,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
             ...(rawData?.OrphanedTrusts && rawData.OrphanedTrusts.length > 0 ? [
               new Paragraph({
-                text: "⚠️ Relaciones de Confianza Huérfanas Detectadas",
+                text: "Relaciones de Confianza Huérfanas Detectadas",
                 heading: HeadingLevel.HEADING_2,
                 spacing: { before: 300, after: 100 },
               }),
@@ -1332,7 +1332,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 createTableRow(["DC", "Estado de Riesgo", "Detalles"], true),
                 ...rawData.LingeringObjectsRisk.map((risk: any) => {
                   const isSafe = risk.Status === "Pass" || risk.RiskLevel === "Low";
-                  const statusIcon = isSafe ? "✅ Bajo Riesgo" : "🔴 Alto Riesgo";
+                  const statusIcon = isSafe ? "BAJO RIESGO" : "ALTO RIESGO";
                   const color = isSafe ? "low" : "critical";
                   return createTableRow([
                     risk.TargetDC || "N/A",
@@ -1388,7 +1388,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               })
             ] : [
               new Paragraph({
-                text: "✅ No se detectaron indicadores de riesgo.",
+                text: "No se detectaron indicadores de riesgo.",
                 spacing: { before: 100, after: 100 },
               })
             ]),
@@ -1438,9 +1438,9 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     createTableRow([
                       "Brecha USN",
                       gap.toLocaleString(),
-                      isCriticalGap ? "⚠️ Brecha CRÍTICA - Posible desincronización severa" :
-                        isLargeGap ? "⚠️ Brecha significativa - Monitorear replicación" :
-                        "✅ Diferencia normal entre DCs"
+                      isCriticalGap ? "[CRITICO] Brecha - Posible desincronización severa" :
+                        isLargeGap ? "[ALERTA] Brecha significativa - Monitorear replicación" :
+                        "[OK] Diferencia normal entre DCs"
                     ], false, isCriticalGap ? "critical" : isLargeGap ? "high" : "low"),
                   ]
                 }),
@@ -1552,7 +1552,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           // 1. Conflictos DNS
           ...(rawData?.DNSConflicts && rawData.DNSConflicts.length > 0 ? [
             new Paragraph({
-              text: "⚠️ Conflictos de Registros DNS",
+              text: "Conflictos de Registros DNS",
               heading: HeadingLevel.HEADING_2,
               spacing: { before: 300, after: 100 },
             }),
@@ -1586,7 +1586,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             ...(rawData.DNSScavengingDetailed.ConfigurationMismatches && rawData.DNSScavengingDetailed.ConfigurationMismatches.length > 0 ? [
               new Paragraph({
                 children: [new TextRun({
-                  text: "⚠️ Desalineación de Configuración: La configuración de limpieza difiere entre zonas y servidor.",
+                  text: "[ALERTA] Desalineación de Configuración: La configuración de limpieza difiere entre zonas y servidor.",
                   color: COLORS.high
                 })],
                 spacing: { after: 100 }
@@ -1600,7 +1600,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               )
             ] : [
               new Paragraph({
-                text: "✅ La configuración (Aging/Scavenging) parece consistente.",
+                text: "La configuración (Aging/Scavenging) es consistente.",
                 spacing: { after: 100 }
               })
             ]),
@@ -1610,7 +1610,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           // 3. Root Hints
           ...(rawData?.DNSRootHints && rawData.DNSRootHints.UnresponsiveHints && rawData.DNSRootHints.UnresponsiveHints.length > 0 ? [
             new Paragraph({
-              text: "⚠️ Problemas con Root Hints",
+              text: "Problemas con Root Hints",
               heading: HeadingLevel.HEADING_2,
               spacing: { before: 300, after: 100 },
             }),
@@ -1759,12 +1759,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             rows: [
               createTableRow(["DC Name", "Estado General", "Antivirus", "Eventos Críticos"], true),
               ...(rawData.DCHealth.DomainControllers || []).map((dc: any) => {
-                const healthStatus = dc.OverallHealth === "Healthy" ? "✅ Saludable" :
-                                     dc.OverallHealth === "Warning" ? "⚠️ Advertencia" :
-                                     dc.OverallHealth === "Critical" ? "🔴 Crítico" : "❓ Desconocido";
+                const healthStatus = dc.OverallHealth === "Healthy" ? "SALUDABLE" :
+                                     dc.OverallHealth === "Warning" ? "ADVERTENCIA" :
+                                     dc.OverallHealth === "Critical" ? "CRITICO" : "DESCONOCIDO";
                 const healthColor = dc.OverallHealth === "Healthy" ? "low" :
                                     dc.OverallHealth === "Warning" ? "medium" : "critical";
-                const avStatus = dc.Antivirus?.Enabled ? "✅ Activo" : "⚠️ Inactivo";
+                const avStatus = dc.Antivirus?.Enabled ? "ACTIVO" : "INACTIVO";
                 const criticalEvents = dc.CriticalEvents?.length || 0;
                 return createTableRow([
                   dc.Name || "N/A",
@@ -1810,7 +1810,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // CONFIGURACIÓN KERBEROS Y KRBTGT
         ...(rawData?.KerberosConfig ? [
           new Paragraph({
-            text: "🔐 Configuración Kerberos",
+            text: "Configuración Kerberos",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -1824,7 +1824,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               createTableRow(["Métrica", "Valor", "Estado"], true),
               (() => {
                 const age = rawData.KerberosConfig.KRBTGTPasswordAge || 0;
-                const status = age > 180 ? "🔴 CRÍTICO" : age > 90 ? "⚠️ Advertencia" : "✅ OK";
+                const status = age > 180 ? "[CRITICO]" : age > 90 ? "ADVERTENCIA" : "OK";
                 const color = age > 180 ? "critical" : age > 90 ? "medium" : "low";
                 return createTableRow([
                   "Edad de Contraseña KRBTGT",
@@ -1844,7 +1844,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ...(rawData.KerberosConfig.KRBTGTPasswordAge > 180 ? [
             new Paragraph({
               children: [new TextRun({
-                text: "⚠️ ACCIÓN REQUERIDA: La contraseña KRBTGT tiene más de 180 días. Se recomienda rotarla dos veces (con intervalo de 10+ horas entre rotaciones).",
+                text: "[ACCION REQUERIDA]: La contraseña KRBTGT tiene más de 180 días. Se recomienda rotarla dos veces (con intervalo de 10+ horas entre rotaciones).",
                 color: COLORS.critical,
                 bold: true
               })],
@@ -1867,7 +1867,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // POLÍTICAS DE CONTRASEÑA
         ...(rawData?.PasswordPolicies ? [
           new Paragraph({
-            text: "🔑 Políticas de Contraseña del Dominio",
+            text: "Políticas de Contraseña del Dominio",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -1882,7 +1882,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ], false, (rawData.PasswordPolicies.MinPasswordLength || 0) >= 14 ? "low" : "medium"),
               createTableRow([
                 "Complejidad Requerida",
-                rawData.PasswordPolicies.ComplexityEnabled ? "✅ Habilitada" : "❌ Deshabilitada",
+                rawData.PasswordPolicies.ComplexityEnabled ? "HABILITADA" : "DESHABILITADA",
                 "Habilitada"
               ], false, rawData.PasswordPolicies.ComplexityEnabled ? "low" : "critical"),
               createTableRow([
@@ -1989,7 +1989,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 const riskLevel = isExpected ? "Bajo - Cuenta de sistema esperada" : "ALTO - Revisar legitimidad de este acceso";
                 return createTableRow([
                   identity,
-                  isExpected ? "✅ Esperado" : "⚠️ Revisar",
+                  isExpected ? "ESPERADO" : "REVISAR",
                   riskLevel
                 ], false, color);
               }),
@@ -2005,7 +2005,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               bold: true,
               size: 20,
             }), new TextRun({
-              text: "Revise las identidades marcadas como '⚠️ Revisar'. Si no son cuentas de servicio legítimas (como Azure AD Connect MSOL_*), considere remover estos permisos inmediatamente.",
+              text: "Revise las identidades marcadas como 'REVISAR'. Si no son cuentas de servicio legítimas (como Azure AD Connect MSOL_*), considere remover estos permisos inmediatamente.",
               size: 20,
             })],
             spacing: { after: 200 },
@@ -2015,7 +2015,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // GRUPO PROTECTED USERS
         ...(rawData?.ProtectedUsers ? [
           new Paragraph({
-            text: "🛡️ Grupo Protected Users",
+            text: "Grupo Protected Users",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2033,14 +2033,14 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ], false, (rawData.ProtectedUsers.MemberCount || 0) > 0 ? "low" : "critical"),
               createTableRow([
                 "Estado",
-                rawData.ProtectedUsers.Exists ? "✅ Grupo Existe" : "❌ No Encontrado"
+                rawData.ProtectedUsers.Exists ? "EXISTE" : "NO ENCONTRADO"
               ]),
             ],
           }),
           ...(rawData.ProtectedUsers.MemberCount === 0 ? [
             new Paragraph({
               children: [new TextRun({
-                text: "⚠️ RECOMENDACIÓN: El grupo Protected Users está vacío. Se recomienda agregar cuentas de administradores de Tier 0 (Domain Admins, Enterprise Admins) para protección adicional.",
+                text: "[RECOMENDACION]: El grupo Protected Users está vacío. Se recomienda agregar cuentas de administradores de Tier 0 (Domain Admins, Enterprise Admins) para protección adicional.",
                 color: COLORS.high,
                 bold: true
               })],
@@ -2063,7 +2063,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // ESTADO DE AD RECYCLE BIN
         ...(rawData?.RecycleBinStatus ? [
           new Paragraph({
-            text: "♻️ Estado de AD Recycle Bin",
+            text: "Estado de AD Recycle Bin",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2073,7 +2073,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               createTableRow(["Característica", "Estado"], true),
               createTableRow([
                 "AD Recycle Bin",
-                rawData.RecycleBinStatus.Enabled ? "✅ Habilitado" : "❌ DESHABILITADO"
+                rawData.RecycleBinStatus.Enabled ? "HABILITADO" : "DESHABILITADO"
               ], false, rawData.RecycleBinStatus.Enabled ? "low" : "critical"),
               ...(rawData.RecycleBinStatus.EnabledDate ? [
                 createTableRow([
@@ -2086,7 +2086,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ...(!rawData.RecycleBinStatus.Enabled ? [
             new Paragraph({
               children: [new TextRun({
-                text: "⚠️ CRÍTICO: AD Recycle Bin está deshabilitado. Sin esta característica, los objetos eliminados no pueden recuperarse fácilmente. Habilitar requiere Forest Functional Level 2008 R2+.",
+                text: "[CRITICO]: AD Recycle Bin está deshabilitado. Sin esta característica, los objetos eliminados no pueden recuperarse fácilmente. Habilitar requiere Forest Functional Level 2008 R2+.",
                 color: COLORS.critical,
                 bold: true
               })],
@@ -2110,7 +2110,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // ESTADO SMBv1
         ...(rawData?.SMBv1Status ? [
           new Paragraph({
-            text: "🔒 Estado de Protocolo SMBv1",
+            text: "Estado de Protocolo SMBv1",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2126,12 +2126,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 rawData.SMBv1Status.DomainControllers.map((dc: any) =>
                   createTableRow([
                     dc.Name || dc.HostName || "N/A",
-                    dc.SMBv1Enabled ? "⚠️ HABILITADO" : "✅ Deshabilitado"
+                    dc.SMBv1Enabled ? "[ALERTA] HABILITADO" : "DESHABILITADO"
                   ], false, dc.SMBv1Enabled ? "critical" : "low")
                 ) : [
                   createTableRow([
                     "Estado General",
-                    rawData.SMBv1Status.IsEnabled ? "⚠️ HABILITADO" : "✅ Deshabilitado"
+                    rawData.SMBv1Status.IsEnabled ? "[ALERTA] HABILITADO" : "DESHABILITADO"
                   ], false, rawData.SMBv1Status.IsEnabled ? "critical" : "low")
                 ]
               ),
@@ -2142,7 +2142,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // ESTADO DE LAPS
         ...(rawData?.LAPS ? [
           new Paragraph({
-            text: "🔐 Estado de LAPS (Local Administrator Password Solution)",
+            text: "Estado de LAPS (Local Administrator Password Solution)",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2156,12 +2156,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               createTableRow(["Métrica", "Valor"], true),
               createTableRow([
                 "LAPS Desplegado",
-                rawData.LAPS.Deployed ? "✅ Sí" : "❌ No"
+                rawData.LAPS.Deployed ? "SI" : "NO"
               ], false, rawData.LAPS.Deployed ? "low" : "critical"),
               ...(rawData.LAPS.SchemaExtended !== undefined ? [
                 createTableRow([
                   "Schema Extendido",
-                  rawData.LAPS.SchemaExtended ? "✅ Sí" : "❌ No"
+                  rawData.LAPS.SchemaExtended ? "SI" : "NO"
                 ])
               ] : []),
               ...(rawData.LAPS.ComputersWithLAPS !== undefined ? [
@@ -2187,7 +2187,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ...(!rawData.LAPS.Deployed ? [
             new Paragraph({
               children: [new TextRun({
-                text: "⚠️ CRÍTICO: LAPS no está desplegado. Las contraseñas de administrador local pueden ser compartidas o estáticas, facilitando movimiento lateral.",
+                text: "[CRITICO]: LAPS no está desplegado. Las contraseñas de administrador local pueden ser compartidas o estáticas, facilitando movimiento lateral.",
                 color: COLORS.critical,
                 bold: true
               })],
@@ -2251,7 +2251,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ...(rawData.DelegationIssues.UnconstrainedDelegation?.length > 0 ? [
             new Paragraph({
               children: [new TextRun({
-                text: `🔴 Delegación Sin Restricciones: ${rawData.DelegationIssues.UnconstrainedDelegation.length} objeto(s)`,
+                text: `[CRITICO] Delegación Sin Restricciones: ${rawData.DelegationIssues.UnconstrainedDelegation.length} objeto(s)`,
                 bold: true,
                 color: COLORS.critical
               })],
@@ -2279,7 +2279,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           ...(rawData.DelegationIssues.ConstrainedDelegation?.length > 0 ? [
             new Paragraph({
               children: [new TextRun({
-                text: `⚠️ Delegación Restringida: ${rawData.DelegationIssues.ConstrainedDelegation.length} objeto(s)`,
+                text: `[ALTO] Delegación Restringida: ${rawData.DelegationIssues.ConstrainedDelegation.length} objeto(s)`,
                 bold: true,
                 color: COLORS.high
               })],
@@ -2317,7 +2317,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               createTableRow(["Grupo", "Miembros", "Estado"], true),
               ...rawData.PrivilegedGroups.map((group: any) => {
                 const memberCount = group.MemberCount || group.Members?.length || 0;
-                const status = memberCount > 10 ? "🔴 Excesivo" : memberCount > 5 ? "⚠️ Alto" : "✅ OK";
+                const status = memberCount > 10 ? "[CRITICO] Excesivo" : memberCount > 5 ? "[ALTO]" : "OK";
                 const color = memberCount > 10 ? "critical" : memberCount > 5 ? "high" : "low";
                 return createTableRow([
                   sanitizeValue(group.Name || group.GroupName),
@@ -2380,7 +2380,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // ADMINSDSHOLDER ORPHANS - High según Coverage Matrix
         ...(rawData?.AdminSDHolderOrphans && rawData.AdminSDHolderOrphans.length > 0 ? [
           new Paragraph({
-            text: "👤 Objetos Huérfanos de AdminSDHolder",
+            text: "Objetos Huérfanos de AdminSDHolder",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2444,7 +2444,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // USUARIOS AS-REP ROASTABLE - PreAuth disabled
         ...(rawData?.ASREPRoastableUsers && rawData.ASREPRoastableUsers.length > 0 ? [
           new Paragraph({
-            text: "🔑 Usuarios AS-REP Roastable (PreAuth Disabled)",
+            text: "Usuarios AS-REP Roastable (PreAuth Disabled)",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2462,7 +2462,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ...rawData.ASREPRoastableUsers.slice(0, 15).map((user: any) =>
                 createTableRow([
                   sanitizeValue(user.SamAccountName || user.Name),
-                  "🔴 PreAuth Disabled",
+                  "[CRITICO] PreAuth Disabled",
                   user.LastLogon ? new Date(user.LastLogon).toLocaleDateString('es-ES') : "N/A"
                 ], false, "critical")
               ),
@@ -2477,7 +2477,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // TOKEN BLOAT RISK - Critical según Coverage Matrix
         ...(rawData?.TokenBloatRisk && rawData.TokenBloatRisk.length > 0 ? [
           new Paragraph({
-            text: "📊 Riesgo de Token Bloat (>40 grupos)",
+            text: "Riesgo de Token Bloat (>40 grupos)",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
@@ -2492,7 +2492,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ...rawData.TokenBloatRisk.slice(0, 15).map((user: any) => {
                 const groupCount = user.GroupCount || user.TotalGroups || 0;
                 const tokenSize = user.EstimatedTokenSize || (groupCount * 40 + 1200);
-                const status = tokenSize > 12000 ? "🔴 Crítico" : tokenSize > 8000 ? "⚠️ Alto" : "✅ OK";
+                const status = tokenSize > 12000 ? "CRITICO" : tokenSize > 8000 ? "[ALTO]" : "OK";
                 const color = tokenSize > 12000 ? "critical" : tokenSize > 8000 ? "high" : "low";
                 return createTableRow([
                   sanitizeValue(user.SamAccountName || user.Name),
@@ -2534,7 +2534,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // RESUMEN EJECUTIVO
         new Paragraph({
           children: [new TextRun({
-            text: "📋 Resumen Ejecutivo",
+            text: "Resumen Ejecutivo",
             size: 36,
             bold: true,
             color: COLORS.primary,
@@ -2663,7 +2663,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // Test Summary Table with modern design
         new Paragraph({
           children: [new TextRun({
-            text: "📊 Resultados de la Evaluación",
+            text: "2. Resultados de la Evaluación",
             size: 28,
             bold: true,
             color: COLORS.primary,
@@ -2682,10 +2682,10 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           rows: [
             createTableRow(["Métrica", "Cantidad"], true),
             createTableRow(["Pruebas de Configuración Ejecutadas", totalTests.toString()]),
-            createTableRow(["🔴 Configuraciones Críticas a Revisar", severityCounts.critical.toString()], false, 'critical'),
-            createTableRow(["🟠 Desviaciones de Alta Prioridad", severityCounts.high.toString()], false, 'high'),
-            createTableRow(["🟡 Desviaciones de Media Prioridad", severityCounts.medium.toString()], false, 'medium'),
-            createTableRow(["🔵 Sugerencias de Optimización", severityCounts.low.toString()], false, 'low'),
+            createTableRow(["Configuraciones Críticas", severityCounts.critical.toString()], false, 'critical'),
+            createTableRow(["Desviaciones de Alta Prioridad", severityCounts.high.toString()], false, 'high'),
+            createTableRow(["Desviaciones de Media Prioridad", severityCounts.medium.toString()], false, 'medium'),
+            createTableRow(["Sugerencias de Optimización", severityCounts.low.toString()], false, 'low'),
           ],
         }),
 
@@ -2728,7 +2728,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ...(criticalFindings.length > 0 ? [
           new Paragraph({
             children: [new TextRun({
-              text: "🔴 Configuraciones Críticas",
+              text: "CONFIGURACIONES CRÍTICAS",
               size: 36,
               bold: true,
               color: COLORS.critical,
@@ -2773,10 +2773,10 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   right: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
                 },
                 rows: [
-                  ...(finding.mitre_attack ? [createTableRow(["🎯 MITRE ATT&CK", finding.mitre_attack])] : []),
-                  ...(finding.cis_control ? [createTableRow(["📋 CIS Control", finding.cis_control])] : []),
-                  ...(finding.timeline ? [createTableRow(["⏱️ Timeline de Remediación", finding.timeline])] : []),
-                  ...(finding.affected_count ? [createTableRow(["📊 Objetos Afectados", finding.affected_count.toString()])] : []),
+                  ...(finding.mitre_attack ? [createTableRow(["MITRE ATT&CK", finding.mitre_attack])] : []),
+                  ...(finding.cis_control ? [createTableRow(["CIS Control", finding.cis_control])] : []),
+                  ...(finding.timeline ? [createTableRow(["Timeline de Remediación", finding.timeline])] : []),
+                  ...(finding.affected_count ? [createTableRow(["Objetos Afectados", finding.affected_count.toString()])] : []),
                 ],
               }),
               new Paragraph({ text: "", spacing: { after: 200 } }),
@@ -2789,12 +2789,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             ...createEvidenceTable(finding.evidence, COLORS.critical),
 
             ...(finding.impact_business ? [
-              createDetailTable("💼 Impacto en el Negocio", finding.impact_business, COLORS.critical),
+              createDetailTable("Impacto en el Negocio", finding.impact_business, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.current_vs_recommended ? [
-              createDetailTable("📏 Configuración Actual vs Recomendada", finding.current_vs_recommended, COLORS.critical),
+              createDetailTable("Configuración Actual vs Recomendada", finding.current_vs_recommended, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
@@ -2802,22 +2802,22 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             new Paragraph({ text: "", spacing: { after: 100 } }),
 
             ...(finding.remediation_commands ? [
-              createDetailTable("⚡ Comandos de Remediación (PowerShell)", finding.remediation_commands, COLORS.critical),
+              createDetailTable("Comandos de Remediación (PowerShell)", finding.remediation_commands, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.prerequisites ? [
-              createDetailTable("✅ Prerrequisitos", finding.prerequisites, COLORS.critical),
+              createDetailTable("Prerrequisitos", finding.prerequisites, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.operational_impact ? [
-              createDetailTable("⚙️ Impacto Operacional", finding.operational_impact, COLORS.critical),
+              createDetailTable("Impacto Operacional", finding.operational_impact, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.microsoft_docs ? [
-              createDetailTable("📚 Documentación Técnica Microsoft", finding.microsoft_docs, COLORS.critical),
+              createDetailTable("Documentación Técnica Microsoft", finding.microsoft_docs, COLORS.critical),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
@@ -2829,7 +2829,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ...(highFindings.length > 0 ? [
           new Paragraph({
             children: [new TextRun({
-              text: "🟠 Desviaciones Importantes",
+              text: "DESVIACIONES IMPORTANTES",
               size: 36,
               bold: true,
               color: COLORS.high,
@@ -2874,10 +2874,10 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   right: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
                 },
                 rows: [
-                  ...(finding.mitre_attack ? [createTableRow(["🎯 MITRE ATT&CK", finding.mitre_attack])] : []),
-                  ...(finding.cis_control ? [createTableRow(["📋 CIS Control", finding.cis_control])] : []),
-                  ...(finding.timeline ? [createTableRow(["⏱️ Timeline", finding.timeline])] : []),
-                  ...(finding.affected_count ? [createTableRow(["📊 Objetos Afectados", finding.affected_count.toString()])] : []),
+                  ...(finding.mitre_attack ? [createTableRow(["MITRE ATT&CK", finding.mitre_attack])] : []),
+                  ...(finding.cis_control ? [createTableRow(["CIS Control", finding.cis_control])] : []),
+                  ...(finding.timeline ? [createTableRow(["Timeline", finding.timeline])] : []),
+                  ...(finding.affected_count ? [createTableRow(["Objetos Afectados", finding.affected_count.toString()])] : []),
                 ],
               }),
               new Paragraph({ text: "", spacing: { after: 200 } }),
@@ -2890,12 +2890,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             ...createEvidenceTable(finding.evidence, COLORS.high),
 
             ...(finding.impact_business ? [
-              createDetailTable("💼 Impacto en el Negocio", finding.impact_business, COLORS.high),
+              createDetailTable("Impacto en el Negocio", finding.impact_business, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.current_vs_recommended ? [
-              createDetailTable("📏 Actual vs Recomendado", finding.current_vs_recommended, COLORS.high),
+              createDetailTable("Actual vs Recomendado", finding.current_vs_recommended, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
@@ -2903,22 +2903,22 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             new Paragraph({ text: "", spacing: { after: 100 } }),
 
             ...(finding.remediation_commands ? [
-              createDetailTable("⚡ Comandos PowerShell", finding.remediation_commands, COLORS.high),
+              createDetailTable("Comandos PowerShell", finding.remediation_commands, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.prerequisites ? [
-              createDetailTable("✅ Prerrequisitos", finding.prerequisites, COLORS.high),
+              createDetailTable("Prerrequisitos", finding.prerequisites, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.operational_impact ? [
-              createDetailTable("⚙️ Impacto Operacional", finding.operational_impact, COLORS.high),
+              createDetailTable("Impacto Operacional", finding.operational_impact, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.microsoft_docs ? [
-              createDetailTable("📚 Docs Microsoft", finding.microsoft_docs, COLORS.high),
+              createDetailTable("Docs Microsoft", finding.microsoft_docs, COLORS.high),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
@@ -2930,7 +2930,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ...(mediumFindings.length > 0 ? [
           new Paragraph({
             children: [new TextRun({
-              text: "🟡 Problemas de Severidad Media",
+              text: "PROBLEMAS DE SEVERIDAD MEDIA",
               size: 36,
               bold: true,
               color: COLORS.medium,
@@ -2979,10 +2979,10 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   right: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
                 },
                 rows: [
-                  ...(finding.mitre_attack ? [createTableRow(["🎯 MITRE ATT&CK", finding.mitre_attack])] : []),
-                  ...(finding.cis_control ? [createTableRow(["📋 CIS Control", finding.cis_control])] : []),
-                  ...(finding.timeline ? [createTableRow(["⏱️ Timeline", finding.timeline])] : []),
-                  ...(finding.affected_count ? [createTableRow(["📊 Afectados", finding.affected_count.toString()])] : []),
+                  ...(finding.mitre_attack ? [createTableRow(["MITRE ATT&CK", finding.mitre_attack])] : []),
+                  ...(finding.cis_control ? [createTableRow(["CIS Control", finding.cis_control])] : []),
+                  ...(finding.timeline ? [createTableRow(["Timeline", finding.timeline])] : []),
+                  ...(finding.affected_count ? [createTableRow(["Afectados", finding.affected_count.toString()])] : []),
                 ],
               }),
               new Paragraph({ text: "", spacing: { after: 150 } }),
@@ -2995,7 +2995,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             ...createEvidenceTable(finding.evidence, COLORS.medium),
 
             ...(finding.current_vs_recommended ? [
-              createDetailTable("📏 Actual vs Recomendado", finding.current_vs_recommended, COLORS.medium),
+              createDetailTable("Actual vs Recomendado", finding.current_vs_recommended, COLORS.medium),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
@@ -3003,12 +3003,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             new Paragraph({ text: "", spacing: { after: 100 } }),
 
             ...(finding.remediation_commands ? [
-              createDetailTable("⚡ Comandos PowerShell", finding.remediation_commands, COLORS.medium),
+              createDetailTable("Comandos PowerShell", finding.remediation_commands, COLORS.medium),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
             ...(finding.microsoft_docs ? [
-              createDetailTable("📚 Documentación", finding.microsoft_docs, COLORS.medium),
+              createDetailTable("Documentación", finding.microsoft_docs, COLORS.medium),
               new Paragraph({ text: "", spacing: { after: 100 } }),
             ] : []),
 
