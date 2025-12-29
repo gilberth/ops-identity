@@ -6,6 +6,27 @@ import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
 import MainLayout from "@/components/layout/MainLayout";
 
+// Helper to safely convert any value to string for rendering
+const safeString = (val: any): string => {
+    if (val === null || val === undefined) return "-";
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number') return val.toString();
+    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+    // Handle PowerShell TimeSpan objects (have TotalSeconds, TotalHours, etc.)
+    if (typeof val === 'object' && val.TotalSeconds !== undefined) {
+        return `${Math.round(val.TotalSeconds)}s`;
+    }
+    // Handle other objects - try to stringify or return placeholder
+    if (typeof val === 'object') {
+        try {
+            return JSON.stringify(val);
+        } catch {
+            return "[object]";
+        }
+    }
+    return String(val);
+};
+
 const DNSNetwork = () => {
     const [loading, setLoading] = useState(true);
     const [records, setRecords] = useState<any[]>([]);
@@ -130,15 +151,15 @@ const DNSNetwork = () => {
                                 <TableBody>
                                     {records.slice(0, 100).map((record, idx) => (
                                         <TableRow key={idx} className="border-border hover:bg-secondary/30 transition-colors">
-                                            <TableCell className="pl-6 font-medium text-foreground">{record.Name || record.name || "N/A"}</TableCell>
+                                            <TableCell className="pl-6 font-medium text-foreground">{safeString(record.Name || record.name || "N/A")}</TableCell>
                                             <TableCell>
                                                 <Badge className="font-mono bg-secondary text-muted-foreground border-border">
-                                                    {record.Type || record.type || "A"}
+                                                    {safeString(record.Type || record.type || "A")}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="font-mono text-sm max-w-xs truncate text-muted-foreground">{record.Data || record.data || record.IP || ""}</TableCell>
-                                            <TableCell className="text-muted-foreground text-sm">{record.ZoneName || record.zone || record.Zone || "-"}</TableCell>
-                                            <TableCell className="text-muted-foreground font-mono text-sm">{record.TTL || record.ttl || "-"}</TableCell>
+                                            <TableCell className="font-mono text-sm max-w-xs truncate text-muted-foreground">{safeString(record.Data || record.data || record.IP || "")}</TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">{safeString(record.ZoneName || record.zone || record.Zone || "-")}</TableCell>
+                                            <TableCell className="text-muted-foreground font-mono text-sm">{safeString(record.TTL || record.ttl || "-")}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>

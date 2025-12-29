@@ -148,7 +148,7 @@ export const Sidebar = () => {
       {/* Version */}
       <div className="relative px-4 py-3 border-t border-border">
         <div className="flex items-center justify-between text-[9px] font-mono text-muted-foreground">
-          <span>v3.0.6</span>
+          <span>v3.0.7</span>
           <span className="flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
             Connected
