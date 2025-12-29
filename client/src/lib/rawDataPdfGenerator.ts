@@ -462,7 +462,18 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     const holder = dcs.find((dc: any) => {
       const roles = dc.Roles || dc.OperationMasterRoles;
       if (Array.isArray(roles)) {
-        return roles.some(r => r.toLowerCase().includes(rolePattern.toLowerCase()));
+        return roles.some(r => {
+          // Handle case where r might be an object or non-string
+          if (typeof r === 'string') {
+            return r.toLowerCase().includes(rolePattern.toLowerCase());
+          }
+          // If r is an object, try to get a string representation
+          if (r && typeof r === 'object') {
+            const roleStr = r.Name || r.Role || r.value || String(r);
+            return typeof roleStr === 'string' && roleStr.toLowerCase().includes(rolePattern.toLowerCase());
+          }
+          return false;
+        });
       }
       return false;
     });
