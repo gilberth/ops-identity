@@ -200,7 +200,12 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
   const dcs = ensureArray(rawData.DomainControllers);
 
   // Fix: Handle nested arrays for OUs, DNS, and DHCP
-  const ous = rawData.OUs?.OUs ? ensureArray(rawData.OUs.OUs) : ensureArray(rawData.OUs);
+  // OUs can be in OUStructure.OUs or OUs.OUs or OUs directly
+  const ous = rawData.OUStructure?.OUs
+    ? ensureArray(rawData.OUStructure.OUs)
+    : rawData.OUs?.OUs
+      ? ensureArray(rawData.OUs.OUs)
+      : ensureArray(rawData.OUs);
   const dns = rawData.DNSConfiguration?.Zones ? ensureArray(rawData.DNSConfiguration.Zones) : ensureArray(rawData.DNSConfiguration || rawData.DNS);
   const dhcp = rawData.DHCPConfiguration?.Scopes ? ensureArray(rawData.DHCPConfiguration.Scopes) : ensureArray(rawData.DHCPConfiguration || rawData.DHCP);
 
@@ -284,11 +289,30 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     margin: { left: margin, right: margin },
   };
 
-  // Helper for dates
-  const formatDate = (dateString: any) => {
-    if (!dateString) return '-';
+  // Helper for dates - supports PowerShell /Date(timestamp)/ format
+  const formatDate = (dateValue: any) => {
+    if (!dateValue) return '-';
     try {
-      const d = new Date(dateString);
+      let d: Date;
+
+      // Format 1: PowerShell /Date(1234567890000)/ format
+      if (typeof dateValue === 'string' && dateValue.includes('/Date(')) {
+        const match = dateValue.match(/\/Date\((-?\d+)\)\//);
+        if (match) {
+          d = new Date(parseInt(match[1]));
+        } else {
+          return '-';
+        }
+      }
+      // Format 2: Unix timestamp (number)
+      else if (typeof dateValue === 'number') {
+        d = new Date(dateValue > 1e12 ? dateValue : dateValue * 1000);
+      }
+      // Format 3: ISO string or other parseable format
+      else {
+        d = new Date(dateValue);
+      }
+
       if (isNaN(d.getTime())) return '-';
       return d.toLocaleDateString('es-ES');
     } catch { return '-'; }
@@ -372,10 +396,10 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
 
   autoTable(doc, {
     startY: 40,
-    head: [['Nombre', 'IPv4', 'OS', 'Versión', 'Estado', 'Último Logon']],
+    head: [['Nombre', 'IPv4 / DNS', 'OS', 'Versión', 'Estado', 'Último Logon']],
     body: computers.slice(0, 500).map((c: any) => [
       c.Name || 'N/A',
-      c.IPv4Address || '-',
+      c.IPv4Address || c.DNSHostName || '-',
       c.OperatingSystem || '-',
       c.OperatingSystemVersion || '-',
       c.Enabled !== false ? 'Activo' : 'Inactivo',
@@ -429,15 +453,38 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
   doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
   doc.text('6. Controladores de Dominio', margin, 30);
 
+  // Helper to get DC roles from FSMORolesHealth
+  const getDCRoles = (dcHostName: string): string => {
+    const fsmoRoles = rawData.FSMORolesHealth?.Roles;
+    if (!Array.isArray(fsmoRoles)) return '-';
+
+    const roles = fsmoRoles
+      .filter((r: any) => r.Holder?.toLowerCase().includes(dcHostName?.toLowerCase()?.split('.')[0]))
+      .map((r: any) => r.RoleName)
+      .filter(Boolean);
+
+    return roles.length > 0 ? roles.join(', ') : '-';
+  };
+
   autoTable(doc, {
     startY: 40,
-    head: [['Hostname', 'IP Address', 'OS', 'Roles']],
-    body: dcs.map((dc: any) => [
-      dc.HostName || dc.Name || 'N/A',
-      dc.IPv4Address || dc.IPAddress || '-',
-      dc.OperatingSystem || '-',
-      (dc.Roles || []).join(', ') || '-'
-    ]),
+    head: [['Hostname', 'IP Address', 'OS', 'Site', 'GC', 'Roles FSMO']],
+    body: dcs.map((dc: any) => {
+      const hostname = dc.HostName || dc.Name || 'N/A';
+      // Try to get roles from FSMORolesHealth first, then from DC itself
+      let roles = getDCRoles(hostname);
+      if (roles === '-' && Array.isArray(dc.Roles) && dc.Roles.length > 0) {
+        roles = dc.Roles.map((r: any) => typeof r === 'string' ? r : r.RoleName || r.Name || '').filter(Boolean).join(', ') || '-';
+      }
+      return [
+        hostname,
+        dc.IPv4Address || dc.IPAddress || '-',
+        dc.OperatingSystem || '-',
+        dc.Site || '-',
+        dc.IsGlobalCatalog ? 'Sí' : 'No',
+        roles
+      ];
+    }),
     ...tableTheme,
     didDrawPage: (data) => {
       currentPage = doc.getNumberOfPages();
@@ -456,21 +503,31 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
 
   const domainInfo = rawData.DomainInfo || {};
 
-  // Extract FSMO Roles from Domain Controllers list if not in DomainInfo
-  const findRoleHolder = (rolePattern: string) => {
+  // Extract FSMO Roles from FSMORolesHealth (primary) or Domain Controllers list (fallback)
+  const findRoleHolder = (roleName: string): string => {
+    // Primary: Check FSMORolesHealth.Roles array
+    const fsmoRoles = rawData.FSMORolesHealth?.Roles;
+    if (Array.isArray(fsmoRoles)) {
+      const role = fsmoRoles.find((r: any) =>
+        r.RoleName?.toLowerCase() === roleName.toLowerCase()
+      );
+      if (role?.Holder) {
+        return role.Holder;
+      }
+    }
+
+    // Fallback: Check Domain Controllers list
     if (!dcs || !Array.isArray(dcs)) return 'N/A';
     const holder = dcs.find((dc: any) => {
       const roles = dc.Roles || dc.OperationMasterRoles;
       if (Array.isArray(roles)) {
-        return roles.some(r => {
-          // Handle case where r might be an object or non-string
+        return roles.some((r: any) => {
           if (typeof r === 'string') {
-            return r.toLowerCase().includes(rolePattern.toLowerCase());
+            return r.toLowerCase().includes(roleName.toLowerCase());
           }
-          // If r is an object, try to get a string representation
           if (r && typeof r === 'object') {
-            const roleStr = r.Name || r.Role || r.value || String(r);
-            return typeof roleStr === 'string' && roleStr.toLowerCase().includes(rolePattern.toLowerCase());
+            const roleStr = r.Name || r.RoleName || r.Role || String(r);
+            return typeof roleStr === 'string' && roleStr.toLowerCase().includes(roleName.toLowerCase());
           }
           return false;
         });
@@ -480,20 +537,28 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     return holder ? (holder.HostName || holder.Name) : 'N/A';
   };
 
-  const pdc = domainInfo.PDCEmulator || findRoleHolder('PDC') || findRoleHolder('Primary');
-  const rid = domainInfo.RIDMaster || findRoleHolder('RID');
-  const infra = domainInfo.InfrastructureMaster || findRoleHolder('Infrastructure');
+  const pdc = domainInfo.PDCEmulator || findRoleHolder('PDCEmulator');
+  const rid = domainInfo.RIDMaster || findRoleHolder('RIDMaster');
+  const infra = domainInfo.InfrastructureMaster || findRoleHolder('InfrastructureMaster');
+
+  // Get Schema and Domain Naming Master as well
+  const schemaMaster = findRoleHolder('SchemaMaster');
+  const domainNaming = findRoleHolder('DomainNamingMaster');
 
   autoTable(doc, {
     startY: 40,
     body: [
-      ['Nombre DNS', domainInfo.DomainName || domainInfo.DomainDNS || 'N/A'],
-      ['Nivel Funcional', domainInfo.DomainMode || domainInfo.DomainFunctionalLevel || 'N/A'],
-      ['Distinguished Name', domainInfo.DistinguishedName || 'N/A'],
+      ['Nombre DNS', domainInfo.DomainName || domainInfo.DomainDNS || domain || 'N/A'],
+      ['Nivel Funcional Dominio', domainInfo.DomainMode || domainInfo.DomainFunctionalLevel || 'N/A'],
+      ['Nivel Funcional Forest', domainInfo.ForestFunctionalLevel || 'N/A'],
+      ['Forest', domainInfo.ForestName || 'N/A'],
       ['NetBIOS', domainInfo.NetBIOSName || domainInfo.DomainNetBIOS || 'N/A'],
+      ['Schema Version', domainInfo.SchemaVersion || 'N/A'],
       ['PDC Emulator', pdc],
       ['RID Master', rid],
-      ['Infrastructure Master', infra]
+      ['Infrastructure Master', infra],
+      ['Schema Master', schemaMaster],
+      ['Domain Naming Master', domainNaming]
     ],
     theme: 'striped',
     styles: { fontSize: 10, cellPadding: 4 },

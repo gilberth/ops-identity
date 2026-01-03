@@ -4303,7 +4303,7 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
                                         placeholder="e.g. contoso.local"
                                         value={domain}
                                         onChange={(e) => setDomain(e.target.value)}
-                                        className="h-12 rounded-xl text-lg border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-primary/20 transition-all"
+                                        className="h-12 rounded-xl text-lg border-gray-200 bg-white text-gray-900 placeholder:text-gray-400 focus:bg-white focus:ring-primary/20 transition-all"
                                     />
                                 </div>
 
