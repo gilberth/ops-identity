@@ -7,7 +7,6 @@ import { api } from "@/utils/api";
 import { Link } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { useClient } from "@/context/ClientContext";
-import MainLayout from "@/components/layout/MainLayout";
 
 const Reports = () => {
     const [loading, setLoading] = useState(true);
@@ -38,7 +37,7 @@ const Reports = () => {
     const latestReport = assessments.length > 0 ? assessments[0] : null;
 
     return (
-        <MainLayout>
+        <>
             <div className="p-6 space-y-6">
                 {/* Header */}
                 <div className="flex items-center justify-between">
@@ -158,7 +157,7 @@ const Reports = () => {
                     </div>
                 </div>
             </div>
-        </MainLayout>
+        </>
     );
 };
 

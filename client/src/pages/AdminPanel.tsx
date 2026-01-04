@@ -6,7 +6,6 @@ import { Link } from "react-router-dom";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
 import AIConfigPanel from "@/components/admin/AIConfigPanel";
-import MainLayout from "@/components/layout/MainLayout";
 import {
   Table,
   TableBody,
@@ -180,7 +179,7 @@ const AdminPanel = () => {
   };
 
   return (
-    <MainLayout>
+    <>
       <div className="p-6 space-y-6">
         {/* Header */}
         <div>
@@ -348,7 +347,7 @@ const AdminPanel = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </MainLayout>
+    </>
   );
 };
 

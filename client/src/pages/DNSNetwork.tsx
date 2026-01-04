@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Network, Server, Globe, Loader2 } from "lucide-react";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
-import MainLayout from "@/components/layout/MainLayout";
 
 // Helper to safely convert any value to string for rendering
 const safeString = (val: any): string => {
@@ -73,7 +72,7 @@ const DNSNetwork = () => {
     const healthScore = totalRecords > 0 ? 98 : 0;
 
     return (
-        <MainLayout>
+        <>
             <div className="p-6 space-y-6">
                 {/* Header */}
                 <div>
@@ -168,7 +167,7 @@ const DNSNetwork = () => {
                     </div>
                 </div>
             </div>
-        </MainLayout>
+        </>
     );
 };
 

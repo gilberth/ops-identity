@@ -6,7 +6,6 @@ import { Search, Filter, Download, Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
-import MainLayout from "@/components/layout/MainLayout";
 
 const Users = () => {
     const [loading, setLoading] = useState(true);
@@ -49,7 +48,7 @@ const Users = () => {
     );
 
     return (
-        <MainLayout>
+        <>
             <div className="p-6 space-y-6">
                 {/* Header */}
                 <div className="flex items-center justify-between">
@@ -134,7 +133,7 @@ const Users = () => {
                     </div>
                 </div>
             </div>
-        </MainLayout>
+        </>
     );
 };
 

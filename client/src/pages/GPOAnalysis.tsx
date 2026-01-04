@@ -5,7 +5,6 @@ import { useState, useEffect } from "react";
 import { Search, FileText, AlertTriangle, LinkIcon, CheckCircle, Loader2 } from "lucide-react";
 import { api } from "@/utils/api";
 import { toast } from "@/hooks/use-toast";
-import MainLayout from "@/components/layout/MainLayout";
 
 const GPOAnalysis = () => {
     const [loading, setLoading] = useState(true);
@@ -58,7 +57,7 @@ const GPOAnalysis = () => {
     }).length;
 
     return (
-        <MainLayout>
+        <>
             <div className="p-6 space-y-6">
                 {/* Header */}
                 <div>
@@ -180,7 +179,7 @@ const GPOAnalysis = () => {
                     </div>
                 </div>
             </div>
-        </MainLayout>
+        </>
     );
 };
 
