@@ -358,6 +358,118 @@ const AssessmentDetail = () => {
     { key: 'MemberCount', header: 'Miembros' }, { key: 'Description', header: 'Descripción' },
   ]);
 
+  // ============ RISK-SPECIFIC EXPORTS ============
+
+  // Helper: Parse date and check if older than X days
+  const isOlderThanDays = (dateValue: any, days: number): boolean => {
+    if (!dateValue) return true; // null = never logged in = inactive
+    try {
+      let d: Date;
+      if (typeof dateValue === 'string' && dateValue.includes('/Date(')) {
+        const match = dateValue.match(/\/Date\((-?\d+)\)\//);
+        if (match) d = new Date(parseInt(match[1]));
+        else return true;
+      } else {
+        d = new Date(dateValue);
+      }
+      if (isNaN(d.getTime())) return true;
+      const diffDays = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24);
+      return diffDays > days;
+    } catch { return true; }
+  };
+
+  // 1. Usuarios inactivos habilitados (>90 días)
+  const handleExportInactiveUsers = () => {
+    const users = (rawData?.Users || []).filter((u: any) =>
+      u.Enabled === true && isOlderThanDays(u.LastLogonDate, 90)
+    );
+    exportToCSV(users, `RIESGO-usuarios-inactivos-90dias-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+      { key: 'SamAccountName', header: 'Usuario' }, { key: 'DisplayName', header: 'Nombre' },
+      { key: 'EmailAddress', header: 'Email' }, { key: 'LastLogonDate', header: 'Último Logon' },
+      { key: 'PasswordLastSet', header: 'Password Establecido' }, { key: 'Department', header: 'Departamento' },
+      { key: 'DistinguishedName', header: 'OU' },
+    ]);
+  };
+
+  // 2. Usuarios con Password Never Expires
+  const handleExportPasswordNeverExpires = () => {
+    const users = (rawData?.Users || []).filter((u: any) =>
+      u.PasswordNeverExpires === true && u.Enabled === true
+    );
+    exportToCSV(users, `RIESGO-password-never-expires-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+      { key: 'SamAccountName', header: 'Usuario' }, { key: 'DisplayName', header: 'Nombre' },
+      { key: 'EmailAddress', header: 'Email' }, { key: 'PasswordLastSet', header: 'Password Establecido' },
+      { key: 'LastLogonDate', header: 'Último Logon' }, { key: 'Department', header: 'Departamento' },
+      { key: 'DistinguishedName', header: 'OU' },
+    ]);
+  };
+
+  // 3. Usuarios con PASSWD_NOTREQD (password no requerido)
+  const handleExportPasswordNotRequired = () => {
+    const users = (rawData?.Users || []).filter((u: any) => {
+      // Check UserAccountControl flag or specific field
+      const uac = u.UserAccountControl || 0;
+      const hasFlag = (uac & 0x0020) !== 0; // PASSWD_NOTREQD = 0x0020 = 32
+      return hasFlag || u.PasswordNotRequired === true;
+    });
+    exportToCSV(users, `RIESGO-password-not-required-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+      { key: 'SamAccountName', header: 'Usuario' }, { key: 'DisplayName', header: 'Nombre' },
+      { key: 'Enabled', header: 'Habilitado' }, { key: 'UserAccountControl', header: 'UAC' },
+      { key: 'LastLogonDate', header: 'Último Logon' }, { key: 'DistinguishedName', header: 'OU' },
+    ]);
+  };
+
+  // 4. Equipos inactivos (>90 días)
+  const handleExportInactiveComputers = () => {
+    const computers = (rawData?.Computers || []).filter((c: any) =>
+      c.Enabled === true && isOlderThanDays(c.LastLogonDate, 90)
+    );
+    exportToCSV(computers, `RIESGO-equipos-inactivos-90dias-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+      { key: 'Name', header: 'Nombre' }, { key: 'DNSHostName', header: 'DNS Hostname' },
+      { key: 'IPv4Address', header: 'IPv4' }, { key: 'OperatingSystem', header: 'Sistema Operativo' },
+      { key: 'LastLogonDate', header: 'Último Logon' }, { key: 'Description', header: 'Descripción' },
+      { key: 'DistinguishedName', header: 'OU' },
+    ]);
+  };
+
+  // 5. Equipos con OS Legacy (Windows Server 2012/2012 R2, Windows 7, etc.)
+  const handleExportLegacyOS = () => {
+    const legacyPatterns = [
+      /windows server 2012/i, /windows server 2008/i, /windows server 2003/i,
+      /windows 7/i, /windows xp/i, /windows vista/i
+    ];
+    const computers = (rawData?.Computers || []).filter((c: any) => {
+      const os = c.OperatingSystem || '';
+      return legacyPatterns.some(pattern => pattern.test(os));
+    });
+    exportToCSV(computers, `RIESGO-equipos-legacy-OS-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+      { key: 'Name', header: 'Nombre' }, { key: 'DNSHostName', header: 'DNS Hostname' },
+      { key: 'IPv4Address', header: 'IPv4' }, { key: 'OperatingSystem', header: 'Sistema Operativo' },
+      { key: 'OperatingSystemVersion', header: 'Versión' }, { key: 'LastLogonDate', header: 'Último Logon' },
+      { key: 'Description', header: 'Descripción' }, { key: 'DistinguishedName', header: 'OU' },
+    ]);
+  };
+
+  // Get risk counts for display
+  const getRiskCounts = () => {
+    const users = rawData?.Users || [];
+    const computers = rawData?.Computers || [];
+
+    const inactiveUsers = users.filter((u: any) => u.Enabled === true && isOlderThanDays(u.LastLogonDate, 90)).length;
+    const pwdNeverExpires = users.filter((u: any) => u.PasswordNeverExpires === true && u.Enabled === true).length;
+    const pwdNotRequired = users.filter((u: any) => {
+      const uac = u.UserAccountControl || 0;
+      return (uac & 0x0020) !== 0 || u.PasswordNotRequired === true;
+    }).length;
+    const inactiveComputers = computers.filter((c: any) => c.Enabled === true && isOlderThanDays(c.LastLogonDate, 90)).length;
+    const legacyOS = computers.filter((c: any) => {
+      const os = c.OperatingSystem || '';
+      return /windows server 2012|windows server 2008|windows 7|windows xp/i.test(os);
+    }).length;
+
+    return { inactiveUsers, pwdNeverExpires, pwdNotRequired, inactiveComputers, legacyOS };
+  };
+
   const handleDownloadRawData = async () => {
     if (!rawData) {
       toast({
@@ -718,6 +830,57 @@ const AssessmentDetail = () => {
                     </div>
                     <p className="text-xs text-green-700 dark:text-green-300 mt-2">
                       📊 {rawData?.Users?.length?.toLocaleString() || 0} usuarios • {rawData?.Computers?.length?.toLocaleString() || 0} equipos • {rawData?.Groups?.length?.toLocaleString() || 0} grupos
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Risk-Specific Exports - Hallazgos de Riesgo */}
+          {rawData && assessment.status === 'completed' && (
+            <Card className="mb-6 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800">
+              <CardContent className="pt-6">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0">
+                    <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-semibold mb-1 text-red-900 dark:text-red-100">
+                      ⚠️ Exportar Hallazgos de Riesgo (Detalle)
+                    </h3>
+                    <p className="text-sm text-red-800 dark:text-red-200 mb-3">
+                      Descarga el listado completo de cada hallazgo de seguridad para entregar al cliente.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <Button onClick={handleExportInactiveUsers} variant="outline" size="sm"
+                        className="border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900 justify-start text-left">
+                        <Users className="h-4 w-4 mr-2 shrink-0" />
+                        <span className="truncate">Usuarios Inactivos &gt;90d ({getRiskCounts().inactiveUsers.toLocaleString()})</span>
+                      </Button>
+                      <Button onClick={handleExportPasswordNeverExpires} variant="outline" size="sm"
+                        className="border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900 justify-start text-left">
+                        <Shield className="h-4 w-4 mr-2 shrink-0" />
+                        <span className="truncate">Password No Expira ({getRiskCounts().pwdNeverExpires.toLocaleString()})</span>
+                      </Button>
+                      <Button onClick={handleExportPasswordNotRequired} variant="outline" size="sm"
+                        className="border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900 justify-start text-left">
+                        <AlertTriangle className="h-4 w-4 mr-2 shrink-0" />
+                        <span className="truncate">PASSWD_NOTREQD ({getRiskCounts().pwdNotRequired.toLocaleString()})</span>
+                      </Button>
+                      <Button onClick={handleExportInactiveComputers} variant="outline" size="sm"
+                        className="border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900 justify-start text-left">
+                        <Terminal className="h-4 w-4 mr-2 shrink-0" />
+                        <span className="truncate">Equipos Inactivos &gt;90d ({getRiskCounts().inactiveComputers.toLocaleString()})</span>
+                      </Button>
+                      <Button onClick={handleExportLegacyOS} variant="outline" size="sm"
+                        className="border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900 justify-start text-left">
+                        <AlertTriangle className="h-4 w-4 mr-2 shrink-0" />
+                        <span className="truncate">OS Legacy/Sin Soporte ({getRiskCounts().legacyOS.toLocaleString()})</span>
+                      </Button>
+                    </div>
+                    <p className="text-xs text-red-700 dark:text-red-300 mt-3">
+                      💡 Cada archivo CSV contiene el detalle completo (nombre, OU, último logon, etc.) listo para entregar al cliente.
                     </p>
                   </div>
                 </div>
