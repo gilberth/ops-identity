@@ -294,6 +294,70 @@ const AssessmentDetail = () => {
     }
   };
 
+  // Download JSON Raw formateado (archivo completo)
+  const handleDownloadJsonRaw = () => {
+    if (!rawData) {
+      toast({ title: "Error", description: "No hay datos raw disponibles", variant: "destructive" });
+      return;
+    }
+    const jsonString = JSON.stringify(rawData, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `raw-data-${assessment?.domain || 'domain'}-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    toast({ title: "JSON descargado", description: "Archivo JSON raw descargado correctamente" });
+  };
+
+  // Export CSV helper
+  const exportToCSV = (data: any[], filename: string, columns: { key: string; header: string }[]) => {
+    if (!data?.length) {
+      toast({ title: "Sin datos", description: "No hay datos para exportar", variant: "destructive" });
+      return;
+    }
+    const headers = columns.map(c => `"${c.header}"`).join(',');
+    const rows = data.map(item => columns.map(col => {
+      let value = item[col.key];
+      if (Array.isArray(value)) value = value.length;
+      if (typeof value === 'object' && value !== null) value = JSON.stringify(value);
+      return `"${String(value ?? '').replace(/"/g, '""')}"`;
+    }).join(','));
+    const csv = [headers, ...rows].join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    toast({ title: "CSV exportado", description: `${data.length} registros exportados` });
+  };
+
+  const handleExportUsersCSV = () => exportToCSV(rawData?.Users || [], `users-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+    { key: 'SamAccountName', header: 'Usuario' }, { key: 'DisplayName', header: 'Nombre' },
+    { key: 'EmailAddress', header: 'Email' }, { key: 'Enabled', header: 'Habilitado' },
+    { key: 'LastLogonDate', header: 'Último Logon' }, { key: 'PasswordLastSet', header: 'Password Establecido' },
+    { key: 'PasswordNeverExpires', header: 'Password No Expira' }, { key: 'Department', header: 'Departamento' },
+  ]);
+
+  const handleExportComputersCSV = () => exportToCSV(rawData?.Computers || [], `computers-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+    { key: 'Name', header: 'Nombre' }, { key: 'DNSHostName', header: 'DNS Hostname' },
+    { key: 'IPv4Address', header: 'IPv4' }, { key: 'OperatingSystem', header: 'Sistema Operativo' },
+    { key: 'Enabled', header: 'Habilitado' }, { key: 'LastLogonDate', header: 'Último Logon' },
+  ]);
+
+  const handleExportGroupsCSV = () => exportToCSV(rawData?.Groups || [], `groups-${assessment?.domain}-${new Date().toISOString().split('T')[0]}.csv`, [
+    { key: 'Name', header: 'Nombre' }, { key: 'SamAccountName', header: 'SamAccountName' },
+    { key: 'GroupCategory', header: 'Categoría' }, { key: 'GroupScope', header: 'Alcance' },
+    { key: 'MemberCount', header: 'Miembros' }, { key: 'Description', header: 'Descripción' },
+  ]);
+
   const handleDownloadRawData = async () => {
     if (!rawData) {
       toast({
@@ -620,22 +684,41 @@ const AssessmentDetail = () => {
                   </div>
                   <div className="flex-1">
                     <h3 className="font-semibold mb-1 text-green-900 dark:text-green-100">
-                      📎 Anexo Técnico Disponible
+                      📎 Datos Disponibles para Exportar
                     </h3>
                     <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                      Los datos raw están listos para descargar como anexo técnico formateado en PDF.
-                      Este documento contiene tablas detalladas con toda la información extraída del Active Directory.
+                      Exporta los datos del assessment en diferentes formatos. Para datasets grandes (353k+ usuarios), usa CSV.
                     </p>
-                    <Button
-                      onClick={handleDownloadRawData}
-                      variant="outline"
-                      disabled={downloading}
-                      size="sm"
-                      className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900"
-                    >
-                      <Download className="h-4 w-4 mr-2" />
-                      {downloading ? 'Generando...' : 'Descargar Anexo Técnico (PDF)'}
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={handleDownloadRawData} variant="outline" disabled={downloading} size="sm"
+                        className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900">
+                        <FileText className="h-4 w-4 mr-2" />
+                        {downloading ? 'Generando...' : 'Anexo PDF'}
+                      </Button>
+                      <Button onClick={handleDownloadJsonRaw} variant="outline" size="sm"
+                        className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900">
+                        <Download className="h-4 w-4 mr-2" />
+                        JSON Completo
+                      </Button>
+                      <Button onClick={handleExportUsersCSV} variant="outline" size="sm"
+                        className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900">
+                        <Users className="h-4 w-4 mr-2" />
+                        Usuarios CSV
+                      </Button>
+                      <Button onClick={handleExportComputersCSV} variant="outline" size="sm"
+                        className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900">
+                        <Terminal className="h-4 w-4 mr-2" />
+                        Equipos CSV
+                      </Button>
+                      <Button onClick={handleExportGroupsCSV} variant="outline" size="sm"
+                        className="border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900">
+                        <Shield className="h-4 w-4 mr-2" />
+                        Grupos CSV
+                      </Button>
+                    </div>
+                    <p className="text-xs text-green-700 dark:text-green-300 mt-2">
+                      📊 {rawData?.Users?.length?.toLocaleString() || 0} usuarios • {rawData?.Computers?.length?.toLocaleString() || 0} equipos • {rawData?.Groups?.length?.toLocaleString() || 0} grupos
+                    </p>
                   </div>
                 </div>
               </CardContent>
