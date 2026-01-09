@@ -1625,20 +1625,16 @@ Antes de generar cada finding, VERIFICA en los datos:
 5. **LastReplicationSuccess**: Timestamp real, calcula tiempo transcurrido
 
 EJEMPLO DE ANÁLISIS CORRECTO:
-```
-Datos: [{Server:"dc1.domain.com", Partner:"CN=NTDS Settings,CN=DC2...", LastReplicationResult:0, ConsecutiveReplicationFailures:0}]
-→ Parejas encontradas: 1
-→ Servidores: dc1.domain.com ↔ DC2
-→ Estado: LastReplicationResult=0 (éxito)
-→ Finding válido: "REPLICATION_HEALTHY - 1 pareja analizada con estado óptimo"
-```
+  Datos: [{Server:"dc1.domain.com", Partner:"CN=NTDS Settings,CN=DC2...", LastReplicationResult:0}]
+  → Parejas encontradas: 1
+  → Servidores: dc1.domain.com ↔ DC2
+  → Estado: LastReplicationResult=0 (éxito)
+  → Finding válido: "REPLICATION_HEALTHY - 1 pareja analizada con estado óptimo"
 
 EJEMPLO DE ANÁLISIS INCORRECTO (NO HACER):
-```
-→ "Varios DCs con problemas de replicación" (sin especificar cuáles ni contarlos)
-→ "La replicación podría mejorar" (sin evidencia numérica)
-→ "Aproximadamente 5 partners desbalanceados" (número inventado)
-```
+  → "Varios DCs con problemas de replicación" (sin especificar cuáles ni contarlos)
+  → "La replicación podría mejorar" (sin evidencia numérica)
+  → "Aproximadamente 5 partners desbalanceados" (número inventado)
 
 **PARA CADA HALLAZGO, PROPORCIONA:**
 - **type_id**: REPLICATION_LINGERING_OBJECTS, REPLICATION_FAILURE_CRITICAL, REPLICATION_HEALTHY, etc.
@@ -2544,19 +2540,15 @@ Antes de generar cada finding de higiene, VERIFICA en los datos:
 6. **Máscaras de red**: Extrae de Subnets[].Name (ej: /24, /27, /30)
 
 EJEMPLO DE ANÁLISIS CORRECTO:
-```
-Datos: Sites=[{Name:"SURCO"}, {Name:"NORTE"}], Subnets=[{Name:"10.0.0.0/24", Site:"CN=SURCO,..."}]
-→ Sites encontrados: 2 (SURCO, NORTE)
-→ Subnets encontrados: 1
-→ Ratio: 0.5 subnets/site
-→ Finding válido: "Ratio bajo de subredes por site (0.5)"
-```
+  Datos: Sites=[{Name:"SURCO"}, {Name:"NORTE"}], Subnets=[{Name:"10.0.0.0/24", Site:"CN=SURCO,..."}]
+  → Sites encontrados: 2 (SURCO, NORTE)
+  → Subnets encontrados: 1
+  → Ratio: 0.5 subnets/site
+  → Finding válido: "Ratio bajo de subredes por site (0.5)"
 
 EJEMPLO DE ANÁLISIS INCORRECTO (NO HACER):
-```
-→ "Aproximadamente 10 sites sin descripción" (no verificaste el campo Description)
-→ "Posible fragmentación" (sin contar subredes pequeñas reales)
-```
+  → "Aproximadamente 10 sites sin descripción" (no verificaste el campo Description)
+  → "Posible fragmentación" (sin contar subredes pequeñas reales)
 
 **FORMATO DE REPORTE:**
 - **type_id**: Identificador ÚNICO (ej: SUBNET_NO_SITE, SITE_NO_SUBNET, SITE_FRAGMENTED, SITE_NAMING_CONVENTION).
