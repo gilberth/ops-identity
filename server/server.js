@@ -1615,6 +1615,31 @@ Los datos vienen como array ReplicationStatus con propiedades:
   - Genera finding INFO: "REPLICATION_HEALTHY" indicando buenas prácticas observadas
   - Incluye estadísticas: "N parejas de replicación analizadas, todas con estado óptimo"
 
+**🛡️ VALIDACIÓN ANTI-ALUCINACIÓN PARA ESTE ANÁLISIS:**
+
+Antes de generar cada finding, VERIFICA en los datos:
+1. **Contar parejas**: len(ReplicationStatus[]) - usa este número EXACTO
+2. **Servidores únicos**: Extrae de Server y Partner - lista los nombres REALES
+3. **LastReplicationResult**: Valor numérico real (0=éxito, otro=error)
+4. **ConsecutiveReplicationFailures**: Valor numérico real
+5. **LastReplicationSuccess**: Timestamp real, calcula tiempo transcurrido
+
+EJEMPLO DE ANÁLISIS CORRECTO:
+```
+Datos: [{Server:"dc1.domain.com", Partner:"CN=NTDS Settings,CN=DC2...", LastReplicationResult:0, ConsecutiveReplicationFailures:0}]
+→ Parejas encontradas: 1
+→ Servidores: dc1.domain.com ↔ DC2
+→ Estado: LastReplicationResult=0 (éxito)
+→ Finding válido: "REPLICATION_HEALTHY - 1 pareja analizada con estado óptimo"
+```
+
+EJEMPLO DE ANÁLISIS INCORRECTO (NO HACER):
+```
+→ "Varios DCs con problemas de replicación" (sin especificar cuáles ni contarlos)
+→ "La replicación podría mejorar" (sin evidencia numérica)
+→ "Aproximadamente 5 partners desbalanceados" (número inventado)
+```
+
 **PARA CADA HALLAZGO, PROPORCIONA:**
 - **type_id**: REPLICATION_LINGERING_OBJECTS, REPLICATION_FAILURE_CRITICAL, REPLICATION_HEALTHY, etc.
 - **Título**: Descriptivo del problema o estado de higiene
@@ -2508,6 +2533,31 @@ Para detectar problemas, debes correlacionar estos arrays:
 - Si la configuración está PERFECTA, genera un finding tipo INFO: "SITE_TOPOLOGY_HEALTHY" indicando buenas prácticas observadas
 - Incluye estadísticas: "Análisis de N sitios y M subredes"
 
+**🛡️ VALIDACIÓN ANTI-ALUCINACIÓN PARA ESTE ANÁLISIS:**
+
+Antes de generar cada finding de higiene, VERIFICA en los datos:
+1. **Contar Sites**: len(Sites[]) - usa este número EXACTO
+2. **Contar Subnets**: len(Subnets[]) - usa este número EXACTO
+3. **Campo Description**: ¿Existe en los objetos? Si no existe, NO digas "sin descripción"
+4. **Campo Location**: ¿Existe en los objetos? Si no existe, NO lo menciones
+5. **Nombres de Sites**: Lista los nombres REALES que aparecen en Sites[].Name
+6. **Máscaras de red**: Extrae de Subnets[].Name (ej: /24, /27, /30)
+
+EJEMPLO DE ANÁLISIS CORRECTO:
+```
+Datos: Sites=[{Name:"SURCO"}, {Name:"NORTE"}], Subnets=[{Name:"10.0.0.0/24", Site:"CN=SURCO,..."}]
+→ Sites encontrados: 2 (SURCO, NORTE)
+→ Subnets encontrados: 1
+→ Ratio: 0.5 subnets/site
+→ Finding válido: "Ratio bajo de subredes por site (0.5)"
+```
+
+EJEMPLO DE ANÁLISIS INCORRECTO (NO HACER):
+```
+→ "Aproximadamente 10 sites sin descripción" (no verificaste el campo Description)
+→ "Posible fragmentación" (sin contar subredes pequeñas reales)
+```
+
 **FORMATO DE REPORTE:**
 - **type_id**: Identificador ÚNICO (ej: SUBNET_NO_SITE, SITE_NO_SUBNET, SITE_FRAGMENTED, SITE_NAMING_CONVENTION).
 - **Título**: Descriptivo del hallazgo o recomendación de higiene
@@ -2558,10 +2608,27 @@ ${str(d, 4000)}
 **INSTRUCCIONES CRÍTICAS PARA TU RESPUESTA:**
 
 **🚨 REGLA FUNDAMENTAL - CERO FALSOS POSITIVOS:**
-- **NO** generes un finding SI NO HAY EVIDENCIA CONCRETA del problema
+
+**TIPO 1: FINDINGS DE ERROR/VULNERABILIDAD (severity: critical, high, medium)**
+- **NO** generes un finding de error SI NO HAY EVIDENCIA CONCRETA del problema
 - **NO** reportes algo como crítico si los datos dicen "no se observa" o "0 elementos"
 - **NO** inventes problemas basándote en ausencia de datos
-- Solo genera findings cuando los datos DEMUESTREN un problema real y verificable
+- Solo genera findings de ERROR cuando los datos DEMUESTREN un problema real y verificable
+
+**TIPO 2: FINDINGS DE HIGIENE (severity: low o info, type_id con prefijo HYGIENE_ o sufijo _HEALTHY)**
+- PUEDES generar findings de higiene SOLO si el prompt lo solicita explícitamente (Sección 2: Higiene)
+- Los findings de higiene deben basarse en ANÁLISIS OBJETIVO de los datos existentes
+- Ejemplo válido: "12 sitios analizados, 487 subredes - ratio de 40.6 subredes/site"
+- Ejemplo válido: "100% de subredes sin descripción documentada"
+- **NO** inventes datos que no existen (no puedes decir "5 sitios sin descripción" si no hay campo Description en los datos)
+- **NO** asumas valores por defecto - si un campo no existe, di "campo no disponible en los datos"
+
+**REGLA ANTI-ALUCINACIÓN PARA HIGIENE:**
+✅ CORRECTO: Contar elementos reales → "De 487 subredes, 487 tienen Description=null"
+✅ CORRECTO: Calcular ratios con datos reales → "Ratio: 487 subnets / 12 sites = 40.6"
+✅ CORRECTO: Evaluar patrones observables → "Nombres de sites: SURCO, NORTE, LIMA (sin prefijo país)"
+❌ INCORRECTO: Inventar conteos → "Aproximadamente 50% de subredes tienen problemas"
+❌ INCORRECTO: Asumir datos ausentes → "No hay SiteLinks configurados" (si el campo no existe en los datos)
 
 **VALIDACIÓN DE EVIDENCIA OBLIGATORIA:**
 Antes de generar cada finding, verifica:
@@ -2569,10 +2636,14 @@ Antes de generar cada finding, verifica:
 ✅ ¿Los nombres/valores de affected_objects son específicos y verificables?
 ✅ ¿La evidencia muestra claramente el problema?
 ✅ ¿Los comandos PowerShell son relevantes al problema específico identificado?
+✅ Para HIGIENE: ¿El análisis usa SOLO datos presentes en <assessment_data>?
 
 **EJEMPLO DE LÓGICA CORRECTA:**
 ❌ MAL: "No se observan cpasswords" → Generar finding CRITICAL
 ✅ BIEN: "No se observan cpasswords" → NO generar finding (no hay problema)
+
+❌ MAL (Higiene): "Las subredes no tienen descripción" (si no hay campo Description)
+✅ BIEN (Higiene): "De 487 subredes, el campo Description es null en todas" (verificable)
 
 ❌ MAL: Incluir comando \`Get-WMIObject\` en finding de GPO
 ✅ BIEN: Solo comandos relacionados directamente con GPO (\`Get-GPO\`, \`Get-GPOReport\`)

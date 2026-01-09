@@ -40,3 +40,4 @@ dist-ssr
 vps-deploy/.env
 .env
 
+AD-Assessment-*.json
