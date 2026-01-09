@@ -906,103 +906,242 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ] : []),
 
         // SALUD DE REPLICACIÓN
-        ...(rawData?.ReplicationHealthAllDCs && rawData.ReplicationHealthAllDCs.length > 0 ? [
-          new Paragraph({
-            text: "Salud de Replicación Active Directory",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: "Análisis del estado de replicación entre controladores de dominio. Se muestran posibles fallos y latencias excesivas.",
-            spacing: { after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["DC Origen", "Socio (Partner)", "Estado", "Fallas Consec."], true),
-              ...rawData.ReplicationHealthAllDCs.flatMap((dc: any) =>
-                (dc.ReplicationPartners || []).map((partner: any) => {
-                  const isHealthy = partner.LastReplicationResult === 0;
-                  const statusText = isHealthy ? "OK" : `ERROR ${partner.LastReplicationResult}`;
-                  const color = isHealthy ? "low" : "critical";
-                  return createTableRow([
-                    dc.SourceDC || "N/A",
-                    partner.Partner || "N/A",
-                    statusText,
-                    partner.ConsecutiveFailureCount?.toString() || "0"
-                  ], false, color);
-                })
-              ).slice(0, 20), // Limit detailed rows to prevent overflow
-            ],
-          }),
-        ] : []),
+        // Soporta múltiples formatos de datos de replicación
+        ...(() => {
+          // Intentar extraer datos de replicación de varias fuentes posibles
+          const replData = rawData?.ReplicationHealthAllDCs || rawData?.ReplicationStatus || rawData?.Replication || [];
+          const replArray = Array.isArray(replData) ? replData :
+                           (replData?.DCReplicationHealth ? replData.DCReplicationHealth : []);
+
+          if (replArray.length === 0) return [];
+
+          // Determinar el formato de los datos
+          const hasPartners = replArray.some((dc: any) => dc.ReplicationPartners);
+
+          let tableRows: any[] = [];
+
+          if (hasPartners) {
+            // Formato con ReplicationPartners anidados
+            tableRows = replArray.flatMap((dc: any) =>
+              (dc.ReplicationPartners || []).map((partner: any) => {
+                const isHealthy = partner.LastReplicationResult === 0;
+                const statusText = isHealthy ? "OK" : `ERROR ${partner.LastReplicationResult}`;
+                const color = isHealthy ? "low" : "critical";
+                return createTableRow([
+                  dc.SourceDC || dc.DC || dc.Server || "N/A",
+                  partner.Partner || partner.PartnerDC || "N/A",
+                  statusText,
+                  partner.ConsecutiveFailureCount?.toString() || "0"
+                ], false, color);
+              })
+            );
+          } else {
+            // Formato plano (cada registro es una conexión de replicación)
+            tableRows = replArray.map((r: any) => {
+              const status = r.ReplicationStatus || r.Status || (r.LastReplicationSuccess ? "OK" : "ERROR");
+              const isHealthy = status === "OK" || status === "Success" || r.ConsecutiveFailures === 0;
+              const color = isHealthy ? "low" : "critical";
+              return createTableRow([
+                r.SourceDC || r.DC || r.Server || "N/A",
+                r.PartnerDC || r.Partner || r.DestinationDC || "N/A",
+                status,
+                (r.ConsecutiveFailures || r.FailureCount || 0).toString()
+              ], false, color);
+            });
+          }
+
+          return tableRows.length > 0 ? [
+            new Paragraph({
+              text: "Salud de Replicación Active Directory",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+            new Paragraph({
+              text: "Análisis del estado de replicación entre controladores de dominio. Se muestran posibles fallos y latencias excesivas.",
+              spacing: { after: 200 },
+            }),
+            new Table({
+              width: { size: 100, type: WidthType.PERCENTAGE },
+              rows: [
+                createTableRow(["DC Origen", "Socio (Partner)", "Estado", "Fallas Consec."], true),
+                ...tableRows.slice(0, 20), // Limit detailed rows to prevent overflow
+              ],
+            }),
+          ] : [];
+        })(),
 
         // TOPOLOGÍA DE SITIOS Y SUBNETS
-        ...(rawData?.SiteTopology ? [
-          new Paragraph({
-            text: "Topología de Sitios y Subnets",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
+        // Soporta múltiples formatos: SiteTopology.Sites, Sites.Sites, Sites
+        ...(() => {
+          // Intentar extraer datos de sitios de varias fuentes posibles
+          const siteTopology = rawData?.SiteTopology;
+          // IMPORTANTE: SiteTopology.Sites es el formato más común del PowerShell collector
+          const sitesData = siteTopology?.Sites || rawData?.Sites?.Sites || rawData?.Sites || [];
+          const sitesArray = Array.isArray(sitesData) ? sitesData : [];
+
+          // Extraer subnets de SiteTopology si existe
+          const subnetsData = siteTopology?.Subnets || rawData?.Subnets || [];
+          const subnetsArray = Array.isArray(subnetsData) ? subnetsData : [];
+
+          // Calcular sitios sin subnets asociadas (comparando con la lista de subnets)
+          const sitesWithSubnets = new Set(
+            subnetsArray.map((sub: any) => {
+              // El Site puede venir como CN=SITENAME,CN=Sites,... o directamente como nombre
+              const siteName = sub.Site || '';
+              const match = siteName.match(/CN=([^,]+)/);
+              return match ? match[1] : siteName;
+            }).filter(Boolean)
+          );
+
+          const sitesWithoutSubnets = siteTopology?.SitesWithoutSubnets ||
+            sitesArray
+              .filter((s: any) => !sitesWithSubnets.has(s.Name || s.SiteName))
+              .map((s: any) => s.Name || s.SiteName);
+
+          const subnetsWithoutSite = siteTopology?.SubnetsWithoutSite ||
+            subnetsArray.filter((sub: any) => !sub.Site).map((sub: any) => sub.Name);
+
+          const emptySites = siteTopology?.EmptySites ||
+            sitesArray.filter((s: any) => !s.Servers || s.Servers.length === 0).map((s: any) => s.Name || s.SiteName);
+
+          // Si no hay datos relevantes, mostrar tabla de sitios si existe
+          const hasSiteIssues = (sitesWithoutSubnets?.length > 0) ||
+                               (subnetsWithoutSite?.length > 0) ||
+                               (emptySites?.length > 0);
+          const hasSitesData = sitesArray.length > 0;
+          const hasSubnetsData = subnetsArray.length > 0;
+
+          if (!hasSiteIssues && !hasSitesData && !hasSubnetsData) return [];
+
+          const sections: any[] = [
+            new Paragraph({
+              text: "Topología de Sitios y Subnets AD",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+          ];
+
+          // Mostrar tabla de sitios si hay datos
+          if (hasSitesData) {
+            sections.push(
+              new Paragraph({
+                text: `Se identificaron ${sitesArray.length} sitio(s) de Active Directory en el dominio.`,
+                spacing: { after: 200 },
+              }),
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: [
+                  createTableRow(["Nombre del Site", "Descripción", "Ubicación"], true),
+                  ...sitesArray.slice(0, 30).map((s: any) => {
+                    return createTableRow([
+                      s.Name || s.SiteName || 'N/A',
+                      s.Description || '-',
+                      s.Location || '-'
+                    ]);
+                  }),
+                ],
+              })
+            );
+          }
+
+          // Mostrar resumen de subnets si hay datos
+          if (hasSubnetsData) {
+            sections.push(
+              new Paragraph({
+                text: `Subredes Configuradas (${subnetsArray.length} total)`,
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: [
+                  createTableRow(["Subred", "Site Asociado", "Descripción"], true),
+                  ...subnetsArray.slice(0, 30).map((sub: any) => {
+                    // Extraer nombre del site del DN
+                    const siteDN = sub.Site || '';
+                    const siteMatch = siteDN.match(/CN=([^,]+)/);
+                    const siteName = siteMatch ? siteMatch[1] : (siteDN || '-');
+                    return createTableRow([
+                      sub.Name || 'N/A',
+                      siteName,
+                      sub.Description || '-'
+                    ]);
+                  }),
+                ],
+              }),
+              ...(subnetsArray.length > 30 ? [
+                new Paragraph({
+                  text: `... y ${subnetsArray.length - 30} subredes más.`,
+                  spacing: { before: 50, after: 100 },
+                })
+              ] : [])
+            );
+          }
 
           // Sitios sin Subnets
-          ...(rawData.SiteTopology.SitesWithoutSubnets && rawData.SiteTopology.SitesWithoutSubnets.length > 0 ? [
-            new Paragraph({
-              text: "Sitios Sin Subnets Asociadas",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Paragraph({
-              text: "Los siguientes sitios no tienen subredes asignadas, lo que puede causar problemas de autenticación y tráfico de clientes:",
-              spacing: { after: 100 }
-            }),
-            ...rawData.SiteTopology.SitesWithoutSubnets.map((site: string) =>
+          if (sitesWithoutSubnets?.length > 0) {
+            sections.push(
               new Paragraph({
-                text: `• ${site}`,
-                bullet: { level: 0 },
-                spacing: { after: 50 },
-                // color: COLORS.high
-              })
-            )
-          ] : []),
+                text: "Sitios Sin Subnets Asociadas",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Paragraph({
+                text: "Los siguientes sitios no tienen subredes asignadas, lo que puede causar problemas de autenticación y tráfico de clientes:",
+                spacing: { after: 100 }
+              }),
+              ...sitesWithoutSubnets.slice(0, 20).map((site: string) =>
+                new Paragraph({
+                  text: `• ${site}`,
+                  bullet: { level: 0 },
+                  spacing: { after: 50 },
+                })
+              )
+            );
+          }
 
           // Subnets sin Sitio
-          ...(rawData.SiteTopology.SubnetsWithoutSite && rawData.SiteTopology.SubnetsWithoutSite.length > 0 ? [
-            new Paragraph({
-              text: "Subredes No Asociadas a Sitios",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Paragraph({
-              text: "Las siguientes subredes no están asociadas a ningún sitio AD. Los clientes en estas redes pueden autenticarse contra DCs remotos ineficientes:",
-              spacing: { after: 100 }
-            }),
-            ...rawData.SiteTopology.SubnetsWithoutSite.map((subnet: string) =>
+          if (subnetsWithoutSite?.length > 0) {
+            sections.push(
               new Paragraph({
-                text: `• ${subnet}`,
-                bullet: { level: 0 },
-                spacing: { after: 50 }
-              })
-            )
-          ] : []),
+                text: "Subredes No Asociadas a Sitios",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Paragraph({
+                text: "Las siguientes subredes no están asociadas a ningún sitio AD. Los clientes en estas redes pueden autenticarse contra DCs remotos ineficientes:",
+                spacing: { after: 100 }
+              }),
+              ...subnetsWithoutSite.slice(0, 20).map((subnet: string) =>
+                new Paragraph({
+                  text: `• ${subnet}`,
+                  bullet: { level: 0 },
+                  spacing: { after: 50 }
+                })
+              )
+            );
+          }
 
           // Sitios Vacíos (Sin DCs)
-          ...(rawData.SiteTopology.EmptySites && rawData.SiteTopology.EmptySites.length > 0 ? [
-            new Paragraph({
-              text: "Sitios Vacíos (Sin Controladores de Dominio)",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            ...rawData.SiteTopology.EmptySites.map((site: string) =>
+          if (emptySites?.length > 0) {
+            sections.push(
               new Paragraph({
-                text: `• ${site}`,
-                bullet: { level: 0 },
-                spacing: { after: 50 }
-              })
-            )
-          ] : [])
+                text: "Sitios Vacíos (Sin Controladores de Dominio)",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              ...emptySites.slice(0, 20).map((site: string) =>
+                new Paragraph({
+                  text: `• ${site}`,
+                  bullet: { level: 0 },
+                  spacing: { after: 50 }
+                })
+              )
+            );
+          }
 
-        ] : []),
+          return sections;
+        })(),
 
         // ANÁLISIS DE OBJETOS DE DIRECTIVA DE GRUPO
         ...(rawData?.GPOs && rawData.GPOs.length > 0 ? [

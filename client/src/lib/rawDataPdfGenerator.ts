@@ -143,7 +143,9 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     '8. Unidades Organizativas (OUs)',
     '9. Infraestructura DNS',
     '10. Servicios DHCP',
-    '11. Datos Adicionales'
+    '11. Sites y Topología AD',
+    '12. Replicación de AD',
+    '13. Datos Adicionales'
   ];
 
   let yPos = 60;
@@ -649,20 +651,249 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     }
   });
 
-  // 11. DATOS ADICIONALES
+  // 11. SITES Y TOPOLOGÍA AD
+  doc.addPage();
+  currentPage++;
+  drawHeader('Sites y Topología AD');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('11. Sites y Topología AD', margin, 30);
+
+  // Extract Sites data - IMPORTANTE: SiteTopology.Sites es el formato del PowerShell collector
+  const sites = rawData.SiteTopology?.Sites
+    ? ensureArray(rawData.SiteTopology.Sites)
+    : rawData.Sites?.Sites
+      ? ensureArray(rawData.Sites.Sites)
+      : ensureArray(rawData.Sites);
+
+  // Extract Subnets data
+  const subnets = rawData.SiteTopology?.Subnets
+    ? ensureArray(rawData.SiteTopology.Subnets)
+    : ensureArray(rawData.Subnets);
+
+  if (sites.length > 0) {
+    autoTable(doc, {
+      startY: 40,
+      head: [['Nombre del Site', 'Descripción', 'Ubicación']],
+      body: sites.slice(0, 100).map((s: any) => [
+        s.Name || s.SiteName || 'N/A',
+        s.Description || '-',
+        s.Location || '-'
+      ]),
+      ...tableTheme,
+      didDrawPage: (data) => {
+        currentPage = doc.getNumberOfPages();
+        addFooter(currentPage);
+        drawHeader('Sites y Topología AD');
+      }
+    });
+  }
+
+  // Mostrar subnets si existen
+  if (subnets.length > 0) {
+    const lastY = (doc as any).lastAutoTable?.finalY || 50;
+    doc.setFontSize(14);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text(`Subredes Configuradas (${subnets.length} total)`, margin, lastY + 15);
+
+    autoTable(doc, {
+      startY: lastY + 20,
+      head: [['Subred', 'Site Asociado', 'Descripción']],
+      body: subnets.slice(0, 100).map((sub: any) => {
+        // Extraer nombre del site del DN (CN=SITENAME,CN=Sites,...)
+        const siteDN = sub.Site || '';
+        const siteMatch = siteDN.match(/CN=([^,]+)/);
+        const siteName = siteMatch ? siteMatch[1] : (siteDN || '-');
+        return [
+          sub.Name || 'N/A',
+          siteName,
+          sub.Description || '-'
+        ];
+      }),
+      ...tableTheme,
+      didDrawPage: (data) => {
+        currentPage = doc.getNumberOfPages();
+        addFooter(currentPage);
+        drawHeader('Sites y Topología AD');
+      }
+    });
+
+    if (subnets.length > 100) {
+      doc.setFontSize(8);
+      doc.setTextColor(COLORS.danger[0], COLORS.danger[1], COLORS.danger[2]);
+      doc.text(`* Se muestran las primeras 100 de ${subnets.length} subredes.`, margin, (doc as any).lastAutoTable.finalY + 10);
+    }
+  }
+
+  if (sites.length === 0 && subnets.length === 0) {
+    doc.setFontSize(10);
+    doc.setTextColor(COLORS.textLight[0], COLORS.textLight[1], COLORS.textLight[2]);
+    doc.text('No se encontraron datos de Sites y Topología en el assessment.', margin, 45);
+  }
+
+  // Site Links subsection if available
+  const siteLinks = rawData.SiteTopology?.SiteLinks
+    ? ensureArray(rawData.SiteTopology.SiteLinks)
+    : rawData.Sites?.SiteLinks
+      ? ensureArray(rawData.Sites.SiteLinks)
+      : rawData.SiteLinks
+        ? ensureArray(rawData.SiteLinks)
+        : [];
+
+  if (siteLinks.length > 0) {
+    const lastY = (doc as any).lastAutoTable?.finalY || 50;
+    doc.setFontSize(14);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text('Site Links', margin, lastY + 15);
+
+    autoTable(doc, {
+      startY: lastY + 20,
+      head: [['Nombre', 'Sites Conectados', 'Costo', 'Frecuencia (min)', 'Protocolo']],
+      body: siteLinks.slice(0, 100).map((sl: any) => [
+        sl.Name || 'N/A',
+        Array.isArray(sl.Sites) ? sl.Sites.join(', ') : (sl.SitesIncluded || '-'),
+        sl.Cost || '-',
+        sl.ReplicationFrequencyInMinutes || sl.Frequency || '-',
+        sl.InterSiteTransportProtocol || 'IP'
+      ]),
+      ...tableTheme,
+      didDrawPage: (data) => {
+        currentPage = doc.getNumberOfPages();
+        addFooter(currentPage);
+        drawHeader('Sites y Topología AD');
+      }
+    });
+  }
+
+  addFooter(currentPage);
+
+  // 12. REPLICACIÓN DE AD
+  doc.addPage();
+  currentPage++;
+  drawHeader('Replicación de AD');
+  doc.setFontSize(16);
+  doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
+  doc.text('12. Replicación de AD', margin, 30);
+
+  // Extract Replication data - can be in ReplicationHealthAllDCs, ReplicationStatus, or DCHealth
+  const replicationHealth = rawData.ReplicationHealthAllDCs?.DCReplicationHealth
+    ? ensureArray(rawData.ReplicationHealthAllDCs.DCReplicationHealth)
+    : rawData.ReplicationHealthAllDCs
+      ? ensureArray(rawData.ReplicationHealthAllDCs)
+      : [];
+
+  const replicationStatus = ensureArray(rawData.ReplicationStatus);
+  const dcHealth = rawData.DCHealth?.DCHealthResults
+    ? ensureArray(rawData.DCHealth.DCHealthResults)
+    : ensureArray(rawData.DCHealth);
+
+  let repY = 40;
+
+  // DC Replication Health Table
+  if (replicationHealth.length > 0) {
+    doc.setFontSize(12);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text('Estado de Replicación por DC', margin, repY);
+
+    autoTable(doc, {
+      startY: repY + 5,
+      head: [['DC', 'Partner', 'Estado', 'Último Éxito', 'Fallos Consecutivos', 'Naming Context']],
+      body: replicationHealth.slice(0, 200).map((r: any) => [
+        r.SourceDC || r.DC || r.Server || 'N/A',
+        r.PartnerDC || r.Partner || r.DestinationDC || '-',
+        r.ReplicationStatus || r.Status || (r.LastReplicationSuccess ? 'OK' : 'Error'),
+        formatDate(r.LastReplicationSuccess || r.LastSuccessTime),
+        r.ConsecutiveFailures || r.FailureCount || 0,
+        r.NamingContext || r.Partition || '-'
+      ]),
+      ...tableTheme,
+      didDrawPage: (data) => {
+        currentPage = doc.getNumberOfPages();
+        addFooter(currentPage);
+        drawHeader('Replicación de AD');
+      }
+    });
+    repY = (doc as any).lastAutoTable?.finalY + 15 || repY + 60;
+  }
+
+  // DC Health Summary
+  if (dcHealth.length > 0 && repY < pageHeight - 60) {
+    doc.setFontSize(12);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text('Salud de Controladores de Dominio', margin, repY);
+
+    autoTable(doc, {
+      startY: repY + 5,
+      head: [['DC', 'Servicios', 'Conectividad', 'DNS', 'Tiempo Sincronizado', 'Estado General']],
+      body: dcHealth.slice(0, 50).map((h: any) => [
+        h.DC || h.Server || h.HostName || 'N/A',
+        h.ServicesStatus || h.Services || '-',
+        h.Connectivity || h.NetworkStatus || '-',
+        h.DNSStatus || h.DNS || '-',
+        h.TimeSyncStatus || h.TimeSync || '-',
+        h.OverallHealth || h.Status || '-'
+      ]),
+      ...tableTheme,
+      didDrawPage: (data) => {
+        currentPage = doc.getNumberOfPages();
+        addFooter(currentPage);
+        drawHeader('Replicación de AD');
+      }
+    });
+    repY = (doc as any).lastAutoTable?.finalY + 15 || repY + 60;
+  }
+
+  // Legacy Replication Status (from ReplicationStatus key)
+  if (replicationStatus.length > 0 && repY < pageHeight - 60) {
+    doc.setFontSize(12);
+    doc.setTextColor(COLORS.secondary[0], COLORS.secondary[1], COLORS.secondary[2]);
+    doc.text('Estado de Replicación Detallado', margin, repY);
+
+    autoTable(doc, {
+      startY: repY + 5,
+      head: [['Origen', 'Destino', 'Partición', 'Estado', 'Última Replicación']],
+      body: replicationStatus.slice(0, 100).map((r: any) => [
+        r.SourceDC || r.Source || 'N/A',
+        r.DestinationDC || r.Destination || '-',
+        r.Partition || r.NamingContext || '-',
+        r.Status || r.ReplicationStatus || '-',
+        formatDate(r.LastReplication || r.LastSuccessTime)
+      ]),
+      ...tableTheme,
+      didDrawPage: (data) => {
+        currentPage = doc.getNumberOfPages();
+        addFooter(currentPage);
+        drawHeader('Replicación de AD');
+      }
+    });
+  }
+
+  // If no replication data found at all
+  if (replicationHealth.length === 0 && dcHealth.length === 0 && replicationStatus.length === 0) {
+    doc.setFontSize(10);
+    doc.setTextColor(COLORS.textLight[0], COLORS.textLight[1], COLORS.textLight[2]);
+    doc.text('No se encontraron datos de replicación en el assessment.', margin, 45);
+    doc.text('Para obtener datos de replicación, ejecute el script de colección con los parámetros', margin, 55);
+    doc.text('de Sites y Replicación habilitados.', margin, 65);
+  }
+
+  addFooter(currentPage);
+
+  // 13. DATOS ADICIONALES
   doc.addPage();
   currentPage++;
   drawHeader('Datos Adicionales');
   doc.setFontSize(16);
   doc.setTextColor(COLORS.primary[0], COLORS.primary[1], COLORS.primary[2]);
-  doc.text('11. Datos Adicionales', margin, 30);
+  doc.text('13. Datos Adicionales', margin, 30);
 
   let addY = 40;
   const additionalSections = [
     { key: 'Trusts', label: 'Relaciones de Confianza (Trusts)' },
-    { key: 'ReplicationStatus', label: 'Estado de Replicación' },
     { key: 'OldPasswords', label: 'Usuarios con Contraseñas Antiguas' },
     { key: 'AdminCountObjects', label: 'Objetos AdminCount' },
+    { key: 'LingeringObjectsRisk', label: 'Objetos Lingering (Huérfanos)' },
+    { key: 'FSMORolesHealth', label: 'Salud de Roles FSMO' },
   ];
 
   additionalSections.forEach((sec) => {

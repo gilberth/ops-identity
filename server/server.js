@@ -168,10 +168,31 @@ async function setConfig(key, value) {
 }
 
 // Helper: Extract Category Data
+// v1.8.1: Added alias mapping for common category name variations
+const CATEGORY_ALIASES = {
+  'sites': ['sitetopology', 'adtopology', 'topology'],
+  'replicationstatus': ['replicationhealthalldcs', 'replication', 'adreplication'],
+};
+
 function extractCategoryData(jsonData, categoryName) {
-  const categoryKey = Object.keys(jsonData).find(key =>
+  // First try exact match (case-insensitive)
+  let categoryKey = Object.keys(jsonData).find(key =>
     key.toLowerCase() === categoryName.toLowerCase()
   );
+
+  // If not found, try aliases
+  if (!categoryKey) {
+    const aliases = CATEGORY_ALIASES[categoryName.toLowerCase()] || [];
+    for (const alias of aliases) {
+      categoryKey = Object.keys(jsonData).find(key =>
+        key.toLowerCase() === alias.toLowerCase()
+      );
+      if (categoryKey) {
+        console.log(`[extractCategoryData] Using alias '${categoryKey}' for category '${categoryName}'`);
+        break;
+      }
+    }
+  }
 
   if (!categoryKey || !jsonData[categoryKey]) return null;
 
@@ -1524,7 +1545,15 @@ function buildPrompt(cat, d) {
 La replicación es el corazón de AD. Fallos aquí significan contraseñas no sincronizadas, objetos fantasma y posible corrupción de la base de datos.
 Debes detectar problemas de topología, conexiones huérfanas y errores de replicación persistentes.
 
-**BUSCA ESPECÍFICAMENTE:**
+**📊 ESTRUCTURA DE DATOS:**
+Los datos vienen como array ReplicationStatus con propiedades:
+- Server: FQDN del DC local
+- Partner: DN del partner de replicación (CN=NTDS Settings,CN=SERVERNAME,...)
+- LastReplicationResult: 0 = éxito, otro valor = error
+- ConsecutiveReplicationFailures: número de fallos consecutivos
+- LastReplicationSuccess: timestamp de última sincronización exitosa (formato /Date(timestamp)/)
+
+**=== SECCIÓN 1: PROBLEMAS DETECTABLES (Errores de Replicación) ===**
 
 1. **🔴 CRITICAL: Objetos Eliminados (Lingering Objects)**
    - Conexiones que apuntan a servidores con nombres que contienen "\\0ADEL:"
@@ -1542,14 +1571,59 @@ Debes detectar problemas de topología, conexiones huérfanas y errores de repli
 4. **⚠️ MEDIUM: Topología Incompleta**
    - Sitios sin enlaces o subredes no asociadas a sitios.
 
+**=== SECCIÓN 2: ANÁLISIS DE HIGIENE (Best Practices y Monitoreo) ===**
+
+**IMPORTANTE:** Aunque la replicación funcione, DEBES evaluar si el estado actual sigue mejores prácticas:
+
+5. **📋 HYGIENE: Distribución de Partners de Replicación**
+   - type_id: REPLICATION_PARTNER_DISTRIBUTION
+   - Evalúa si cada DC tiene un número balanceado de partners
+   - Si un DC tiene significativamente más o menos partners que otros: posible topología subóptima
+   - Ideal: KCC genera topología automática eficiente, pero puede haber optimizaciones manuales erróneas
+   - Genera finding LOW con estadísticas de partners por DC
+
+6. **📋 HYGIENE: Antigüedad de Última Replicación**
+   - type_id: REPLICATION_FRESHNESS
+   - Calcula tiempo desde LastReplicationSuccess para cada pareja
+   - Aunque no haya fallos, si última replicación > 1 hora durante horario laboral, puede indicar lentitud
+   - Genera estadística: "Replicación más reciente: X minutos, más antigua: Y minutos"
+   - Si todo < 15 minutos: finding INFO indicando replicación saludable
+
+7. **📋 HYGIENE: Consistencia de Resultados**
+   - type_id: REPLICATION_CONSISTENCY_CHECK
+   - Analiza si LastReplicationResult es consistentemente 0 en todos los pares
+   - Si hay errores esporádicos (no críticos): finding LOW para investigar
+   - Incluso error esporádico puede indicar problema de red intermitente
+
+8. **📋 HYGIENE: Replicación Unidireccional**
+   - type_id: REPLICATION_BIDIRECTIONAL_CHECK
+   - Verifica que los pares de replicación sean bidireccionales
+   - Si DC-A replica hacia DC-B pero no viceversa: posible problema de topología
+   - Analiza patrones en los datos para detectar asimetría
+
+9. **📋 HYGIENE: Naming de Partners**
+   - type_id: REPLICATION_PARTNER_NAMING
+   - Extrae nombres de DCs de los datos (Server y Partner DN)
+   - Evalúa si siguen convención consistente (ej: DC01, DC02 vs nombres arbitrarios)
+   - Si hay DCs con nombres sin estándar: finding LOW sobre naming conventions
+
+**=== REGLAS DE GENERACIÓN DE FINDINGS ===**
+
+- **Para errores (Sección 1)**: Solo reporta si LastReplicationResult != 0 o ConsecutiveReplicationFailures > 0
+- **Para higiene (Sección 2)**: SIEMPRE genera al menos 1 finding de higiene evaluando el estado
+- Si TODO está PERFECTO (LastReplicationResult=0 en todos, ConsecutiveReplicationFailures=0, LastReplicationSuccess reciente):
+  - Genera finding INFO: "REPLICATION_HEALTHY" indicando buenas prácticas observadas
+  - Incluye estadísticas: "N parejas de replicación analizadas, todas con estado óptimo"
+
 **PARA CADA HALLAZGO, PROPORCIONA:**
-- **type_id**: REPLICATION_LINGERING_OBJECTS, REPLICATION_FAILURE_CRITICAL, KCC_CONNECTION_STORM.
-- **Título**: "X conexiones a servidores eliminados detectadas" o "Fallo de replicación crítico en [SERVER]".
-- **Descripción**: Explica el problema técnico y su impacto en la salud del bosque.
+- **type_id**: REPLICATION_LINGERING_OBJECTS, REPLICATION_FAILURE_CRITICAL, REPLICATION_HEALTHY, etc.
+- **Título**: Descriptivo del problema o estado de higiene
+- **Descripción**: Explica el problema técnico, impacto, o estado actual para higiene.
 - **Recomendación**:
   * Comandos para limpiar conexiones (Remove-ADReplicationConnection).
   * Comandos para forzar replicación (repadmin /syncall).
   * Pasos para limpieza de metadatos (ntdsutil).
+  * Para higiene: pasos de monitoreo o mejora continua
 - **Evidencia**: Nombres de servidores origen/destino, códigos de error, fechas de último éxito.`,
 
     Groups: `Eres un auditor de seguridad especializado en privilegios y gestión de identidades en Active Directory.
@@ -2345,44 +2419,108 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
 **⚠️ CONTEXTO DE ANÁLISIS:**
 La topología de sitios define cómo se replica el tráfico de AD y cómo los clientes encuentran los DCs más cercanos. Una mala configuración causa lentitud en logons, fallos de replicación y tráfico WAN innecesario.
 
+**📊 ESTRUCTURA DE DATOS:**
+Los datos pueden venir en formato SiteTopology con dos arrays:
+- 'Sites': Array de sitios con propiedades {Name, Description, Location}
+- 'Subnets': Array de subredes con propiedades {Name, Site (DN completo como CN=SITENAME,CN=Sites,...), Description}
+
+Para detectar problemas, debes correlacionar estos arrays:
+- Extrae el nombre del site de Subnets[].Site usando regex: /CN=([^,]+)/
+- Compara con Sites[].Name para detectar inconsistencias
+
 **🎯 BUSCA ESPECÍFICAMENTE:**
 
+**=== SECCIÓN 1: PROBLEMAS DETECTABLES (Errores de Configuración) ===**
+
 1. **🔴 HIGH: Subredes no asociadas a Sitios**
-   - Subredes listadas en 'Subnets' que no tienen propiedad 'Site' o es null.
+   - En el array 'Subnets', busca entradas donde la propiedad 'Site' sea null, vacía, o no exista.
    - Riesgo: Clientes en estas subredes pueden autenticarse contra DCs remotos (lento), GPOs pueden no aplicarse correctamente.
    - Comando verificar: Get-ADReplicationSubnet -Filter * -Properties Site | Where-Object {$_.Site -eq $null}
    - Comando fix: New-ADReplicationSubnet -Name "x.x.x.x/yy" -Site "NombreSitio"
    - Timeline: Remediar en 7 días
+   - affected_objects: Lista de subredes sin site
 
-2. **⚠️ MEDIUM: Sitios Vacíos (Sin Subredes)**
-   - Sitios listados en 'SitesWithoutSubnets'
-   - Riesgo: Los clientes físicos en esa ubicación no se asociarán al sitio, causando tráfico WAN innecesario y autenticación lenta.
-   - Recomendación: Asignar las subredes correspondientes al sitio o eliminarlo si está en desuso.
+2. **⚠️ MEDIUM: Sitios sin Subredes Asignadas**
+   - Compara Sites[].Name con los sites referenciados en Subnets[].Site
+   - Si un sitio NO aparece en ninguna subnet, ese sitio no tiene subredes
+   - Riesgo: Los clientes físicos en esa ubicación no se asociarán al sitio, causando tráfico WAN innecesario.
    - Comando fix: New-ADReplicationSubnet -Name "x.x.x.x/yy" -Site "SiteName"
    - Timeline: Revisar y asignar subredes en 14 días
+   - affected_objects: Lista de sites sin subredes
 
-3. **⚠️ MEDIUM: Sitios sin Controladores de Dominio**
-   - Sitios definidos que no tienen servidores en la lista 'Servers'.
-   - Riesgo: Si hay clientes en ese sitio, cruzarán la WAN para autenticarse.
-   - Recomendación: Instalar DC (RODC si es sucursal insegura) o consolidar sitio.
+3. **⚠️ MEDIUM: Exceso de Subredes por Site**
+   - Si un site tiene más de 100 subredes, puede indicar fragmentación excesiva
+   - Riesgo: Complejidad administrativa, potencial impacto en rendimiento de replicación
+   - Recomendación: Consolidar subredes contiguas usando supernetting
 
-3. **⚠️ MEDIUM: Sitios con un solo DC**
-   - Falta de redundancia local.
-   - Riesgo: Si cae el único DC, clientes pierden servicio local o usan WAN.
+4. **ℹ️ LOW: Sitios sin Descripción o Ubicación**
+   - Sites donde Description y Location son null
+   - Riesgo: Documentación deficiente dificulta administración
+   - Recomendación: Documentar propósito y ubicación física de cada site
+
+**=== SECCIÓN 2: ANÁLISIS DE HIGIENE (Best Practices y Optimización) ===**
+
+**IMPORTANTE:** Aunque NO haya errores evidentes, DEBES analizar si la configuración actual sigue las mejores prácticas:
+
+5. **📋 HYGIENE: Convención de Nombres de Sitios**
+   - type_id: SITE_NAMING_CONVENTION
+   - Evalúa si los nombres de sitios siguen un estándar consistente (ej: PAIS-CIUDAD, CIUDAD-EDIFICIO)
+   - Mal ejemplo: sitios con nombres como "Site1", "Nuevo", "Test", "Default-First-Site-Name" (excepto si es el único)
+   - Buen ejemplo: "PE-LIMA-SURCO", "US-NYC-HQ", "MX-CDMX-CORP"
+   - Si no hay consistencia, genera finding LOW con recomendación de estandarizar
+
+6. **📋 HYGIENE: Ratio Subredes/Sites**
+   - type_id: SUBNET_SITE_RATIO
+   - Calcula: Total Subnets / Total Sites
+   - Si ratio > 50: Puede indicar sites con demasiadas subredes (posible consolidación)
+   - Si ratio < 2 y hay múltiples sites: Puede indicar diseño incompleto
+   - Genera finding LOW con estadísticas y recomendación de revisar
+
+7. **📋 HYGIENE: Subredes Sin Descripción**
+   - type_id: SUBNET_NO_DESCRIPTION
+   - Cuenta subredes donde Description es null o vacía
+   - Si > 30% de subredes sin descripción: finding LOW
+   - Impacto: Dificulta troubleshooting y documentación de red
+   - Recomendación: Documentar propósito de cada subnet (ej: "VLAN Usuarios Piso 3", "Red DMZ Servidores Web")
+
+8. **📋 HYGIENE: Revisión de Subredes Pequeñas**
+   - type_id: SUBNET_TOO_SMALL
+   - Identifica subredes /30, /31, /32 (point-to-point o host único)
+   - Si hay muchas (>20), puede indicar fragmentación excesiva
+   - Recomendación: Evaluar si estas subredes son necesarias en AD Sites
+
+9. **📋 HYGIENE: Subredes Superpuestas (Overlap Check)**
+   - type_id: SUBNET_OVERLAP_RISK
+   - Busca subredes que puedan solaparse (ej: 10.0.0.0/8 y 10.1.0.0/16)
+   - Esto causa comportamiento impredecible en la selección de site
+   - Si detectas posible overlap, genera finding MEDIUM
+
+10. **📋 HYGIENE: Distribución Geográfica**
+    - type_id: SITE_DISTRIBUTION_ANALYSIS
+    - Basándote en nombres/descripciones, evalúa si la topología refleja la distribución geográfica real
+    - Si todos los sites tienen nombres genéricos sin contexto geográfico, recomienda mejorar
+    - Genera finding LOW con sugerencia de usar formato: REGION-CIUDAD-FUNCION
+
+**=== REGLAS DE GENERACIÓN DE FINDINGS ===**
+
+- **Para errores (Sección 1)**: Solo reporta si hay EVIDENCIA CONCRETA del problema
+- **Para higiene (Sección 2)**: SIEMPRE genera al menos 1-2 findings de higiene, evaluando el estado actual
+- Si la configuración está PERFECTA, genera un finding tipo INFO: "SITE_TOPOLOGY_HEALTHY" indicando buenas prácticas observadas
+- Incluye estadísticas: "Análisis de N sitios y M subredes"
 
 **FORMATO DE REPORTE:**
-- **type_id**: Identificador ÚNICO (ej: SUBNET_NO_SITE, SITE_NO_DC).
-- **Título**: "[N] subredes no asociadas a ningún sitio AD"
-- **Descripción**: Impacto en latencia de logon y tráfico WAN.
-- **Recomendación**: Comandos para asociar subredes.
-- **Evidencia**: Lista de subredes huérfanas.`
+- **type_id**: Identificador ÚNICO (ej: SUBNET_NO_SITE, SITE_NO_SUBNET, SITE_FRAGMENTED, SITE_NAMING_CONVENTION).
+- **Título**: Descriptivo del hallazgo o recomendación de higiene
+- **Descripción**: Impacto y contexto. Para higiene, explica por qué la práctica actual podría mejorarse.
+- **Recomendación**: Comandos PowerShell específicos o pasos de mejora.
+- **Evidencia**: affected_objects con lista de elementos afectados (máximo 15).`
   };
 
   // Map specialized categories to broader prompts
+  // NOTA: SiteTopology ahora usa el prompt de Sites via alias en extractCategoryData
   const promptMap = {
     'DNSConfiguration': 'Infrastructure',
     'DHCPConfiguration': 'Infrastructure',
-    'SiteTopology': 'Infrastructure',
     'OUStructure': 'Infrastructure',
     'TombstoneLifetime': 'Infrastructure',
     'DNSScavenging': 'Infrastructure',
