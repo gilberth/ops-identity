@@ -4357,14 +4357,14 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
                                     </Button>
                                 ) : (
                                     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
-                                        <div className="rounded-2xl border border-green-100 bg-green-50/50 p-6 flex items-start gap-4">
-                                            <div className="h-10 w-10 shrink-0 rounded-full bg-green-100 flex items-center justify-center">
-                                                <CheckCircle className="h-6 w-6 text-green-600" />
+                                        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-6 flex items-start gap-4">
+                                            <div className="h-10 w-10 shrink-0 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                                                <CheckCircle className="h-6 w-6 text-emerald-500" />
                                             </div>
                                             <div>
-                                                <h3 className="font-semibold text-green-900">Script Ready</h3>
-                                                <p className="text-sm text-green-700/80 mt-1">
-                                                    Your assessment ID <strong>{assessmentId}</strong> has been created.
+                                                <h3 className="font-semibold text-emerald-400">Script Ready</h3>
+                                                <p className="text-sm text-emerald-300/80 mt-1">
+                                                    Your assessment ID <strong className="text-emerald-400">{assessmentId}</strong> has been created.
                                                     Download the script and check the instructions below.
                                                 </p>
                                             </div>
