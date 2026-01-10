@@ -4254,33 +4254,33 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
                             </div>
                         </div>
 
-                        <div className="rounded-[2rem] bg-white p-6 shadow-soft">
-                            <h3 className="font-semibold mb-4 flex items-center gap-2">
+                        <div className="rounded-[2rem] bg-card p-6 shadow-soft border border-border">
+                            <h3 className="font-semibold mb-4 flex items-center gap-2 text-card-foreground">
                                 <Terminal className="h-4 w-4 text-primary" />
                                 How it works
                             </h3>
                             <div className="space-y-6">
                                 <div className="flex gap-4">
-                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-600">1</div>
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold text-muted-foreground">1</div>
                                     <div>
-                                        <h4 className="font-medium text-sm">Configure</h4>
+                                        <h4 className="font-medium text-sm text-card-foreground">Configure</h4>
                                         <p className="text-xs text-muted-foreground mt-1">Enter target domain and select audit modules.</p>
                                     </div>
                                 </div>
                                 <div className="relative">
-                                    <div className="absolute left-4 top-0 -bottom-6 w-px bg-gray-100" />
+                                    <div className="absolute left-4 top-0 -bottom-6 w-px bg-border" />
                                     <div className="flex gap-4">
-                                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-600 relative z-10">2</div>
+                                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold text-muted-foreground relative z-10">2</div>
                                         <div>
-                                            <h4 className="font-medium text-sm">Generate & Run</h4>
+                                            <h4 className="font-medium text-sm text-card-foreground">Generate & Run</h4>
                                             <p className="text-xs text-muted-foreground mt-1">Download the script and run it on a Domain Controller.</p>
                                         </div>
                                     </div>
                                 </div>
                                 <div className="flex gap-4">
-                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm font-bold text-gray-600">3</div>
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold text-muted-foreground">3</div>
                                     <div>
-                                        <h4 className="font-medium text-sm">Analyze</h4>
+                                        <h4 className="font-medium text-sm text-card-foreground">Analyze</h4>
                                         <p className="text-xs text-muted-foreground mt-1">Upload results (auto or manual) to see your dashboard.</p>
                                     </div>
                                 </div>
@@ -4290,9 +4290,9 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
 
                     {/* Right Column: Form */}
                     <div className="lg:col-span-8">
-                        <Card className="border-none shadow-soft rounded-[2.5rem] bg-white overflow-hidden">
+                        <Card className="border border-border shadow-soft rounded-[2.5rem] bg-card overflow-hidden">
                             <CardHeader className="px-8 pt-8 pb-0">
-                                <CardTitle className="text-xl">Configuration</CardTitle>
+                                <CardTitle className="text-xl text-card-foreground">Configuration</CardTitle>
                                 <CardDescription>Customize your security details</CardDescription>
                             </CardHeader>
                             <CardContent className="p-8 space-y-8">
@@ -4303,14 +4303,14 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
                                         placeholder="e.g. contoso.local"
                                         value={domain}
                                         onChange={(e) => setDomain(e.target.value)}
-                                        className="h-12 rounded-xl text-lg border-2 border-gray-200 bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                                        className="h-12 rounded-xl text-lg border-2 border-border bg-muted text-foreground placeholder:text-muted-foreground focus:bg-background focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
                                     />
                                 </div>
 
                                 <div className="space-y-4">
                                     <div className="flex items-center justify-between">
                                         <Label className="text-sm font-semibold text-foreground">Audit Modules</Label>
-                                        <span className="text-xs text-muted-foreground bg-gray-100 px-2 py-1 rounded-full">{selectedModules.length} selected</span>
+                                        <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">{selectedModules.length} selected</span>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         {modules.map((module) => {
@@ -4322,14 +4322,14 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
                                                     className={`
                                                         relative cursor-pointer rounded-2xl p-4 border-2 transition-all duration-200 ease-out
                                                         ${isSelected
-                                                            ? 'border-primary bg-primary/5 shadow-sm scale-[1.01]'
-                                                            : 'border-transparent bg-gray-50 hover:bg-gray-100 hover:scale-[1.01]'
+                                                            ? 'border-primary bg-primary/10 shadow-sm scale-[1.01]'
+                                                            : 'border-border bg-muted hover:bg-muted/80 hover:scale-[1.01]'
                                                         }
                                                     `}
                                                 >
                                                     <div className="flex items-start gap-3">
-                                                        <div className={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-gray-300 bg-white'}`}>
-                                                            {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                                                        <div className={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-muted-foreground bg-background'}`}>
+                                                            {isSelected && <div className="h-2 w-2 rounded-full bg-primary-foreground" />}
                                                         </div>
                                                         <div>
                                                             <div className={`font-semibold text-sm ${isSelected ? 'text-primary' : 'text-foreground'}`}>
@@ -4381,21 +4381,21 @@ $collectedData.ProtocolSecurity = Get-ProtocolSecurity
                                             Download PowerShell Script
                                         </Button>
 
-                                        <div className="bg-gray-50 rounded-2xl p-6 space-y-4">
+                                        <div className="bg-muted rounded-2xl p-6 space-y-4">
                                             <h4 className="font-semibold text-sm uppercase tracking-wider text-muted-foreground">Quick Instructions</h4>
                                             <div className="space-y-3 font-mono text-xs md:text-sm">
-                                                <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">1</span>
-                                                    <span>Run as Admin on Domain Controller</span>
+                                                <div className="flex items-center gap-3 p-3 bg-background rounded-xl border border-border shadow-sm">
+                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">1</span>
+                                                    <span className="text-foreground">Run as Admin on Domain Controller</span>
                                                 </div>
-                                                <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">2</span>
+                                                <div className="flex items-center gap-3 p-3 bg-background rounded-xl border border-border shadow-sm">
+                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">2</span>
                                                     <code className="text-primary truncate">.\AD-Assessment-{domain || 'domain'}.ps1</code>
                                                 </div>
-                                                <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-100 shadow-sm opacity-75">
-                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold">3</span>
-                                                    <span>
-                                                        Offline Mode: <code className="bg-gray-100 px-1 rounded"> -OfflineMode</code>
+                                                <div className="flex items-center gap-3 p-3 bg-background rounded-xl border border-border shadow-sm opacity-75">
+                                                    <span className="shrink-0 w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">3</span>
+                                                    <span className="text-foreground">
+                                                        Offline Mode: <code className="bg-muted px-1 rounded text-foreground"> -OfflineMode</code>
                                                     </span>
                                                 </div>
                                             </div>
