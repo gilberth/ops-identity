@@ -161,9 +161,42 @@ const AdminPanel = () => {
 
   const getProgressInfo = (assessment: Assessment) => {
     const progress = assessment.analysis_progress;
-    if (!progress || !progress.total) return "N/A";
-    const percentage = Math.round((progress.completed / progress.total) * 100);
-    return `${progress.completed}/${progress.total} (${percentage}%)`;
+    if (!progress) return "N/A";
+
+    // Si el assessment está completado, mostrar 100%
+    if (assessment.status === "completed") {
+      // Formato antiguo: {total, completed, current}
+      if (progress.total) {
+        return `${progress.total}/${progress.total} (100%)`;
+      }
+      // Formato nuevo: {GPOs: {status, count}, Users: {...}, ...}
+      const categories = Object.keys(progress).filter(
+        (k) => typeof progress[k] === "object" && progress[k]?.status
+      );
+      if (categories.length > 0) {
+        return `${categories.length}/${categories.length} (100%)`;
+      }
+      return "100%";
+    }
+
+    // Para assessments en progreso
+    // Formato antiguo: {total, completed, current}
+    if (progress.total && typeof progress.completed === "number") {
+      const percentage = Math.round((progress.completed / progress.total) * 100);
+      return `${progress.completed}/${progress.total} (${percentage}%)`;
+    }
+
+    // Formato nuevo: contar categorías completadas
+    const categories = Object.keys(progress).filter(
+      (k) => typeof progress[k] === "object" && progress[k]?.status
+    );
+    if (categories.length > 0) {
+      const completed = categories.filter((k) => progress[k].status === "completed").length;
+      const percentage = Math.round((completed / categories.length) * 100);
+      return `${completed}/${categories.length} (${percentage}%)`;
+    }
+
+    return "N/A";
   };
 
   const getLastError = (assessment: Assessment) => {
