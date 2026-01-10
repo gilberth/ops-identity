@@ -1,4 +1,9 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, BorderStyle, VerticalAlign } from 'docx';
+import {
+  Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+  Table, TableRow, TableCell, WidthType, BorderStyle, VerticalAlign,
+  Header, Footer, PageNumber, TableOfContents, LevelFormat, ShadingType,
+  PageBreak
+} from 'docx';
 
 interface Finding {
   id: string;
@@ -58,6 +63,163 @@ const COLORS = {
   lowBg: "DBEAFE",        // Light blue
   successBg: "D1FAE5",    // Light green
   successText: "065F46",  // Dark green
+};
+
+// Table column widths in DXA (twentieths of a point)
+// Letter size with 1" margins = 9360 DXA usable width
+const TABLE_WIDTHS = {
+  full: 9360,
+  twoCol: [4680, 4680],
+  threeCol: [3120, 3120, 3120],
+  fourCol: [2340, 2340, 2340, 2340],
+  asymmetric: [3120, 6240], // 1/3 + 2/3
+};
+
+// Global document styles configuration
+const getDocumentStyles = () => ({
+  default: {
+    document: {
+      run: { font: "Arial", size: 22 }, // 11pt default
+    },
+  },
+  paragraphStyles: [
+    {
+      id: "Title",
+      name: "Title",
+      basedOn: "Normal",
+      next: "Normal",
+      quickFormat: true,
+      run: { size: 56, bold: true, color: COLORS.primary, font: "Arial" },
+      paragraph: { spacing: { before: 240, after: 120 }, alignment: AlignmentType.CENTER },
+    },
+    {
+      id: "Heading1",
+      name: "Heading 1",
+      basedOn: "Normal",
+      next: "Normal",
+      quickFormat: true,
+      run: { size: 36, bold: true, color: COLORS.primary, font: "Arial" },
+      paragraph: { spacing: { before: 400, after: 200 }, outlineLevel: 0 },
+    },
+    {
+      id: "Heading2",
+      name: "Heading 2",
+      basedOn: "Normal",
+      next: "Normal",
+      quickFormat: true,
+      run: { size: 28, bold: true, color: COLORS.primary, font: "Arial" },
+      paragraph: { spacing: { before: 300, after: 150 }, outlineLevel: 1 },
+    },
+    {
+      id: "Heading3",
+      name: "Heading 3",
+      basedOn: "Normal",
+      next: "Normal",
+      quickFormat: true,
+      run: { size: 24, bold: true, color: COLORS.info, font: "Arial" },
+      paragraph: { spacing: { before: 200, after: 100 }, outlineLevel: 2 },
+    },
+    {
+      id: "FindingCritical",
+      name: "Critical Finding",
+      basedOn: "Normal",
+      run: { size: 28, bold: true, color: COLORS.critical, font: "Arial" },
+      paragraph: { spacing: { before: 300, after: 150 } },
+    },
+    {
+      id: "FindingHigh",
+      name: "High Finding",
+      basedOn: "Normal",
+      run: { size: 28, bold: true, color: COLORS.high, font: "Arial" },
+      paragraph: { spacing: { before: 300, after: 150 } },
+    },
+    {
+      id: "FindingMedium",
+      name: "Medium Finding",
+      basedOn: "Normal",
+      run: { size: 26, bold: true, color: COLORS.medium, font: "Arial" },
+      paragraph: { spacing: { before: 250, after: 120 } },
+    },
+    {
+      id: "ExecutiveNote",
+      name: "Executive Note",
+      basedOn: "Normal",
+      run: { size: 22, font: "Arial" },
+      paragraph: { spacing: { before: 100, after: 100 }, shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR } },
+    },
+  ],
+  characterStyles: [
+    {
+      id: "CriticalText",
+      name: "Critical Text",
+      run: { color: COLORS.critical, bold: true },
+    },
+    {
+      id: "HighText",
+      name: "High Text",
+      run: { color: COLORS.high, bold: true },
+    },
+    {
+      id: "SuccessText",
+      name: "Success Text",
+      run: { color: COLORS.successText, bold: true },
+    },
+  ],
+});
+
+// Numbering configuration for proper Word lists
+const getNumberingConfig = () => ({
+  config: [
+    {
+      reference: "bullet-list",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.BULLET,
+          text: "•",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+        {
+          level: 1,
+          format: LevelFormat.BULLET,
+          text: "○",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 1440, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "numbered-findings",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "recommendations-list",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+  ],
+});
+
+// Standard table cell borders
+const getTableBorders = () => {
+  const border = { style: BorderStyle.SINGLE, size: 1, color: COLORS.border };
+  return { top: border, bottom: border, left: border, right: border };
 };
 
 // Utility function to sanitize values - CRITICAL: Never show undefined/null/[object Object]
@@ -121,12 +283,13 @@ const parseDate = (dateValue: any): string => {
   }
 };
 
-const createTableRow = (cells: string[], isHeader = false, status?: string) => {
-  const headerColor = isHeader ? COLORS.primary : undefined;
+const createTableRow = (cells: string[], isHeader = false, status?: string, columnWidths?: number[]) => {
   const cellBg = isHeader ? COLORS.primary : (status ? getStatusBg(status) : undefined);
+  const borders = getTableBorders();
 
   return new TableRow({
-    children: cells.map(cell => new TableCell({
+    tableHeader: isHeader,
+    children: cells.map((cell, index) => new TableCell({
       children: [new Paragraph({
         children: [new TextRun({
           text: cell,
@@ -137,19 +300,15 @@ const createTableRow = (cells: string[], isHeader = false, status?: string) => {
         alignment: AlignmentType.LEFT,
         spacing: { before: 100, after: 100 },
       })],
-      shading: cellBg ? { fill: cellBg } : undefined,
+      shading: cellBg ? { fill: cellBg, type: ShadingType.CLEAR } : undefined,
+      width: columnWidths && columnWidths[index] ? { size: columnWidths[index], type: WidthType.DXA } : undefined,
       margins: {
         top: 150,
         bottom: 150,
         left: 150,
         right: 150,
       },
-      borders: {
-        top: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
-        bottom: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
-        left: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
-        right: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
-      },
+      borders,
     })),
   });
 };
@@ -177,14 +336,9 @@ const getStatusBg = (status: string): string => {
 };
 
 const createDetailTable = (title: string, content: string, color: string = COLORS.primary) => {
+  const borders = getTableBorders();
   return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    borders: {
-      top: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-      bottom: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-      left: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-      right: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-    },
+    columnWidths: TABLE_WIDTHS.asymmetric,
     rows: [
       new TableRow({
         children: [
@@ -193,19 +347,21 @@ const createDetailTable = (title: string, content: string, color: string = COLOR
               children: [new TextRun({ text: title, bold: true, size: 24 })],
               spacing: { before: 100, after: 100 },
             })],
-            shading: { fill: COLORS.lightBg },
-            width: { size: 25, type: WidthType.PERCENTAGE },
+            shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
+            width: { size: TABLE_WIDTHS.asymmetric[0], type: WidthType.DXA },
             margins: { top: 150, bottom: 150, left: 150, right: 150 },
             verticalAlign: VerticalAlign.CENTER,
+            borders,
           }),
           new TableCell({
             children: [new Paragraph({
-              text: content,
+              children: [new TextRun({ text: content, size: 22 })],
               spacing: { before: 100, after: 100 },
             })],
-            width: { size: 75, type: WidthType.PERCENTAGE },
+            width: { size: TABLE_WIDTHS.asymmetric[1], type: WidthType.DXA },
             margins: { top: 150, bottom: 150, left: 150, right: 150 },
             verticalAlign: VerticalAlign.CENTER,
+            borders,
           }),
         ],
       }),
@@ -236,19 +392,19 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
             spacing: { before: 150, after: 100 },
           }),
           new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
+            columnWidths: TABLE_WIDTHS.twoCol,
             rows: [
-              createTableRow(['#', 'Nombre/Cuenta'], true),
+              createTableRow(['#', 'Nombre/Cuenta'], true, undefined, TABLE_WIDTHS.twoCol),
               ...objects.slice(0, 15).map((name: string, idx: number) =>
-                createTableRow([(idx + 1).toString(), name], false)
+                createTableRow([(idx + 1).toString(), name], false, undefined, TABLE_WIDTHS.twoCol)
               ),
             ],
           }),
           ...(totalCount > 15 ? [
             new Paragraph({
-              text: `... y ${totalCount - 15} objetos más.`,
+              children: [new TextRun({ text: `... y ${totalCount - 15} objetos más.`, size: 20 })],
               spacing: { before: 50, after: 150 },
-              shading: { fill: COLORS.lightBg },
+              shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
             }),
           ] : []),
           new Paragraph({ text: "", spacing: { after: 100 } }),
@@ -314,7 +470,8 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
         spacing: { before: 150, after: 100 },
       }),
       new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
+        columnWidths: columns.length === 2 ? TABLE_WIDTHS.twoCol :
+                      columns.length === 3 ? TABLE_WIDTHS.threeCol : TABLE_WIDTHS.fourCol,
         rows: [
           createTableRow(headerLabels, true),
           ...evidence.slice(0, 15).map((item: any) => {
@@ -338,7 +495,7 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
       }),
       ...(evidence.length > 15 ? [
         new Paragraph({
-          text: `... y ${evidence.length - 15} objetos más.`,
+          children: [new TextRun({ text: `... y ${evidence.length - 15} objetos más.`, size: 20 })],
           spacing: { before: 50, after: 150 },
         }),
       ] : []),
@@ -360,7 +517,7 @@ const createEvidenceTable = (evidence: any, severityColor: string): (Paragraph |
           size: 22,
         })],
         spacing: { before: 150, after: 150 },
-        shading: { fill: COLORS.lightBg },
+        shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
       }),
     ];
   }
@@ -644,6 +801,8 @@ export async function generateReport(data: ReportData): Promise<Blob> {
   //     severityCounts.medium > 0 ? "Aceptable" : "Saludable";
 
   const doc = new Document({
+    styles: getDocumentStyles(),
+    numbering: getNumberingConfig(),
     sections: [{
       properties: {
         page: {
@@ -654,6 +813,35 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             left: 1440,
           },
         },
+      },
+      headers: {
+        default: new Header({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.RIGHT,
+              children: [
+                new TextRun({ text: `${assessment.domain} - Active Directory Assessment`, size: 18, color: COLORS.info }),
+              ],
+            }),
+          ],
+        }),
+      },
+      footers: {
+        default: new Footer({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ text: "Página ", size: 18 }),
+                new TextRun({ children: [PageNumber.CURRENT], size: 18 }),
+                new TextRun({ text: " de ", size: 18 }),
+                new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 18 }),
+                new TextRun({ text: " | ", size: 18, color: COLORS.border }),
+                new TextRun({ text: "CONFIDENCIAL", size: 18, bold: true, color: COLORS.critical }),
+              ],
+            }),
+          ],
+        }),
       },
       children: [
         // PORTADA MODERNA
@@ -703,7 +891,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     children: [new TextRun({ text: "Fecha de Evaluación", bold: true, size: 24 })],
                     alignment: AlignmentType.LEFT,
                   })],
-                  shading: { fill: COLORS.lightBg },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
                   borders: {
                     top: { style: BorderStyle.NONE, size: 0 },
                     bottom: { style: BorderStyle.NONE, size: 0 },
@@ -717,7 +905,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     children: [new TextRun({ text: currentDate, size: 24 })],
                     alignment: AlignmentType.RIGHT,
                   })],
-                  shading: { fill: COLORS.lightBg },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
                   borders: {
                     top: { style: BorderStyle.NONE, size: 0 },
                     bottom: { style: BorderStyle.NONE, size: 0 },
@@ -735,7 +923,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     children: [new TextRun({ text: "Estado de Salud", bold: true, size: 24 })],
                     alignment: AlignmentType.LEFT,
                   })],
-                  shading: { fill: COLORS.lightBg },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
                   borders: {
                     top: { style: BorderStyle.NONE, size: 0 },
                     bottom: { style: BorderStyle.NONE, size: 0 },
@@ -761,7 +949,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     ],
                     alignment: AlignmentType.RIGHT,
                   })],
-                  shading: { fill: COLORS.lightBg },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
                   borders: {
                     top: { style: BorderStyle.NONE, size: 0 },
                     bottom: { style: BorderStyle.NONE, size: 0 },
@@ -782,17 +970,27 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             size: 28,
           })],
           alignment: AlignmentType.CENTER,
-          spacing: { before: 600, after: 1200 },
+          spacing: { before: 600, after: 400 },
         }),
+
+        // PAGE BREAK AFTER COVER
+        new Paragraph({ children: [new PageBreak()] }),
+
+        // TABLE OF CONTENTS
+        new Paragraph({
+          heading: HeadingLevel.HEADING_1,
+          children: [new TextRun({ text: "Tabla de Contenidos" })],
+        }),
+        new TableOfContents("Tabla de Contenidos", {
+          hyperlink: true,
+          headingStyleRange: "1-3",
+        }),
+        new Paragraph({ children: [new PageBreak()] }),
 
         // AD FOREST AND DOMAIN SUMMARY
         new Paragraph({
-          children: [new TextRun({
-            text: "1. Resumen del Bosque y Dominio AD",
-            size: 36,
-            bold: true,
-            color: COLORS.primary,
-          })],
+          heading: HeadingLevel.HEADING_1,
+          children: [new TextRun({ text: "1. Resumen del Bosque y Dominio AD" })],
           spacing: { before: 600, after: 300 },
           border: {
             bottom: {
@@ -804,41 +1002,33 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           },
         }),
         new Paragraph({
-          text: "",
+          children: [new TextRun({ text: "" })],
           spacing: { after: 200 },
         }),
         new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          borders: {
-            top: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-            bottom: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-            left: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-            right: { style: BorderStyle.SINGLE, size: 2, color: COLORS.border },
-            insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
-            insideVertical: { style: BorderStyle.SINGLE, size: 1, color: COLORS.border },
-          },
+          columnWidths: TABLE_WIDTHS.twoCol,
           rows: [
-            createTableRow(["Propiedad", "Valor"], true),
-            createTableRow(["Nombre del Bosque AD", rawData?.ForestName || rawData?.DomainInfo?.ForestName || assessment.domain]),
-            createTableRow(["Dominio Raíz del Bosque", rawData?.ForestRootDomain || rawData?.DomainInfo?.ForestRootDomain || assessment.domain]),
-            createTableRow(["Nivel Funcional del Bosque", forestLevel]),
-            createTableRow(["Nivel Funcional del Dominio", domainLevel]),
-            createTableRow(["Controladores de Dominio", rawData?.DomainControllers?.length?.toString() || "N/A"]),
-            createTableRow(["Número de Sitios AD", rawData?.Sites?.length?.toString() || "1"]),
+            createTableRow(["Propiedad", "Valor"], true, undefined, TABLE_WIDTHS.twoCol),
+            createTableRow(["Nombre del Bosque AD", rawData?.ForestName || rawData?.DomainInfo?.ForestName || assessment.domain], false, undefined, TABLE_WIDTHS.twoCol),
+            createTableRow(["Dominio Raíz del Bosque", rawData?.ForestRootDomain || rawData?.DomainInfo?.ForestRootDomain || assessment.domain], false, undefined, TABLE_WIDTHS.twoCol),
+            createTableRow(["Nivel Funcional del Bosque", forestLevel], false, undefined, TABLE_WIDTHS.twoCol),
+            createTableRow(["Nivel Funcional del Dominio", domainLevel], false, undefined, TABLE_WIDTHS.twoCol),
+            createTableRow(["Controladores de Dominio", rawData?.DomainControllers?.length?.toString() || "N/A"], false, undefined, TABLE_WIDTHS.twoCol),
+            createTableRow(["Número de Sitios AD", rawData?.Sites?.length?.toString() || "1"], false, undefined, TABLE_WIDTHS.twoCol),
           ],
         }),
 
         // DOMAIN CONTROLLER HEALTH (SEMAPHORE STYLE)
         ...(rawData?.DomainControllers && rawData.DomainControllers.length > 0 ? [
           new Paragraph({
-            text: "Estado de Controladores de Dominio",
-            heading: HeadingLevel.HEADING_1,
+            heading: HeadingLevel.HEADING_2,
+            children: [new TextRun({ text: "Estado de Controladores de Dominio" })],
             spacing: { before: 400, after: 200 },
           }),
           new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
+            columnWidths: TABLE_WIDTHS.fourCol,
             rows: [
-              createTableRow(["Hostname", "IPv4", "OS", "Estado"], true),
+              createTableRow(["Hostname", "IPv4", "OS", "Estado"], true, undefined, TABLE_WIDTHS.fourCol),
               ...rawData.DomainControllers.map((dc: any) => {
                 // Simulate health checks based on available data
                 // In a real scenario, we would check specific health flags
@@ -1343,7 +1533,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 size: 22,
               })],
               spacing: { after: 200 },
-              shading: { fill: COLORS.lightBg },
+              shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
             }),
             ...(trusts.length > 0 ? [
               new Table({
@@ -1451,7 +1641,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               size: 22,
             })],
             spacing: { after: 150 },
-            shading: { fill: COLORS.lightBg },
+            shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
           }),
           new Paragraph({
             children: [new TextRun({
@@ -1509,7 +1699,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   new TextRun({ text: "[CRITICAL] = Urgente", size: 20, color: COLORS.critical }),
                 ],
                 spacing: { after: 100 },
-                shading: { fill: COLORS.lightBg },
+                shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
               }),
               ...rawData.LingeringObjectsRisk.Indicators.map((indicator: any) => {
                 const severity = (indicator.Severity || "INFO").toUpperCase();
@@ -1553,7 +1743,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     size: 21,
                   })],
                   spacing: { after: 150 },
-                  shading: { fill: COLORS.lightBg },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
                 }),
                 new Table({
                   width: { size: 100, type: WidthType.PERCENTAGE },
@@ -1646,7 +1836,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 size: 22,
               })],
               spacing: { before: 200, after: 100 },
-              shading: { fill: COLORS.lightBg },
+              shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
             }),
             new Paragraph({
               children: [
@@ -2096,7 +2286,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               size: 22,
             })],
             spacing: { after: 150 },
-            shading: { fill: COLORS.lightBg },
+            shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
           }),
           new Paragraph({
             children: [new TextRun({
@@ -2741,7 +2931,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                       spacing: { after: 200 },
                     }),
                   ],
-                  shading: { fill: COLORS.lightBg },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
                   margins: { top: 300, bottom: 300, left: 300, right: 300 },
                 }),
               ],
@@ -2783,7 +2973,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             size: 20,
           })],
           spacing: { before: 200, after: 100 },
-          shading: { fill: COLORS.lightBg },
+          shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
         }),
         new Paragraph({
           children: [new TextRun({
