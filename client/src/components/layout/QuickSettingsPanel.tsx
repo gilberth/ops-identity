@@ -34,13 +34,22 @@ const QuickSettingsPanel = () => {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
-        const response = await fetch("/api/ai/config");
+        const response = await fetch("/api/config/ai");
         if (response.ok) {
           const data = await response.json();
+          // Determinar el modelo a mostrar
+          let displayModel = data.model || "auto";
+          if (data.model === "auto" && data.anthropic_auto_select?.enabled) {
+            displayModel = "auto (Opus/Sonnet)";
+          }
+
+          // Verificar si el provider tiene API key configurada
+          const isConfigured = data.available_providers?.[data.provider] === true;
+
           setAiConfig({
             provider: data.provider || "openai",
-            model: data.model || "gpt-4o-mini",
-            status: data.apiKeyConfigured ? "connected" : "disconnected",
+            model: displayModel,
+            status: isConfigured ? "connected" : "disconnected",
           });
         }
       } catch (error) {
@@ -56,18 +65,31 @@ const QuickSettingsPanel = () => {
   const checkAIConnection = async () => {
     setIsCheckingConnection(true);
     try {
-      const response = await fetch("/api/ai/test");
+      // Refetch config to verify current status
+      const response = await fetch("/api/config/ai");
       if (response.ok) {
-        setAiConfig((prev) => ({ ...prev, status: "connected" }));
-        toast({
-          title: "Connection successful",
-          description: `${aiConfig.provider} API is responding correctly.`,
-        });
+        const data = await response.json();
+        const isConfigured = data.available_providers?.[data.provider] === true;
+
+        if (isConfigured) {
+          setAiConfig((prev) => ({ ...prev, status: "connected" }));
+          toast({
+            title: "Connection verified",
+            description: `${data.provider} API key is configured and ready.`,
+          });
+        } else {
+          setAiConfig((prev) => ({ ...prev, status: "disconnected" }));
+          toast({
+            title: "Not configured",
+            description: `${data.provider} API key is not set. Configure in Admin Panel.`,
+            variant: "destructive",
+          });
+        }
       } else {
         setAiConfig((prev) => ({ ...prev, status: "error" }));
         toast({
           title: "Connection failed",
-          description: "Unable to connect to AI provider.",
+          description: "Unable to reach configuration endpoint.",
           variant: "destructive",
         });
       }
