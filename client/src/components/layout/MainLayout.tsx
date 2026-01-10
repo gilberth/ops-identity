@@ -1,6 +1,8 @@
 import React from "react";
 import Sidebar from "./Sidebar";
-import { Bell, Settings, User } from "lucide-react";
+import NotificationsPanel from "./NotificationsPanel";
+import QuickSettingsPanel from "./QuickSettingsPanel";
+import { User, Settings } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -10,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Link } from "react-router-dom";
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -29,16 +32,11 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
         {/* Top Header Bar */}
         <header className="sticky top-0 z-30 flex h-14 items-center justify-end px-6 bg-background/80 backdrop-blur-xl border-b border-border">
           <div className="flex items-center gap-2">
-            {/* Notifications */}
-            <button className="relative p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
-              <Bell className="h-4 w-4" />
-              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
-            </button>
+            {/* Notifications Panel */}
+            <NotificationsPanel />
 
-            {/* Settings */}
-            <button className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
-              <Settings className="h-4 w-4" />
-            </button>
+            {/* Quick Settings Panel */}
+            <QuickSettingsPanel />
 
             {/* Divider */}
             <div className="h-5 w-px bg-border mx-1" />
@@ -73,17 +71,23 @@ export const MainLayout = ({ children }: MainLayoutProps) => {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="h-4 w-4 mr-2" />
-                  Profile
+                <DropdownMenuItem asChild>
+                  <Link to="/admin" className="flex items-center">
+                    <User className="h-4 w-4 mr-2" />
+                    Profile
+                  </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Settings className="h-4 w-4 mr-2" />
-                  Settings
+                <DropdownMenuItem asChild>
+                  <Link to="/admin" className="flex items-center">
+                    <Settings className="h-4 w-4 mr-2" />
+                    Settings
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive focus:text-destructive">
-                  Sign out
+                <DropdownMenuItem asChild>
+                  <Link to="/" className="text-destructive flex items-center">
+                    Sign out
+                  </Link>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
