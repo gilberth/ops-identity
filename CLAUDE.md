@@ -144,6 +144,62 @@ Examples:
 
 ## AI Development Rules
 
+### PS1 Feature Development (MANDATORY WORKFLOW)
+
+**CRITICAL:** When adding ANY new feature, data collection, or analysis capability to the PowerShell script (PS1), you MUST complete ALL four steps:
+
+1. **PS1 Data Collection** (NewAssessment.tsx)
+   - Add PowerShell code to collect the new data
+   - Structure output as a proper object with meaningful property names
+   - Include counts and arrays of affected items for hygiene analysis
+
+2. **LLM Analysis Prompt** (server.js)
+   - Add a new prompt or extend existing category prompt in `server.js`
+   - Follow guidelines in `./guiaprompt.md` for prompt style
+   - Ensure the prompt focuses on operational hygiene (NOT security pentesting)
+   - Include anti-hallucination rules in the prompt (see step 4)
+
+3. **DOCX Report Generation** (reportGenerator.ts)
+   - **MUST use the docx skill** - Read `.claude/skills/docx/docx-js.md` completely
+   - Add section to display LLM findings in the Word report
+   - Use proper docx-js patterns:
+     - `numbering` config for ordered lists (NOT manual "1.", "2." text)
+     - `Table` with `columnWidths` for structured data display
+     - `ShadingType.CLEAR` for table cell backgrounds
+   - Include remediation recommendations with proper formatting
+
+4. **Anti-Hallucination Validation** (server.js - `ATTRIBUTE_VALIDATION_RULES`)
+   - **MUST use the anti-hallucination skill** - Read `.claude/skills/anti-hallucination/SKILL.md`
+   - **MANDATORY**: Add validation rule in `ATTRIBUTE_VALIDATION_RULES` for each `type_id`
+   - Every `affected_object` reported by the LLM MUST exist in the original JSON
+   - Validation rule template:
+     ```javascript
+     // In server.js ATTRIBUTE_VALIDATION_RULES object:
+     'NEW_TYPE_ID': {
+       category: 'CategoryName',
+       identifierField: 'Name',
+       validate: (obj) => obj.Enabled && obj.RiskyAttribute === true,
+       // For nested data (like HygieneAnalysis):
+       validateAffectedObject: (objName, parentObj) => {
+         return parentObj.NestedArray?.some(item =>
+           item.toLowerCase().includes(objName.toLowerCase())
+         );
+       }
+     }
+     ```
+   - Add to the prompt itself: `"⚠️ REGLA ANTI-ALUCINACIÓN: Solo reporta objetos que aparezcan EXPLÍCITAMENTE en los datos. NO inventes nombres."`
+   - Validation happens automatically via `validateFindings()` and `validateAttributes()`
+
+**Example flow for new feature "X":**
+```
+PS1: Collect X data → $result.XAnalysis = @{ Items = [...]; Count = N }
+Server: Add X prompt → "Analyze X for hygiene issues... ⚠️ ANTI-ALUCINACIÓN: Solo reporta objetos reales"
+Server: Validate → validateFindings(llmFindings, rawData, 'XAnalysis')
+DOCX: Add X section → new Table({ rows: [...], columnWidths: [3120, 3120, 3120] })
+```
+
+**NEVER skip any step.** Incomplete implementations create data that is collected but never analyzed, reported, or validated.
+
 ### Prompt Engineering
 
 All AI prompt modifications must follow guidelines in `./guiaprompt.md` (source of truth for style, structure, and tone).

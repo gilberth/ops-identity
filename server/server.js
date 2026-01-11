@@ -938,6 +938,116 @@ const ATTRIBUTE_VALIDATION_RULES = {
     validate: (obj) => obj.GpoStatus === 'AllSettingsDisabled' ||
                        obj.GpoStatus === 'UserSettingsDisabled' ||
                        obj.GpoStatus === 'ComputerSettingsDisabled'
+  },
+
+  // DCHealth / HygieneAnalysis findings (v3.6.13)
+  // These validate against HygieneAnalysis data extracted from NETLOGON/NTDS events
+  'GHOST_COMPUTER_ACCOUNTS': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    // Validates that reported ghost computers exist in HygieneAnalysis.GhostComputers
+    validate: (obj, finding) => {
+      // For DCHealth, the object is the DC itself
+      // The affected_objects should match items in HygieneAnalysis.GhostComputers
+      if (!obj.HygieneAnalysis?.GhostComputers) return false;
+      return obj.HygieneAnalysis.GhostComputers.length > 0;
+    },
+    // Custom validation for affected objects
+    validateAffectedObject: (objName, dcData) => {
+      if (!dcData.HygieneAnalysis?.GhostComputers) return false;
+      return dcData.HygieneAnalysis.GhostComputers.some(ghost =>
+        ghost.toLowerCase().includes(objName.toLowerCase()) ||
+        objName.toLowerCase().includes(ghost.toLowerCase())
+      );
+    }
+  },
+  'TRUST_RELATIONSHIP_FAILURE': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (!obj.HygieneAnalysis?.TrustFailures) return false;
+      return obj.HygieneAnalysis.TrustFailures.length > 0;
+    },
+    validateAffectedObject: (objName, dcData) => {
+      if (!dcData.HygieneAnalysis?.TrustFailures) return false;
+      return dcData.HygieneAnalysis.TrustFailures.some(trust =>
+        trust.toLowerCase().includes(objName.toLowerCase()) ||
+        objName.toLowerCase().includes(trust.toLowerCase())
+      );
+    }
+  },
+  'CREDENTIAL_DESYNC': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (!obj.HygieneAnalysis?.CredentialDesync) return false;
+      return obj.HygieneAnalysis.CredentialDesync.length > 0;
+    },
+    validateAffectedObject: (objName, dcData) => {
+      if (!dcData.HygieneAnalysis?.CredentialDesync) return false;
+      return dcData.HygieneAnalysis.CredentialDesync.some(cred =>
+        cred.toLowerCase().includes(objName.toLowerCase()) ||
+        objName.toLowerCase().includes(cred.toLowerCase())
+      );
+    }
+  },
+  'SECURE_CHANNEL_FAILURE': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (!obj.HygieneAnalysis?.SecureChannelFailures) return false;
+      return obj.HygieneAnalysis.SecureChannelFailures.length > 0;
+    },
+    validateAffectedObject: (objName, dcData) => {
+      if (!dcData.HygieneAnalysis?.SecureChannelFailures) return false;
+      return dcData.HygieneAnalysis.SecureChannelFailures.some(sc =>
+        sc.toLowerCase().includes(objName.toLowerCase()) ||
+        objName.toLowerCase().includes(sc.toLowerCase())
+      );
+    }
+  },
+  'REPLICATION_PARTNER_ISSUE': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (!obj.HygieneAnalysis?.ReplicationPartnerIssues) return false;
+      return obj.HygieneAnalysis.ReplicationPartnerIssues.length > 0;
+    },
+    validateAffectedObject: (objName, dcData) => {
+      if (!dcData.HygieneAnalysis?.ReplicationPartnerIssues) return false;
+      return dcData.HygieneAnalysis.ReplicationPartnerIssues.some(rp =>
+        rp.toLowerCase().includes(objName.toLowerCase()) ||
+        objName.toLowerCase().includes(rp.toLowerCase())
+      );
+    }
+  },
+  // Traditional DCHealth findings
+  'REPLICATION_FAILURE': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.ConsecutiveReplicationFailures > 0 || obj.ReplicationStatus === 'Error'
+  },
+  'OS_OBSOLETE_DC': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const os = (obj.OperatingSystem || '').toLowerCase();
+      return os.includes('2012') || os.includes('2008') || os.includes('2003');
+    }
+  },
+  'FSMO_PLACEMENT_ISSUE': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.FSMORoles && obj.FSMORoles.length > 3 // More than 3 roles = SPOF risk
+  },
+  'NTP_MISCONFIGURED': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const source = (obj.TimeSyncConfig?.Source || '').toLowerCase();
+      return source.includes('local cmos') || source.includes('free-running') ||
+             source.includes('vm ic time');
+    }
   }
 };
 
@@ -1049,7 +1159,25 @@ function validateAttributes(finding, data, category) {
 
     const realObj = dataMap.get(cleanName) || dataMap.get(lowerName);
 
-    if (realObj && rule.validate(realObj)) {
+    // v3.6.13: Special handling for DCHealth with validateAffectedObject
+    // For DCHealth/HygieneAnalysis, affected_objects are computers from logs,
+    // not the DC itself, so we need to validate against HygieneAnalysis arrays
+    if (rule.validateAffectedObject && category.toLowerCase() === 'dchealth') {
+      // Check if any DC in the data has this object in its HygieneAnalysis
+      let foundInAnyDC = false;
+      for (const dc of data) {
+        if (rule.validateAffectedObject(objName, dc)) {
+          foundInAnyDC = true;
+          break;
+        }
+      }
+      if (foundInAnyDC) {
+        result.validObjects.push(objName);
+      } else {
+        result.invalidObjects.push(objName);
+        console.log(`[validateAttributes] ❌ DCHealth object "${objName}" not found in any DC's HygieneAnalysis`);
+      }
+    } else if (realObj && rule.validate(realObj)) {
       result.validObjects.push(objName);
     } else {
       result.invalidObjects.push(objName);
@@ -1731,61 +1859,115 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
     - Test de acceso: Validar que cuentas removidas no tienen acceso privilegiado
 - **Evidencia**: affected_objects con nombres REALES (máximo 10, luego "...y X más"), affected_count preciso, details con estadísticas (promedio LastLogonDate, distribución por OU)`,
 
-    DCHealth: `Analiza la salud y seguridad de los controladores de dominio.
+    DCHealth: `Analiza la salud operativa y higiene de los controladores de dominio.
 
-**BUSCA ESPECÍFICAMENTE:**
+**⚠️ CONTEXTO DE ANÁLISIS:**
+Este es un análisis de HIGIENE OPERATIVA, no de seguridad ofensiva. El objetivo es identificar desorden administrativo, deuda técnica y configuraciones subóptimas que hacen la infraestructura inestable e ineficiente.
+
+**🎯 BUSCA ESPECÍFICAMENTE:**
+
+## PARTE A: PROBLEMAS OPERATIVOS TRADICIONALES
+
 1. **Problemas de replicación** (ConsecutiveReplicationFailures > 0)
-   - Riesgo: Inconsistencia de datos, posible DoS
-   
+   - Impacto: Inconsistencia de datos entre DCs, usuarios con credenciales desactualizadas
+   - Comando verificar: repadmin /showrepl
+   - Timeline: Remediar en 24-48 horas
+
 2. **Versiones de OS obsoletas** (< Windows Server 2016)
-   - Riesgo: Vulnerabilidades sin parchar, sin soporte
-   
-3. **Roles FSMO** (todos en un solo DC)
-   - Riesgo: Single point of failure
-   
-4. **KRBTGT password age** (> 180 días)
-   - Riesgo: Golden ticket attacks
-   - MITRE ATT&CK: T1558.001
+   - Impacto: Sin soporte de Microsoft, sin actualizaciones de seguridad
+   - Timeline: Planificar migración en 90 días
 
-5. **SMBv1 habilitado**
-   - Riesgo: Vulnerable a EternalBlue, ransomware
-   - CIS Control: 2.3.11.9 - Disable SMBv1
+3. **Roles FSMO concentrados** (todos en un solo DC)
+   - Impacto: Single point of failure - si ese DC falla, operaciones críticas se detienen
+   - Comando verificar: netdom query fsmo
+   - Timeline: Redistribuir roles en 30 días
 
-6. **NTLM authentication** (no restringido)
-   - Riesgo: Pass-the-hash attacks
-   - CIS Control: 2.3.11.7 - Restrict NTLM
+4. **AD Recycle Bin deshabilitado**
+   - Impacto: No se pueden recuperar objetos eliminados accidentalmente
+   - Comando habilitar: Enable-ADOptionalFeature -Identity "Recycle Bin Feature" -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name
+   - Timeline: Habilitar inmediatamente
 
-7. **AD Recycle Bin** (deshabilitado)
-   - Riesgo: No se pueden recuperar objetos eliminados
-   
-8. **Tombstone Lifetime** (< 180 días)
-   - Riesgo: Pérdida de datos en backups antiguos
+5. **Tombstone Lifetime** (< 180 días)
+   - Impacto: Riesgo de objetos lingering si backup tiene más antigüedad
+   - Timeline: Evaluar y ajustar en 30 días
 
-9. **🔴 Sincronización de Tiempo (NTP) Incorrecta**
+6. **🔴 Sincronización de Tiempo (NTP) Incorrecta**
    - Analiza la sección 'TimeSyncConfig' en los datos.
-   - **PDC Emulator**: Debe usar fuente externa (NTP) confiable (ej. pool.ntp.org).
-     - CRITICAL: Si Source es "Local CMOS Clock", "Free-running System Clock" o "VM IC Time Sync Provider" (en virtual sin config especial).
+   - **PDC Emulator**: Debe usar fuente externa (NTP) confiable.
+     - CRITICAL: Si Source es "Local CMOS Clock", "Free-running System Clock" o "VM IC Time Sync Provider".
    - **Otros DCs**: Deben sincronizar vía NT5DS (jerarquía de dominio).
-     - HIGH: Si Source es "Local CMOS Clock" o no es NT5DS.
-   - Riesgo: Fallos de Kerberos (si desvío > 5 min), problemas de replicación, logs inconsistentes.
-   - Comando verificar: w32tm /query /status /verbose
-   - Comando fix PDC: w32tm /config /manualpeerlist:"0.pool.ntp.org 1.pool.ntp.org" /syncfromflags:manual /reliable:YES /update
-   - Comando fix otros DCs: w32tm /config /syncfromflags:domhier /update
+   - Impacto: Fallos de Kerberos (si desvío > 5 min), problemas de replicación
    - Timeline: Remediar INMEDIATAMENTE (24 horas)
 
-**PARA CADA HALLAZGO, PROPORCIONA:**
-- **type_id**: Identificador ÚNICO y CONSTANTE para este tipo de hallazgo (NO lo traduzcas).
-  Debe ser en MAYÚSCULAS y guiones bajos.
-  Ejemplos: REPLICATION_FAILURE, OS_OBSOLETE_DC, FSMO_PLACEMENT_ISSUE.
-- **Título**: Problema específico del DC
-- **Descripción**: Impacto en disponibilidad y seguridad
-- **Recomendación**: Pasos detallados de remediación:
-  * Para KRBTGT: Procedimiento de rotación segura
-  * Para SMBv1: Cómo deshabilitar sin romper servicios
-  * Para replicación: Diagnóstico y solución
-  * Comandos PowerShell exactos
-  * Referencias a Microsoft best practices
-- **Evidencia**: Estado actual de cada DC`,
+## PARTE B: ANÁLISIS DE HIGIENE (HygieneAnalysis)
+
+Si los datos incluyen la sección 'HygieneAnalysis', analiza cada categoría:
+
+7. **🔴 CRITICAL: Cuentas de Equipo Fantasma (GhostComputers)**
+   - Son equipos que ya no existen físicamente pero siguen en AD, causando errores NETLOGON
+   - Indicador: Errores "No logon servers available" o "session setup failed" en logs
+   - Impacto: Ruido en logs, confusión operativa, posible uso de licencias innecesarias
+   - type_id: GHOST_COMPUTER_ACCOUNTS
+   - Remediación:
+     * Verificar si el equipo existe: Test-Connection -ComputerName "NOMBRE" -Count 1
+     * Si no existe, deshabilitarlo primero: Disable-ADAccount -Identity "CN=NOMBRE,OU=Computers,DC=domain,DC=com"
+     * Después de 30 días sin reclamaciones, eliminarlo: Remove-ADComputer -Identity "NOMBRE"
+   - Timeline: Investigar en 7 días, limpiar en 30 días
+
+8. **🔴 CRITICAL: Fallos de Confianza (TrustFailures)**
+   - Errores de autenticación entre dominios/bosques debido a trusts rotos
+   - Indicador: Errores "trust relationship failed" o "domain controller not found"
+   - Impacto: Usuarios de dominios de confianza no pueden autenticarse
+   - type_id: TRUST_RELATIONSHIP_FAILURE
+   - Remediación:
+     * Verificar estado del trust: Get-ADTrust -Filter * | Test-ADTrustRelationship
+     * Reparar trust: netdom trust DOMINIO /domain:OTRO_DOMINIO /reset /passwordT:CONTRASEÑA
+   - Timeline: Remediar INMEDIATAMENTE (4-8 horas)
+
+9. **⚠️ HIGH: Desincronización de Credenciales (CredentialDesync)**
+   - Cuentas de equipo con contraseñas desincronizadas entre AD y el equipo local
+   - Indicador: Errores "secure channel" o "access denied" intermitentes
+   - Impacto: Fallos de autenticación Kerberos, acceso denegado a recursos de red
+   - type_id: CREDENTIAL_DESYNC
+   - Remediación:
+     * Reset del canal seguro: Test-ComputerSecureChannel -Repair -Credential (Get-Credential)
+     * O desde el DC: Reset-ComputerMachinePassword -Server DC01 -Credential (Get-Credential)
+   - Timeline: Remediar en 24-48 horas
+
+10. **⚠️ HIGH: Fallos de Canal Seguro (SecureChannelFailures)**
+    - El canal seguro entre equipo y DC está comprometido
+    - Indicador: Errores "NETLOGON_EVENT_TYPE_3210" o similar
+    - Impacto: El equipo no puede autenticarse contra el dominio
+    - type_id: SECURE_CHANNEL_FAILURE
+    - Remediación:
+      * Desde el equipo afectado: Test-ComputerSecureChannel -Repair
+      * Si falla, desunir y reunir al dominio
+    - Timeline: Remediar en 24 horas
+
+11. **⚠️ MEDIUM: Problemas de Partners de Replicación (ReplicationPartnerIssues)**
+    - DCs que no pueden comunicarse con sus partners de replicación
+    - Indicador: Errores "RPC server unavailable" o timeouts de replicación
+    - Impacto: Cambios no se propagan, inconsistencia de datos
+    - type_id: REPLICATION_PARTNER_ISSUE
+    - Remediación:
+      * Verificar conectividad: repadmin /replsummary
+      * Forzar replicación: repadmin /syncall /AdeP
+      * Verificar DNS: nslookup -type=srv _ldap._tcp.dc._msdcs.DOMINIO
+    - Timeline: Remediar en 24-48 horas
+
+**📋 FORMATO DE SALIDA:**
+
+Para CADA hallazgo (ya sea tradicional o de HygieneAnalysis), proporciona:
+- **type_id**: Identificador ÚNICO en MAYÚSCULAS_CON_GUIONES (ej: GHOST_COMPUTER_ACCOUNTS, TRUST_RELATIONSHIP_FAILURE)
+- **Título**: Descripción concisa del problema
+- **Descripción**: Impacto operativo (NO de seguridad ofensiva)
+- **severity**: CRITICAL/HIGH/MEDIUM/LOW basado en impacto operativo
+- **Recomendación**: Pasos de remediación con comandos PowerShell exactos
+- **affected_objects**: Lista de equipos/DCs afectados (máximo 10, luego "...y X más")
+- **affected_count**: Número total de objetos afectados
+- **details**: Estadísticas relevantes (conteos, promedios, distribución)
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta objetos que aparezcan EXPLÍCITAMENTE en los datos proporcionados. NO inventes nombres de equipos o DCs.`,
 
     DNS: `Eres un especialista en seguridad de infraestructura DNS de Active Directory con experiencia en detección de misconfigurations y vulnerabilidades de resolución de nombres.
 
