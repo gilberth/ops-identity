@@ -1911,11 +1911,132 @@ function Get-DCHealthDetails {
                     if ($healthScore -eq "Healthy") { $healthScore = "Warning" }
                 }
 
+                # ═══════════════════════════════════════════════════════════════════
+                # HYGIENE ANALYSIS: Extract structured data from NETLOGON errors
+                # This is operational hygiene, not security - identifies cleanup needs
+                # ═══════════════════════════════════════════════════════════════════
+
+                # Ghost Computers: Machines trying to authenticate but account doesn't exist
+                # Pattern: "No computer account for this computer" or "could not be mapped"
+                $ghostComputers = @()
+                foreach ($event in $netlogonErrors) {
+                    $msg = $event.Message
+                    # Spanish: "No existe la cuenta de equipo para este equipo: NOMBREPC$"
+                    # English: "The computer name ... could not be mapped to the computer account"
+                    if ($msg -match 'cuenta.*equipo.*:\s*([A-Za-z0-9_-]+)\\\$' -or
+                        $msg -match 'computer.*account.*:\s*([A-Za-z0-9_-]+)\\\$' -or
+                        $msg -match '([A-Za-z0-9_-]+)\\\$.*no existe' -or
+                        $msg -match 'could not be mapped.*([A-Za-z0-9_-]+)') {
+                        $computerName = $Matches[1] -replace '\\\$', ''
+                        if ($computerName -and $ghostComputers -notcontains $computerName) {
+                            $ghostComputers += $computerName
+                        }
+                    }
+                }
+
+                # Trust Failures: Domains with broken trust relationships
+                # Pattern: "trust relationship ... domain ... failed" or "secure channel"
+                $trustFailures = @()
+                foreach ($event in $netlogonErrors) {
+                    $msg = $event.Message
+                    # Spanish: "La sesión de seguridad de confianza ... dominio NOMBRE"
+                    # English: "The trust relationship ... with domain ... failed"
+                    if ($msg -match 'confianza.*dominio\s+([A-Za-z0-9._-]+)' -or
+                        $msg -match 'trust.*domain\s+([A-Za-z0-9._-]+)' -or
+                        $msg -match 'dominio\s+([A-Za-z0-9._-]+).*confianza' -or
+                        $msg -match 'secure channel.*domain\s+([A-Za-z0-9._-]+)') {
+                        $domainName = $Matches[1]
+                        if ($domainName -and $trustFailures -notcontains $domainName) {
+                            $trustFailures += $domainName
+                        }
+                    }
+                }
+
+                # Credential Desync: Computers with machine account password issues
+                # Pattern: "access denied" combined with computer reference
+                $credentialDesync = @()
+                foreach ($event in $netlogonErrors) {
+                    $msg = $event.Message
+                    if ($msg -match 'acceso denegado|access denied') {
+                        if ($msg -match 'equipo\s+([A-Za-z0-9_-]+)' -or
+                            $msg -match 'computer\s+([A-Za-z0-9_-]+)' -or
+                            $msg -match '([A-Za-z0-9_-]+)\s+error') {
+                            $computerName = $Matches[1]
+                            if ($computerName -and $credentialDesync -notcontains $computerName) {
+                                $credentialDesync += $computerName
+                            }
+                        }
+                    }
+                }
+
+                # Secure Channel Failures: Computers that can't establish secure channel
+                $secureChannelFailures = @()
+                foreach ($event in $netlogonErrors) {
+                    $msg = $event.Message
+                    if ($msg -match 'canal seguro|secure channel') {
+                        if ($msg -match 'equipo\s+([A-Za-z0-9_-]+)' -or
+                            $msg -match 'computer\s+([A-Za-z0-9_-]+)') {
+                            $computerName = $Matches[1]
+                            if ($computerName -and $secureChannelFailures -notcontains $computerName) {
+                                $secureChannelFailures += $computerName
+                            }
+                        }
+                    }
+                }
+
+                # Replication Partner Issues from NTDS errors
+                $replicationIssues = @()
+                foreach ($event in $ntdsErrors) {
+                    $msg = $event.Message
+                    if ($msg -match 'servidor\s+([A-Za-z0-9._-]+)' -or
+                        $msg -match 'server\s+([A-Za-z0-9._-]+)' -or
+                        $msg -match 'DC\s+([A-Za-z0-9._-]+)' -or
+                        $msg -match 'partner\s+([A-Za-z0-9._-]+)') {
+                        $partnerName = $Matches[1]
+                        if ($partnerName -and $replicationIssues -notcontains $partnerName) {
+                            $replicationIssues += $partnerName
+                        }
+                    }
+                }
+
+                # Build Hygiene Analysis object
+                $hygieneAnalysis = @{
+                    GhostComputers = $ghostComputers
+                    GhostComputersCount = $ghostComputers.Count
+                    TrustFailures = $trustFailures
+                    TrustFailuresCount = $trustFailures.Count
+                    CredentialDesync = $credentialDesync
+                    CredentialDesyncCount = $credentialDesync.Count
+                    SecureChannelFailures = $secureChannelFailures
+                    SecureChannelFailuresCount = $secureChannelFailures.Count
+                    ReplicationPartnerIssues = $replicationIssues
+                    ReplicationPartnerIssuesCount = $replicationIssues.Count
+                }
+
+                # Add hygiene issues to healthIssues for visibility
+                if ($ghostComputers.Count -gt 0) {
+                    $healthIssues += "Ghost computers detected ($($ghostComputers.Count)) - Stale AD objects need cleanup"
+                }
+                if ($trustFailures.Count -gt 0) {
+                    $healthIssues += "Trust failures with $($trustFailures.Count) domain(s) - Inter-domain auth broken"
+                    if ($healthScore -ne "Critical") { $healthScore = "Critical" }
+                }
+                if ($credentialDesync.Count -gt 0) {
+                    $healthIssues += "Credential desync on $($credentialDesync.Count) computer(s) - Machine passwords need reset"
+                }
+                if ($secureChannelFailures.Count -gt 0) {
+                    $healthIssues += "Secure channel failures on $($secureChannelFailures.Count) computer(s)"
+                }
+                if ($replicationIssues.Count -gt 0) {
+                    $healthIssues += "Replication issues with $($replicationIssues.Count) partner DC(s)"
+                }
+
                 $dcHealthInfo.DomainControllers += @{
                     Name = $dc.Name
                     HostName = $dc.HostName
                     OverallHealth = $healthScore
                     HealthIssues = $healthIssues
+                    HygieneAnalysis = $hygieneAnalysis
                     RecentHotfixes = $hotfixes
                     TimeConfiguration = $timeConfig
                     CriticalEvents = $criticalEvents

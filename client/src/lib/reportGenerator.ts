@@ -612,17 +612,109 @@ const analyzeDFSRErrors = (events: any[]): ErrorAnalysis[] => {
 };
 
 // Main function to perform comprehensive DC health analysis
+// Uses HygieneAnalysis from PS1 if available, falls back to regex analysis
 const analyzeDCHealthDetailed = (dc: any): DCHealthAnalysis => {
   const events = dc.CriticalEvents || [];
   const rootCauseAnalysis: ErrorAnalysis[] = [];
+  const hygieneData = dc.HygieneAnalysis;
 
-  // Run all analyzers
-  rootCauseAnalysis.push(...analyzeNetlogonErrors(events));
-  rootCauseAnalysis.push(...analyzeNTDSErrors(events));
-  rootCauseAnalysis.push(...analyzeKDCErrors(events));
-  rootCauseAnalysis.push(...analyzeDNSErrors(events));
-  rootCauseAnalysis.push(...analyzeTimeSyncErrors(events));
-  rootCauseAnalysis.push(...analyzeDFSRErrors(events));
+  // If HygieneAnalysis exists (from improved PS1 v3.6.12+), use structured data
+  if (hygieneData) {
+    // Ghost Computers from PS1
+    if (hygieneData.GhostComputers && hygieneData.GhostComputers.length > 0) {
+      rootCauseAnalysis.push({
+        type: "Cuentas de Equipo Fantasma (Ghost Objects)",
+        description: `Se detectaron ${hygieneData.GhostComputersCount} equipos que intentan autenticarse pero sus cuentas de AD no existen o están desincronizadas. Esto ocurre cuando equipos fueron reformateados sin eliminar su cuenta de AD, o cuando hay registros DNS obsoletos.`,
+        severity: hygieneData.GhostComputersCount > 5 ? "critical" : "warning",
+        affectedObjects: hygieneData.GhostComputers.slice(0, 15),
+        remediation: [
+          "Verificar si los equipos existen físicamente con: Get-ADComputer -Filter {Name -like 'NOMBREPC*'}",
+          "Si no existen, eliminar cuentas huérfanas: Remove-ADComputer -Identity 'NOMBREPC'",
+          "Limpiar registros DNS obsoletos: dnscmd /AgeAllRecords",
+          "Habilitar scavenging en zonas DNS para limpieza automática"
+        ]
+      });
+    }
+
+    // Trust Failures from PS1
+    if (hygieneData.TrustFailures && hygieneData.TrustFailures.length > 0) {
+      rootCauseAnalysis.push({
+        type: "Problemas de Relación de Confianza (Trust Failures)",
+        description: `Se detectaron fallas en las relaciones de confianza con ${hygieneData.TrustFailuresCount} dominio(s). Esto impide la autenticación entre dominios y puede causar fallas de acceso a recursos compartidos.`,
+        severity: "critical",
+        affectedObjects: hygieneData.TrustFailures,
+        remediation: [
+          "Verificar estado del trust: Get-ADTrust -Filter * | Select Name, Direction, TrustType",
+          "Restablecer la relación de confianza desde AD Domains and Trusts",
+          "Verificar conectividad DNS entre dominios",
+          "Comando para reparar: netdom trust DOMINIO /domain:OTRODOMINIO /reset"
+        ]
+      });
+    }
+
+    // Credential Desync from PS1
+    if (hygieneData.CredentialDesync && hygieneData.CredentialDesync.length > 0) {
+      rootCauseAnalysis.push({
+        type: "Errores de Acceso Denegado (Credential Desync)",
+        description: `${hygieneData.CredentialDesyncCount} equipos reportan acceso denegado. Esto indica que las credenciales de la cuenta de equipo están desincronizadas entre el equipo y AD (password mismatch).`,
+        severity: hygieneData.CredentialDesyncCount > 3 ? "critical" : "warning",
+        affectedObjects: hygieneData.CredentialDesync.slice(0, 15),
+        remediation: [
+          "En el equipo afectado ejecutar: Reset-ComputerMachinePassword -Credential (Get-Credential)",
+          "Alternativa PowerShell: Test-ComputerSecureChannel -Repair -Credential (Get-Credential)",
+          "Si persiste, desunir y reunir al dominio manualmente",
+          "Verificar que la política 'Machine account password age' no sea muy agresiva"
+        ]
+      });
+    }
+
+    // Secure Channel Failures from PS1
+    if (hygieneData.SecureChannelFailures && hygieneData.SecureChannelFailures.length > 0) {
+      rootCauseAnalysis.push({
+        type: "Errores de Canal Seguro (Secure Channel)",
+        description: `${hygieneData.SecureChannelFailuresCount} equipos tienen problemas estableciendo canal seguro con el DC. Esto previene la autenticación Kerberos y puede causar fallas de login.`,
+        severity: "critical",
+        affectedObjects: hygieneData.SecureChannelFailures.slice(0, 15),
+        remediation: [
+          "Verificar canal seguro: Test-ComputerSecureChannel -Server DC01",
+          "Reparar canal: Test-ComputerSecureChannel -Repair",
+          "Verificar sincronización de tiempo (diferencia máx 5 min)",
+          "Revisar conectividad a puertos: TCP 88 (Kerberos), 389 (LDAP), 445 (SMB)"
+        ]
+      });
+    }
+
+    // Replication Partner Issues from PS1
+    if (hygieneData.ReplicationPartnerIssues && hygieneData.ReplicationPartnerIssues.length > 0) {
+      rootCauseAnalysis.push({
+        type: "Errores de Replicación de Active Directory",
+        description: `Se detectaron problemas de replicación con ${hygieneData.ReplicationPartnerIssuesCount} DC partner(s). Esto puede causar inconsistencias entre DCs y pérdida de cambios.`,
+        severity: hygieneData.ReplicationPartnerIssuesCount > 2 ? "critical" : "warning",
+        affectedObjects: hygieneData.ReplicationPartnerIssues,
+        remediation: [
+          "Verificar estado de replicación: repadmin /replsummary",
+          "Identificar fallos específicos: repadmin /showrepl",
+          "Forzar replicación: repadmin /syncall /AdeP",
+          "Verificar conectividad RPC entre DCs: dcdiag /test:connectivity"
+        ]
+      });
+    }
+
+    // Still run analyzers for KDC, DNS, Time, DFSR (not in HygieneAnalysis)
+    rootCauseAnalysis.push(...analyzeKDCErrors(events));
+    rootCauseAnalysis.push(...analyzeDNSErrors(events));
+    rootCauseAnalysis.push(...analyzeTimeSyncErrors(events));
+    rootCauseAnalysis.push(...analyzeDFSRErrors(events));
+
+  } else {
+    // Fallback: No HygieneAnalysis, use regex-based analysis (for old JSONs)
+    rootCauseAnalysis.push(...analyzeNetlogonErrors(events));
+    rootCauseAnalysis.push(...analyzeNTDSErrors(events));
+    rootCauseAnalysis.push(...analyzeKDCErrors(events));
+    rootCauseAnalysis.push(...analyzeDNSErrors(events));
+    rootCauseAnalysis.push(...analyzeTimeSyncErrors(events));
+    rootCauseAnalysis.push(...analyzeDFSRErrors(events));
+  }
 
   // Determine overall status based on analysis
   let healthScore: "Healthy" | "Warning" | "Critical" = "Healthy";
