@@ -213,6 +213,79 @@ const getNumberingConfig = () => ({
         },
       ],
     },
+    // DC Health remediation lists - each error type gets unique reference for proper numbering restart
+    {
+      reference: "dc-remediation-1",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "dc-remediation-2",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "dc-remediation-3",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "dc-remediation-4",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "dc-remediation-5",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
+    {
+      reference: "dc-remediation-6",
+      levels: [
+        {
+          level: 0,
+          format: LevelFormat.DECIMAL,
+          text: "%1.",
+          alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+        },
+      ],
+    },
   ],
 });
 
@@ -2621,6 +2694,11 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             );
 
             // Generate detailed section for each error type
+            // Use counter for unique numbering references (restarts numbering for each error type)
+            let remediationListIndex = 0;
+            const remediationRefs = ["dc-remediation-1", "dc-remediation-2", "dc-remediation-3",
+                                     "dc-remediation-4", "dc-remediation-5", "dc-remediation-6"];
+
             Object.values(groupedByType).forEach(({ analysis, dcs }) => {
               const severityColor = analysis.severity === "critical" ? COLORS.critical :
                                    analysis.severity === "warning" ? COLORS.medium : COLORS.info;
@@ -2675,12 +2753,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 );
               }
 
-              // Affected objects (computers, domains, etc.)
+              // Affected objects displayed in a table (per docx-js best practices)
               if (analysis.affectedObjects.length > 0) {
                 sections.push(
                   new Paragraph({
                     children: [new TextRun({
-                      text: "Objetos Afectados:",
+                      text: `Objetos Afectados (${analysis.affectedObjects.length}):`,
                       bold: true,
                       size: 20,
                     })],
@@ -2688,23 +2766,67 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                   })
                 );
 
-                // Show affected objects in a compact list (max 15)
+                // Create table with affected objects (3 columns, max 15 objects)
                 const objectsToShow = analysis.affectedObjects.slice(0, 15);
+                const tableBorders = getTableBorders();
+
+                // Split objects into rows of 3
+                const rows: TableRow[] = [];
+                for (let i = 0; i < objectsToShow.length; i += 3) {
+                  const rowObjects = objectsToShow.slice(i, i + 3);
+                  rows.push(
+                    new TableRow({
+                      children: [
+                        ...rowObjects.map(obj =>
+                          new TableCell({
+                            borders: tableBorders,
+                            width: { size: 3120, type: WidthType.DXA },
+                            shading: { fill: "F5F5F5", type: ShadingType.CLEAR },
+                            children: [new Paragraph({
+                              children: [new TextRun({ text: obj, size: 18, color: COLORS.info })],
+                              alignment: AlignmentType.CENTER,
+                            })],
+                          })
+                        ),
+                        // Fill empty cells if row has less than 3 objects
+                        ...Array(3 - rowObjects.length).fill(null).map(() =>
+                          new TableCell({
+                            borders: tableBorders,
+                            width: { size: 3120, type: WidthType.DXA },
+                            shading: { fill: "F5F5F5", type: ShadingType.CLEAR },
+                            children: [new Paragraph({ children: [new TextRun("")] })],
+                          })
+                        ),
+                      ],
+                    })
+                  );
+                }
+
                 sections.push(
-                  new Paragraph({
-                    children: [new TextRun({
-                      text: objectsToShow.join(", ") +
-                            (analysis.affectedObjects.length > 15 ? ` ... y ${analysis.affectedObjects.length - 15} más` : ""),
-                      size: 20,
-                      color: COLORS.info,
-                    })],
-                    spacing: { after: 100 },
-                    indent: { left: 360 },
+                  new Table({
+                    columnWidths: [3120, 3120, 3120], // 3 equal columns (9360 total for letter)
+                    rows: rows,
                   })
                 );
+
+                // Show count if more than 15
+                if (analysis.affectedObjects.length > 15) {
+                  sections.push(
+                    new Paragraph({
+                      children: [new TextRun({
+                        text: `... y ${analysis.affectedObjects.length - 15} objetos más`,
+                        size: 18,
+                        italics: true,
+                        color: COLORS.info,
+                      })],
+                      spacing: { before: 50, after: 100 },
+                      alignment: AlignmentType.RIGHT,
+                    })
+                  );
+                }
               }
 
-              // Remediation recommendations
+              // Remediation recommendations using proper numbering config
               sections.push(
                 new Paragraph({
                   children: [new TextRun({
@@ -2717,15 +2839,16 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 })
               );
 
-              analysis.remediation.forEach((step, index) => {
+              // Use unique numbering reference for each error type (restarts at 1)
+              const currentRef = remediationRefs[remediationListIndex % remediationRefs.length];
+              remediationListIndex++;
+
+              analysis.remediation.forEach((step) => {
                 sections.push(
                   new Paragraph({
-                    children: [
-                      new TextRun({ text: `${index + 1}. `, bold: true, size: 20 }),
-                      new TextRun({ text: step, size: 20 }),
-                    ],
+                    numbering: { reference: currentRef, level: 0 },
+                    children: [new TextRun({ text: step, size: 20 })],
                     spacing: { after: 30 },
-                    indent: { left: 360 },
                   })
                 );
               });
@@ -2733,7 +2856,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               // Add separator
               sections.push(
                 new Paragraph({
-                  text: "",
+                  children: [new TextRun("")],
                   spacing: { after: 200 },
                   border: {
                     bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
