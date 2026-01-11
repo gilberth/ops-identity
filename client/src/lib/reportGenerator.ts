@@ -222,6 +222,366 @@ const getTableBorders = () => {
   return { top: border, bottom: border, left: border, right: border };
 };
 
+// =============================================================================
+// DC HEALTH ROOT CAUSE ANALYSIS
+// Analyzes CriticalEvents to identify specific problems and affected computers
+// =============================================================================
+
+interface ErrorAnalysis {
+  type: string;
+  description: string;
+  severity: "critical" | "warning" | "info";
+  affectedObjects: string[];
+  remediation: string[];
+}
+
+interface DCHealthAnalysis {
+  status: string;
+  color: string;
+  issues: string[];
+  rootCauseAnalysis: ErrorAnalysis[];
+}
+
+// Analyze NETLOGON errors to identify root causes
+const analyzeNetlogonErrors = (events: any[]): ErrorAnalysis[] => {
+  const analyses: ErrorAnalysis[] = [];
+  const netlogonEvents = events.filter((e: any) => e.Source === "NETLOGON");
+
+  if (netlogonEvents.length === 0) return analyses;
+
+  // Group by error patterns
+  const ghostAccounts: string[] = [];
+  const trustProblems: Set<string> = new Set();
+  const accessDenied: string[] = [];
+  const secureChannelErrors: string[] = [];
+
+  netlogonEvents.forEach((event: any) => {
+    const message = event.Message || "";
+
+    // Pattern 1: Ghost computer accounts (machines that don't exist or were renamed)
+    // "No existe la cuenta de equipo para este equipo: NOMBREPC$"
+    // "The computer name ... could not be mapped to the computer account"
+    const ghostMatch = message.match(/cuenta.*equipo.*:\s*([A-Z0-9_-]+)\$/i) ||
+                       message.match(/computer.*account.*:\s*([A-Z0-9_-]+)\$/i) ||
+                       message.match(/([A-Z0-9_-]+)\$.*no existe/i) ||
+                       message.match(/could not be mapped.*account.*([A-Z0-9_-]+)/i);
+    if (ghostMatch) {
+      const computerName = ghostMatch[1].replace('$', '');
+      if (!ghostAccounts.includes(computerName)) {
+        ghostAccounts.push(computerName);
+      }
+    }
+
+    // Pattern 2: Trust relationship problems with other domains
+    // "La sesión de seguridad de confianza ... DOMINIO ... ha fallado"
+    // "The trust relationship ... with domain ... failed"
+    const trustMatch = message.match(/confianza.*dominio\s+([A-Z0-9._-]+)/i) ||
+                       message.match(/trust.*domain\s+([A-Z0-9._-]+)/i) ||
+                       message.match(/dominio\s+([A-Z0-9._-]+).*confianza/i) ||
+                       message.match(/secure channel.*domain\s+([A-Z0-9._-]+)/i);
+    if (trustMatch) {
+      trustProblems.add(trustMatch[1]);
+    }
+
+    // Pattern 3: Access denied errors (credential desync)
+    // "Acceso denegado" / "Access denied"
+    if (message.match(/acceso denegado/i) || message.match(/access denied/i)) {
+      const computerMatch = message.match(/equipo\s+([A-Z0-9_-]+)/i) ||
+                           message.match(/computer\s+([A-Z0-9_-]+)/i) ||
+                           message.match(/([A-Z0-9_-]+)\s+error/i);
+      if (computerMatch && !accessDenied.includes(computerMatch[1])) {
+        accessDenied.push(computerMatch[1]);
+      }
+    }
+
+    // Pattern 4: Secure channel errors
+    // "No se puede establecer canal seguro" / "Cannot establish secure channel"
+    if (message.match(/canal seguro/i) || message.match(/secure channel/i)) {
+      const channelMatch = message.match(/equipo\s+([A-Z0-9_-]+)/i) ||
+                          message.match(/computer\s+([A-Z0-9_-]+)/i);
+      if (channelMatch && !secureChannelErrors.includes(channelMatch[1])) {
+        secureChannelErrors.push(channelMatch[1]);
+      }
+    }
+  });
+
+  // Create analysis for ghost accounts
+  if (ghostAccounts.length > 0) {
+    analyses.push({
+      type: "Cuentas de Equipo Fantasma (Ghost Objects)",
+      description: `Se detectaron ${ghostAccounts.length} equipos que intentan autenticarse pero sus cuentas de AD no existen o están desincronizadas. Esto ocurre cuando equipos fueron reformateados sin eliminar su cuenta de AD, o cuando hay registros DNS obsoletos.`,
+      severity: ghostAccounts.length > 5 ? "critical" : "warning",
+      affectedObjects: ghostAccounts.slice(0, 15), // Limit to 15 for readability
+      remediation: [
+        "Verificar si los equipos existen físicamente con: Get-ADComputer -Filter {Name -like 'NOMBREPC*'}",
+        "Si no existen, eliminar cuentas huérfanas: Remove-ADComputer -Identity 'NOMBREPC'",
+        "Limpiar registros DNS obsoletos: dnscmd /AgeAllRecords",
+        "Habilitar scavenging en zonas DNS para limpieza automática"
+      ]
+    });
+  }
+
+  // Create analysis for trust problems
+  if (trustProblems.size > 0) {
+    analyses.push({
+      type: "Problemas de Relación de Confianza (Trust Failures)",
+      description: `Se detectaron fallas en las relaciones de confianza con ${trustProblems.size} dominio(s). Esto impide la autenticación entre dominios y puede causar fallas de acceso a recursos compartidos.`,
+      severity: "critical",
+      affectedObjects: Array.from(trustProblems),
+      remediation: [
+        "Verificar estado del trust: Get-ADTrust -Filter * | Select Name, Direction, TrustType",
+        "Restablecer la relación de confianza desde AD Domains and Trusts",
+        "Verificar conectividad DNS entre dominios",
+        "Comando para reparar: netdom trust DOMINIO /domain:OTRODOMINIO /reset"
+      ]
+    });
+  }
+
+  // Create analysis for access denied
+  if (accessDenied.length > 0) {
+    analyses.push({
+      type: "Errores de Acceso Denegado (Credential Desync)",
+      description: `${accessDenied.length} equipos reportan acceso denegado. Esto indica que las credenciales de la cuenta de equipo están desincronizadas entre el equipo y AD (password mismatch).`,
+      severity: accessDenied.length > 3 ? "critical" : "warning",
+      affectedObjects: accessDenied.slice(0, 15),
+      remediation: [
+        "En el equipo afectado ejecutar: Reset-ComputerMachinePassword -Credential (Get-Credential)",
+        "Alternativa PowerShell: Test-ComputerSecureChannel -Repair -Credential (Get-Credential)",
+        "Si persiste, desunir y reunir al dominio manualmente",
+        "Verificar que la política 'Machine account password age' no sea muy agresiva"
+      ]
+    });
+  }
+
+  // Create analysis for secure channel errors
+  if (secureChannelErrors.length > 0) {
+    analyses.push({
+      type: "Errores de Canal Seguro (Secure Channel)",
+      description: `${secureChannelErrors.length} equipos tienen problemas estableciendo canal seguro con el DC. Esto previene la autenticación Kerberos y puede causar fallas de login.`,
+      severity: "critical",
+      affectedObjects: secureChannelErrors.slice(0, 15),
+      remediation: [
+        "Verificar canal seguro: Test-ComputerSecureChannel -Server DC01",
+        "Reparar canal: Test-ComputerSecureChannel -Repair",
+        "Verificar sincronización de tiempo (diferencia máx 5 min)",
+        "Revisar conectividad a puertos: TCP 88 (Kerberos), 389 (LDAP), 445 (SMB)"
+      ]
+    });
+  }
+
+  return analyses;
+};
+
+// Analyze NTDS/Replication errors
+const analyzeNTDSErrors = (events: any[]): ErrorAnalysis[] => {
+  const analyses: ErrorAnalysis[] = [];
+  const ntdsEvents = events.filter((e: any) =>
+    e.Source === "NTDS" || e.Source === "NTDS Replication" || e.Source === "ActiveDirectory_DomainService"
+  );
+
+  if (ntdsEvents.length === 0) return analyses;
+
+  const replicationPartners: string[] = [];
+  const databaseErrors: string[] = [];
+
+  ntdsEvents.forEach((event: any) => {
+    const message = event.Message || "";
+
+    // Replication partner failures
+    const partnerMatch = message.match(/(?:servidor|server|DC|partner)\s+([A-Z0-9._-]+)/i);
+    if (partnerMatch && !replicationPartners.includes(partnerMatch[1])) {
+      replicationPartners.push(partnerMatch[1]);
+    }
+
+    // Database errors
+    if (message.match(/database|base de datos|jet|esent/i)) {
+      databaseErrors.push(event.EventID?.toString() || "Unknown");
+    }
+  });
+
+  if (replicationPartners.length > 0 || ntdsEvents.length > 0) {
+    analyses.push({
+      type: "Errores de Replicación de Active Directory",
+      description: `Se detectaron ${ntdsEvents.length} errores relacionados con la base de datos AD y replicación. Esto puede causar inconsistencias entre DCs y pérdida de cambios.`,
+      severity: ntdsEvents.length > 5 ? "critical" : "warning",
+      affectedObjects: replicationPartners.length > 0 ? replicationPartners : [`${ntdsEvents.length} eventos NTDS`],
+      remediation: [
+        "Verificar estado de replicación: repadmin /replsummary",
+        "Identificar fallos específicos: repadmin /showrepl",
+        "Forzar replicación: repadmin /syncall /AdeP",
+        "Verificar conectividad RPC entre DCs: dcdiag /test:connectivity"
+      ]
+    });
+  }
+
+  return analyses;
+};
+
+// Analyze KDC/Kerberos errors
+const analyzeKDCErrors = (events: any[]): ErrorAnalysis[] => {
+  const analyses: ErrorAnalysis[] = [];
+  const kdcEvents = events.filter((e: any) =>
+    e.Source === "Kerberos-Key-Distribution-Center" || e.Source === "KDC" || e.Source === "Kerberos"
+  );
+
+  if (kdcEvents.length === 0) return analyses;
+
+  const spnProblems: string[] = [];
+  const encryptionErrors: string[] = [];
+
+  kdcEvents.forEach((event: any) => {
+    const message = event.Message || "";
+
+    // SPN issues
+    if (message.match(/SPN|service principal|principal de servicio/i)) {
+      const spnMatch = message.match(/SPN[:\s]+([^\s,]+)/i) ||
+                       message.match(/servicio\s+([^\s,]+)/i);
+      if (spnMatch && !spnProblems.includes(spnMatch[1])) {
+        spnProblems.push(spnMatch[1]);
+      }
+    }
+
+    // Encryption type errors
+    if (message.match(/encryption|cifrado|etype/i)) {
+      encryptionErrors.push(event.EventID?.toString() || "Unknown");
+    }
+  });
+
+  analyses.push({
+    type: "Errores de Kerberos (KDC)",
+    description: `Se detectaron ${kdcEvents.length} errores de Kerberos. Esto afecta la autenticación segura y puede causar fallback a NTLM o fallas de login.`,
+    severity: kdcEvents.length > 3 ? "critical" : "warning",
+    affectedObjects: spnProblems.length > 0 ? spnProblems : [`${kdcEvents.length} eventos KDC`],
+    remediation: [
+      "Verificar SPNs duplicados: setspn -X",
+      "Verificar tipos de cifrado: Get-ADUser/Computer -Properties msDS-SupportedEncryptionTypes",
+      "Verificar sincronización de tiempo (crítico para Kerberos)",
+      "Revisar política 'Network security: Configure encryption types allowed for Kerberos'"
+    ]
+  });
+
+  return analyses;
+};
+
+// Analyze DNS errors
+const analyzeDNSErrors = (events: any[]): ErrorAnalysis[] => {
+  const analyses: ErrorAnalysis[] = [];
+  const dnsEvents = events.filter((e: any) =>
+    e.Source === "DNS" || e.Source === "DNS Server" || (e.Source && e.Source.includes("DNS"))
+  );
+
+  if (dnsEvents.length === 0) return analyses;
+
+  analyses.push({
+    type: "Errores de DNS Server",
+    description: `Se detectaron ${dnsEvents.length} errores de DNS. DNS es crítico para AD - todos los servicios dependen de la resolución correcta de nombres.`,
+    severity: dnsEvents.length > 5 ? "critical" : "warning",
+    affectedObjects: [`${dnsEvents.length} eventos de DNS`],
+    remediation: [
+      "Verificar zonas DNS: dnscmd /EnumZones",
+      "Verificar registros SRV: nslookup -type=srv _ldap._tcp.dc._msdcs.DOMINIO",
+      "Limpiar caché DNS: Clear-DnsServerCache",
+      "Verificar replicación de zonas integradas en AD"
+    ]
+  });
+
+  return analyses;
+};
+
+// Analyze Time Sync errors
+const analyzeTimeSyncErrors = (events: any[]): ErrorAnalysis[] => {
+  const analyses: ErrorAnalysis[] = [];
+  const timeEvents = events.filter((e: any) =>
+    e.Source === "W32Time" || e.Source === "Time-Service"
+  );
+
+  if (timeEvents.length === 0) return analyses;
+
+  analyses.push({
+    type: "Errores de Sincronización de Tiempo",
+    description: `Se detectaron ${timeEvents.length} errores de sincronización de tiempo. Una diferencia mayor a 5 minutos causa fallas de autenticación Kerberos.`,
+    severity: timeEvents.length > 3 ? "critical" : "warning",
+    affectedObjects: [`${timeEvents.length} eventos de tiempo`],
+    remediation: [
+      "PDC debe sincronizar con fuente externa: w32tm /config /manualpeerlist:time.windows.com /syncfromflags:manual",
+      "Otros DCs sincronizan con PDC automáticamente",
+      "Verificar jerarquía: w32tm /query /status",
+      "Forzar resync: w32tm /resync /force"
+    ]
+  });
+
+  return analyses;
+};
+
+// Analyze DFSR/SYSVOL errors
+const analyzeDFSRErrors = (events: any[]): ErrorAnalysis[] => {
+  const analyses: ErrorAnalysis[] = [];
+  const dfsrEvents = events.filter((e: any) =>
+    e.Source === "DFSR" || e.Source === "DFS Replication" || e.Source === "NtFrs"
+  );
+
+  if (dfsrEvents.length === 0) return analyses;
+
+  analyses.push({
+    type: "Errores de Replicación SYSVOL (DFS-R)",
+    description: `Se detectaron ${dfsrEvents.length} errores de replicación SYSVOL/DFS-R. Esto causa que las GPOs no se apliquen consistentemente en todos los DCs.`,
+    severity: dfsrEvents.length > 5 ? "critical" : "warning",
+    affectedObjects: [`${dfsrEvents.length} eventos DFS-R`],
+    remediation: [
+      "Verificar estado: dfsrdiag ReplicationState",
+      "Verificar backlog: dfsrdiag Backlog /RGName:'Domain System Volume'",
+      "Si hay conflictos, revisar: Get-DfsrBacklog",
+      "Para problemas graves considerar: D2 authoritative restore"
+    ]
+  });
+
+  return analyses;
+};
+
+// Main function to perform comprehensive DC health analysis
+const analyzeDCHealthDetailed = (dc: any): DCHealthAnalysis => {
+  const events = dc.CriticalEvents || [];
+  const rootCauseAnalysis: ErrorAnalysis[] = [];
+
+  // Run all analyzers
+  rootCauseAnalysis.push(...analyzeNetlogonErrors(events));
+  rootCauseAnalysis.push(...analyzeNTDSErrors(events));
+  rootCauseAnalysis.push(...analyzeKDCErrors(events));
+  rootCauseAnalysis.push(...analyzeDNSErrors(events));
+  rootCauseAnalysis.push(...analyzeTimeSyncErrors(events));
+  rootCauseAnalysis.push(...analyzeDFSRErrors(events));
+
+  // Determine overall status based on analysis
+  let healthScore: "Healthy" | "Warning" | "Critical" = "Healthy";
+  const issues: string[] = [];
+
+  rootCauseAnalysis.forEach(analysis => {
+    if (analysis.severity === "critical") {
+      healthScore = "Critical";
+    } else if (analysis.severity === "warning" && healthScore !== "Critical") {
+      healthScore = "Warning";
+    }
+    issues.push(`${analysis.type}: ${analysis.affectedObjects.length} objetos afectados`);
+  });
+
+  // If no specific analysis but many events, still flag it
+  if (rootCauseAnalysis.length === 0 && events.length > 50) {
+    healthScore = "Warning";
+    issues.push(`Alto volumen de eventos críticos (${events.length})`);
+  }
+
+  const status = healthScore === "Healthy" ? "SALUDABLE" :
+                 healthScore === "Warning" ? "ADVERTENCIA" : "CRITICO";
+  const color = healthScore === "Healthy" ? "low" :
+                healthScore === "Warning" ? "medium" : "critical";
+
+  return { status, color, issues, rootCauseAnalysis };
+};
+
+// =============================================================================
+// ORIGINAL FUNCTIONS (kept for backward compatibility)
+// =============================================================================
+
 // Calculate DC OverallHealth from CriticalEvents when not provided
 // Based on Microsoft Best Practices: DCDiag, repadmin /replsum, w32tm /monitor
 const calculateDCHealth = (dc: any): { status: string; color: string; issues: string[] } => {
@@ -2172,7 +2532,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
 
         // SALUD DE CONTROLADORES DE DOMINIO
-        // Uses calculateDCHealth() to infer health from CriticalEvents when OverallHealth is missing
+        // Uses analyzeDCHealthDetailed() for comprehensive root cause analysis
         ...(rawData?.DCHealth ? [
           new Paragraph({
             text: "Salud de Controladores de Dominio",
@@ -2193,7 +2553,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             rows: [
               createTableRow(["DC Name", "Estado General", "Eventos Críticos", "Problemas Detectados"], true),
               ...(rawData.DCHealth.DomainControllers || []).map((dc: any) => {
-                const health = calculateDCHealth(dc);
+                const health = analyzeDCHealthDetailed(dc);
                 const criticalEvents = dc.CriticalEvents?.length || 0;
                 const issuesSummary = health.issues.length > 0
                   ? health.issues.slice(0, 2).join("; ") + (health.issues.length > 2 ? "..." : "")
@@ -2207,38 +2567,182 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               }),
             ],
           }),
-          // Health Issues Summary (now uses calculated issues for backward compatibility)
-          ...(() => {
-            const dcsWithIssues = (rawData.DCHealth.DomainControllers || []).map((dc: any) => ({
-              ...dc,
-              calculatedHealth: calculateDCHealth(dc)
-            })).filter((dc: any) => dc.calculatedHealth.issues.length > 0);
 
-            if (dcsWithIssues.length === 0) return [];
-            return [
+          // ========================================
+          // ROOT CAUSE ANALYSIS SECTION
+          // ========================================
+          ...(() => {
+            // Collect all root cause analyses from all DCs
+            const allAnalyses: { dcName: string; analysis: ErrorAnalysis }[] = [];
+
+            (rawData.DCHealth.DomainControllers || []).forEach((dc: any) => {
+              const health = analyzeDCHealthDetailed(dc);
+              health.rootCauseAnalysis.forEach(analysis => {
+                allAnalyses.push({ dcName: dc.Name || "N/A", analysis });
+              });
+            });
+
+            if (allAnalyses.length === 0) return [];
+
+            // Group by error type to consolidate
+            const groupedByType: { [key: string]: { analysis: ErrorAnalysis; dcs: string[] } } = {};
+            allAnalyses.forEach(({ dcName, analysis }) => {
+              if (!groupedByType[analysis.type]) {
+                groupedByType[analysis.type] = { analysis, dcs: [] };
+              }
+              if (!groupedByType[analysis.type].dcs.includes(dcName)) {
+                groupedByType[analysis.type].dcs.push(dcName);
+              }
+              // Merge affected objects
+              analysis.affectedObjects.forEach(obj => {
+                if (!groupedByType[analysis.type].analysis.affectedObjects.includes(obj)) {
+                  groupedByType[analysis.type].analysis.affectedObjects.push(obj);
+                }
+              });
+            });
+
+            const sections: Paragraph[] = [];
+
+            // Add header for root cause analysis
+            sections.push(
               new Paragraph({
-                text: "Detalle de Problemas por Controlador",
+                text: "Análisis de Causa Raíz",
                 heading: HeadingLevel.HEADING_2,
-                spacing: { before: 300, after: 100 },
+                spacing: { before: 400, after: 200 },
               }),
-              ...dcsWithIssues.flatMap((dc: any) => [
+              new Paragraph({
+                children: [new TextRun({
+                  text: "A continuación se presenta un análisis detallado de los problemas detectados, incluyendo las causas probables, objetos afectados y recomendaciones de remediación.",
+                  size: 20,
+                  italics: true,
+                })],
+                spacing: { after: 200 },
+              })
+            );
+
+            // Generate detailed section for each error type
+            Object.values(groupedByType).forEach(({ analysis, dcs }) => {
+              const severityColor = analysis.severity === "critical" ? COLORS.critical :
+                                   analysis.severity === "warning" ? COLORS.medium : COLORS.info;
+
+              // Error type header with severity badge
+              sections.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: analysis.severity === "critical" ? "[CRÍTICO] " :
+                            analysis.severity === "warning" ? "[ADVERTENCIA] " : "[INFO] ",
+                      bold: true,
+                      color: severityColor,
+                      size: 24,
+                    }),
+                    new TextRun({
+                      text: analysis.type,
+                      bold: true,
+                      size: 24,
+                    }),
+                  ],
+                  spacing: { before: 300, after: 100 },
+                  shading: {
+                    type: ShadingType.CLEAR,
+                    fill: analysis.severity === "critical" ? "FFF0F0" :
+                          analysis.severity === "warning" ? "FFF8E6" : "F0F8FF",
+                  },
+                })
+              );
+
+              // Description
+              sections.push(
                 new Paragraph({
                   children: [new TextRun({
-                    text: `${dc.Name} (${dc.calculatedHealth.status}):`,
-                    bold: true,
-                    color: dc.calculatedHealth.color === "critical" ? COLORS.critical :
-                           dc.calculatedHealth.color === "medium" ? COLORS.medium : COLORS.successText,
+                    text: analysis.description,
+                    size: 20,
                   })],
-                  spacing: { before: 100, after: 50 },
-                }),
-                ...dc.calculatedHealth.issues.map((issue: string) =>
+                  spacing: { after: 150 },
+                })
+              );
+
+              // Affected DCs
+              if (dcs.length > 0) {
+                sections.push(
                   new Paragraph({
-                    text: `  • ${issue}`,
-                    spacing: { after: 30 },
+                    children: [
+                      new TextRun({ text: "DCs Afectados: ", bold: true, size: 20 }),
+                      new TextRun({ text: dcs.join(", "), size: 20, italics: true }),
+                    ],
+                    spacing: { after: 100 },
                   })
-                )
-              ])
-            ];
+                );
+              }
+
+              // Affected objects (computers, domains, etc.)
+              if (analysis.affectedObjects.length > 0) {
+                sections.push(
+                  new Paragraph({
+                    children: [new TextRun({
+                      text: "Objetos Afectados:",
+                      bold: true,
+                      size: 20,
+                    })],
+                    spacing: { before: 100, after: 50 },
+                  })
+                );
+
+                // Show affected objects in a compact list (max 15)
+                const objectsToShow = analysis.affectedObjects.slice(0, 15);
+                sections.push(
+                  new Paragraph({
+                    children: [new TextRun({
+                      text: objectsToShow.join(", ") +
+                            (analysis.affectedObjects.length > 15 ? ` ... y ${analysis.affectedObjects.length - 15} más` : ""),
+                      size: 20,
+                      color: COLORS.info,
+                    })],
+                    spacing: { after: 100 },
+                    indent: { left: 360 },
+                  })
+                );
+              }
+
+              // Remediation recommendations
+              sections.push(
+                new Paragraph({
+                  children: [new TextRun({
+                    text: "Recomendaciones de Remediación:",
+                    bold: true,
+                    size: 20,
+                    color: COLORS.successText,
+                  })],
+                  spacing: { before: 150, after: 50 },
+                })
+              );
+
+              analysis.remediation.forEach((step, index) => {
+                sections.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({ text: `${index + 1}. `, bold: true, size: 20 }),
+                      new TextRun({ text: step, size: 20 }),
+                    ],
+                    spacing: { after: 30 },
+                    indent: { left: 360 },
+                  })
+                );
+              });
+
+              // Add separator
+              sections.push(
+                new Paragraph({
+                  text: "",
+                  spacing: { after: 200 },
+                  border: {
+                    bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+                  },
+                })
+              );
+            });
+
+            return sections;
           })(),
         ] : []),
 

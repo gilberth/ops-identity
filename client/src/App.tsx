@@ -46,7 +46,7 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
             <div className="fixed bottom-0 right-0 p-1.5 text-[9px] text-muted-foreground bg-background/80 backdrop-blur-sm border-t border-l border-border rounded-tl-lg z-50 font-mono">
-              v3.6.9
+              v3.6.10
             </div>
           </BrowserRouter>
         </TooltipProvider>
