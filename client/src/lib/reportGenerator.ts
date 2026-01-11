@@ -222,6 +222,101 @@ const getTableBorders = () => {
   return { top: border, bottom: border, left: border, right: border };
 };
 
+// Calculate DC OverallHealth from CriticalEvents when not provided
+// Based on Microsoft Best Practices: DCDiag, repadmin /replsum, w32tm /monitor
+const calculateDCHealth = (dc: any): { status: string; color: string; issues: string[] } => {
+  // If OverallHealth already exists, use it
+  if (dc.OverallHealth) {
+    const status = dc.OverallHealth === "Healthy" ? "SALUDABLE" :
+                   dc.OverallHealth === "Warning" ? "ADVERTENCIA" :
+                   dc.OverallHealth === "Critical" ? "CRITICO" : "DESCONOCIDO";
+    const color = dc.OverallHealth === "Healthy" ? "low" :
+                  dc.OverallHealth === "Warning" ? "medium" : "critical";
+    return { status, color, issues: dc.HealthIssues || [] };
+  }
+
+  // Calculate from CriticalEvents if OverallHealth is missing
+  const events = dc.CriticalEvents || [];
+  const issues: string[] = [];
+  let healthScore: "Healthy" | "Warning" | "Critical" = "Healthy";
+
+  // Count errors by source (AD-critical services)
+  const netlogonErrors = events.filter((e: any) => e.Source === "NETLOGON").length;
+  const ntdsErrors = events.filter((e: any) =>
+    e.Source === "NTDS" || e.Source === "NTDS Replication" || e.Source === "ActiveDirectory_DomainService"
+  ).length;
+  const kdcErrors = events.filter((e: any) =>
+    e.Source === "Kerberos-Key-Distribution-Center" || e.Source === "KDC"
+  ).length;
+  const dnsErrors = events.filter((e: any) =>
+    e.Source === "DNS" || e.Source === "DNS Server" || (e.Source && e.Source.includes("DNS"))
+  ).length;
+  const timeErrors = events.filter((e: any) =>
+    e.Source === "W32Time" || e.Source === "Time-Service"
+  ).length;
+  const dfsrErrors = events.filter((e: any) =>
+    e.Source === "DFSR" || e.Source === "DFS Replication" || e.Source === "NtFrs"
+  ).length;
+
+  // CRITICAL: NETLOGON errors (authentication/trust issues)
+  if (netlogonErrors > 10) {
+    issues.push(`Errores NETLOGON críticos (${netlogonErrors}) - Problemas de autenticación`);
+    healthScore = "Critical";
+  } else if (netlogonErrors > 0) {
+    issues.push(`Errores NETLOGON detectados (${netlogonErrors})`);
+    if (healthScore !== "Critical") healthScore = "Warning";
+  }
+
+  // CRITICAL: NTDS errors (AD database/replication)
+  if (ntdsErrors > 5) {
+    issues.push(`Errores de base de datos AD (${ntdsErrors}) - Problemas de replicación`);
+    healthScore = "Critical";
+  } else if (ntdsErrors > 0) {
+    issues.push(`Errores NTDS detectados (${ntdsErrors})`);
+    if (healthScore !== "Critical") healthScore = "Warning";
+  }
+
+  // CRITICAL: KDC errors (Kerberos authentication)
+  if (kdcErrors > 3) {
+    issues.push(`Errores KDC Kerberos (${kdcErrors}) - Autenticación en riesgo`);
+    healthScore = "Critical";
+  } else if (kdcErrors > 0) {
+    issues.push(`Errores KDC detectados (${kdcErrors})`);
+    if (healthScore !== "Critical") healthScore = "Warning";
+  }
+
+  // WARNING: DNS errors
+  if (dnsErrors > 5) {
+    issues.push(`Errores DNS (${dnsErrors}) - Resolución de nombres afectada`);
+    if (healthScore !== "Critical") healthScore = "Warning";
+  }
+
+  // WARNING: Time sync errors
+  if (timeErrors > 3) {
+    issues.push(`Errores de sincronización de tiempo (${timeErrors})`);
+    if (healthScore !== "Critical") healthScore = "Warning";
+  }
+
+  // WARNING: DFSR/SYSVOL errors
+  if (dfsrErrors > 5) {
+    issues.push(`Errores de replicación SYSVOL (${dfsrErrors}) - GPOs afectadas`);
+    if (healthScore !== "Critical") healthScore = "Warning";
+  }
+
+  // WARNING: High volume of events
+  if (events.length > 50 && healthScore === "Healthy") {
+    issues.push(`Alto volumen de eventos críticos (${events.length})`);
+    healthScore = "Warning";
+  }
+
+  const status = healthScore === "Healthy" ? "SALUDABLE" :
+                 healthScore === "Warning" ? "ADVERTENCIA" : "CRITICO";
+  const color = healthScore === "Healthy" ? "low" :
+                healthScore === "Warning" ? "medium" : "critical";
+
+  return { status, color, issues };
+};
+
 // Utility function to sanitize values - CRITICAL: Never show undefined/null/[object Object]
 const sanitizeValue = (value: any): string => {
   if (value === undefined || value === null || value === '') return 'N/A';
@@ -2077,53 +2172,68 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
 
         // SALUD DE CONTROLADORES DE DOMINIO
+        // Uses calculateDCHealth() to infer health from CriticalEvents when OverallHealth is missing
         ...(rawData?.DCHealth ? [
           new Paragraph({
             text: "Salud de Controladores de Dominio",
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
           }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "Estado de salud basado en indicadores críticos de AD: errores de replicación (NTDS), autenticación (NETLOGON, KDC), sincronización de tiempo (W32Time), DNS y SYSVOL (DFSR).",
+              size: 20,
+              italics: true,
+              color: COLORS.info,
+            })],
+            spacing: { after: 200 },
+          }),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["DC Name", "Estado General", "Antivirus", "Eventos Críticos"], true),
+              createTableRow(["DC Name", "Estado General", "Eventos Críticos", "Problemas Detectados"], true),
               ...(rawData.DCHealth.DomainControllers || []).map((dc: any) => {
-                const healthStatus = dc.OverallHealth === "Healthy" ? "SALUDABLE" :
-                                     dc.OverallHealth === "Warning" ? "ADVERTENCIA" :
-                                     dc.OverallHealth === "Critical" ? "CRITICO" : "DESCONOCIDO";
-                const healthColor = dc.OverallHealth === "Healthy" ? "low" :
-                                    dc.OverallHealth === "Warning" ? "medium" : "critical";
-                const avStatus = dc.Antivirus?.Enabled ? "ACTIVO" : "INACTIVO";
+                const health = calculateDCHealth(dc);
                 const criticalEvents = dc.CriticalEvents?.length || 0;
+                const issuesSummary = health.issues.length > 0
+                  ? health.issues.slice(0, 2).join("; ") + (health.issues.length > 2 ? "..." : "")
+                  : "Sin problemas";
                 return createTableRow([
                   dc.Name || "N/A",
-                  healthStatus,
-                  avStatus,
-                  criticalEvents.toString()
-                ], false, healthColor);
+                  health.status,
+                  criticalEvents.toString(),
+                  issuesSummary
+                ], false, health.color);
               }),
             ],
           }),
-          // Health Issues Summary
+          // Health Issues Summary (now uses calculated issues for backward compatibility)
           ...(() => {
-            const dcsWithIssues = (rawData.DCHealth.DomainControllers || []).filter((dc: any) =>
-              dc.HealthIssues && dc.HealthIssues.length > 0
-            );
+            const dcsWithIssues = (rawData.DCHealth.DomainControllers || []).map((dc: any) => ({
+              ...dc,
+              calculatedHealth: calculateDCHealth(dc)
+            })).filter((dc: any) => dc.calculatedHealth.issues.length > 0);
+
             if (dcsWithIssues.length === 0) return [];
             return [
               new Paragraph({
-                text: "Problemas de Salud Detectados",
+                text: "Detalle de Problemas por Controlador",
                 heading: HeadingLevel.HEADING_2,
                 spacing: { before: 300, after: 100 },
               }),
               ...dcsWithIssues.flatMap((dc: any) => [
                 new Paragraph({
-                  text: `${dc.Name}:`,
+                  children: [new TextRun({
+                    text: `${dc.Name} (${dc.calculatedHealth.status}):`,
+                    bold: true,
+                    color: dc.calculatedHealth.color === "critical" ? COLORS.critical :
+                           dc.calculatedHealth.color === "medium" ? COLORS.medium : COLORS.successText,
+                  })],
                   spacing: { before: 100, after: 50 },
                 }),
-                ...dc.HealthIssues.map((issue: string) =>
+                ...dc.calculatedHealth.issues.map((issue: string) =>
                   new Paragraph({
-                    text: `  • ${translateHealthIssue(issue)}`,
+                    text: `  • ${issue}`,
                     spacing: { after: 30 },
                   })
                 )

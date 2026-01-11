@@ -1841,49 +1841,74 @@ function Get-DCHealthDetails {
                     }
                 } catch {}
 
-                # Calculate OverallHealth based on collected metrics
+                # Calculate OverallHealth based on AD Best Practices (DCDiag indicators)
+                # Reference: Microsoft DCDiag, repadmin /replsum, w32tm /monitor
                 $healthIssues = @()
                 $healthScore = "Healthy"
 
-                # Check Antivirus
-                if ($avStatus -eq "Unknown" -or ($avStatus -is [hashtable] -and $avStatus.Enabled -eq $false)) {
-                    $healthIssues += "Antivirus disabled or unknown"
-                    $healthScore = "Warning"
-                }
-                if ($avStatus -is [hashtable] -and $avStatus.RealTimeEnabled -eq $false) {
-                    $healthIssues += "Real-time protection disabled"
-                    $healthScore = "Warning"
-                }
-
-                # Check Critical Events
-                if ($criticalEvents.Count -gt 10) {
-                    $healthIssues += "High number of critical events ($($criticalEvents.Count))"
-                    $healthScore = "Warning"
-                }
-                if ($criticalEvents.Count -gt 50) {
-                    $healthScore = "Critical"
-                }
-
-                # Check for specific critical event patterns
+                # 1. CRITICAL: Check NETLOGON errors (indicates authentication/replication issues)
                 $netlogonErrors = @($criticalEvents | Where-Object { $_.Source -eq "NETLOGON" })
-                if ($netlogonErrors.Count -gt 5) {
-                    $healthIssues += "Multiple NETLOGON errors ($($netlogonErrors.Count))"
+                if ($netlogonErrors.Count -gt 10) {
+                    $healthIssues += "Critical NETLOGON errors ($($netlogonErrors.Count)) - Authentication/Trust issues"
+                    $healthScore = "Critical"
+                } elseif ($netlogonErrors.Count -gt 0) {
+                    $healthIssues += "NETLOGON errors detected ($($netlogonErrors.Count))"
                     if ($healthScore -ne "Critical") { $healthScore = "Warning" }
                 }
 
-                # Check Time Sync
+                # 2. CRITICAL: Check NTDS (AD Database) errors
+                $ntdsErrors = @($criticalEvents | Where-Object { $_.Source -eq "NTDS" -or $_.Source -eq "NTDS Replication" -or $_.Source -eq "ActiveDirectory_DomainService" })
+                if ($ntdsErrors.Count -gt 5) {
+                    $healthIssues += "AD Database errors ($($ntdsErrors.Count)) - Replication/Database issues"
+                    $healthScore = "Critical"
+                } elseif ($ntdsErrors.Count -gt 0) {
+                    $healthIssues += "NTDS errors detected ($($ntdsErrors.Count))"
+                    if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
+                # 3. CRITICAL: Check KDC (Kerberos) errors
+                $kdcErrors = @($criticalEvents | Where-Object { $_.Source -eq "Kerberos-Key-Distribution-Center" -or $_.Source -eq "KDC" })
+                if ($kdcErrors.Count -gt 3) {
+                    $healthIssues += "Kerberos KDC errors ($($kdcErrors.Count)) - Authentication at risk"
+                    $healthScore = "Critical"
+                } elseif ($kdcErrors.Count -gt 0) {
+                    $healthIssues += "KDC errors detected ($($kdcErrors.Count))"
+                    if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
+                # 4. WARNING: Check DNS errors (critical for AD)
+                $dnsErrors = @($criticalEvents | Where-Object { $_.Source -eq "DNS" -or $_.Source -eq "DNS Server" -or $_.Source -like "*DNS*" })
+                if ($dnsErrors.Count -gt 5) {
+                    $healthIssues += "DNS errors ($($dnsErrors.Count)) - Name resolution issues"
+                    if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
+                # 5. WARNING: Check Time Sync errors (critical for Kerberos)
                 if ($timeConfig) {
                     $timeSyncError = $timeConfig | Where-Object { $_ -match "Last Sync Error:.*[1-9]" }
+                    $ntpOffset = $timeConfig | Where-Object { $_ -match "NTP:.*Offset" }
                     if ($timeSyncError) {
-                        $healthIssues += "Time synchronization error detected"
+                        $healthIssues += "Time synchronization failure - Kerberos authentication at risk"
                         if ($healthScore -ne "Critical") { $healthScore = "Warning" }
                     }
                 }
-
-                # Check Hotfixes (if none in last 90 days, warning)
-                if ($hotfixes.Count -eq 0) {
-                    $healthIssues += "No recent hotfixes found"
+                $timeErrors = @($criticalEvents | Where-Object { $_.Source -eq "W32Time" -or $_.Source -eq "Time-Service" })
+                if ($timeErrors.Count -gt 3) {
+                    $healthIssues += "Time service errors ($($timeErrors.Count))"
                     if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
+                # 6. WARNING: Check DFS-R/FRS errors (SYSVOL replication)
+                $dfsrErrors = @($criticalEvents | Where-Object { $_.Source -eq "DFSR" -or $_.Source -eq "DFS Replication" -or $_.Source -eq "NtFrs" })
+                if ($dfsrErrors.Count -gt 5) {
+                    $healthIssues += "SYSVOL replication errors ($($dfsrErrors.Count)) - GPO delivery affected"
+                    if ($healthScore -ne "Critical") { $healthScore = "Warning" }
+                }
+
+                # 7. INFO: Check general critical events count
+                if ($criticalEvents.Count -gt 50) {
+                    $healthIssues += "High volume of critical events ($($criticalEvents.Count))"
+                    if ($healthScore -eq "Healthy") { $healthScore = "Warning" }
                 }
 
                 $dcHealthInfo.DomainControllers += @{
