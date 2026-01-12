@@ -1,7 +1,7 @@
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
   Table, TableRow, TableCell, WidthType, BorderStyle, VerticalAlign,
-  Header, Footer, PageNumber, TableOfContents, LevelFormat, ShadingType,
+  Header, Footer, PageNumber, LevelFormat, ShadingType,
   PageBreak
 } from 'docx';
 
@@ -1596,15 +1596,39 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // PAGE BREAK AFTER COVER
         new Paragraph({ children: [new PageBreak()] }),
 
-        // TABLE OF CONTENTS
+        // TABLE OF CONTENTS (Static - no update prompt on open)
         new Paragraph({
           heading: HeadingLevel.HEADING_1,
-          children: [new TextRun({ text: "Tabla de Contenidos" })],
+          children: [new TextRun({ text: "Tabla de Contenidos", bold: true, size: 32 })],
+          spacing: { after: 300 },
         }),
-        new TableOfContents("Tabla de Contenidos", {
-          hyperlink: true,
-          headingStyleRange: "1-3",
-        }),
+        // Static TOC entries
+        ...([
+          "1. Resumen del Bosque y Dominio AD",
+          "2. Resumen Ejecutivo",
+          "3. Puntuación de Higiene de Identidad",
+          "4. Resumen de Hallazgos por Severidad",
+          "5. Configuraciones Críticas",
+          "6. Configuraciones de Riesgo Alto",
+          "7. Configuraciones de Riesgo Medio",
+          "8. Configuraciones de Riesgo Bajo",
+          "9. Análisis Detallado de Usuarios",
+          "10. Análisis de Grupos Privilegiados",
+          "11. Análisis de GPOs",
+          "12. Análisis de Equipos",
+          "13. Salud de Controladores de Dominio",
+          "14. Configuración DNS",
+          "15. Configuración DHCP",
+          "16. Topología de Sitios AD",
+          "17. Resumen de Problemas por Nivel",
+        ].map(title => new Paragraph({
+          children: [
+            new TextRun({ text: "• ", size: 22 }),
+            new TextRun({ text: title, size: 22 }),
+          ],
+          spacing: { before: 60, after: 60 },
+          indent: { left: 360 },
+        }))),
         new Paragraph({ children: [new PageBreak()] }),
 
         // AD FOREST AND DOMAIN SUMMARY
@@ -2766,7 +2790,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               });
             });
 
-            const sections: Paragraph[] = [];
+            const sections: (Paragraph | Table)[] = [];
 
             // Add header for root cause analysis
             sections.push(
