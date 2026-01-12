@@ -37,6 +37,24 @@ CREATE TABLE IF NOT EXISTS public.assessment_data (
   received_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
+-- Migrate data column from bytea to JSONB if needed (for existing DBs with old schema)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = 'assessment_data'
+        AND column_name = 'data'
+        AND data_type = 'bytea'
+    ) THEN
+        RAISE NOTICE 'Migrating assessment_data.data from bytea to JSONB...';
+        -- Drop and recreate column as JSONB (old bytea data cannot be automatically migrated)
+        ALTER TABLE public.assessment_data DROP COLUMN data;
+        ALTER TABLE public.assessment_data ADD COLUMN data JSONB NOT NULL;
+        RAISE NOTICE 'Migration complete: assessment_data.data is now JSONB';
+    END IF;
+END $$;
+
 -- Create findings table
 CREATE TABLE IF NOT EXISTS public.findings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
