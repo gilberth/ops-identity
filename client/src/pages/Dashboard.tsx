@@ -37,7 +37,33 @@ import {
   Zap,
   Activity,
   Terminal,
+  Eye,
+  Trash2,
+  History,
 } from "lucide-react";
+
+// Table Components
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 const Dashboard = () => {
   const { currentClient } = useClient();
@@ -67,6 +93,9 @@ const Dashboard = () => {
     dcs: 0,
     trusts: 0,
   });
+  const [allAssessments, setAllAssessments] = useState<any[]>([]);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
@@ -79,6 +108,7 @@ const Dashboard = () => {
 
       if (!assessments || assessments.length === 0) {
         setLatestAssessment(null);
+        setAllAssessments([]);
         return;
       }
 
@@ -86,6 +116,7 @@ const Dashboard = () => {
         (a: any, b: any) =>
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
+      setAllAssessments(sorted);
       const latest = sorted[0];
       const previous = sorted[1];
       setLatestAssessment(latest);
@@ -232,6 +263,41 @@ const Dashboard = () => {
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     return `${Math.floor(seconds / 86400)}d ago`;
+  };
+
+  // Get status badge
+  const getStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { className: string; label: string }> = {
+      pending: { className: "bg-secondary text-muted-foreground border-border", label: "Pendiente" },
+      analyzing: { className: "badge-medium", label: "En Curso" },
+      completed: { className: "badge-low", label: "Completado" },
+      failed: { className: "badge-critical", label: "Fallido" }
+    };
+    const config = statusConfig[status] || { className: "bg-secondary text-muted-foreground border-border", label: status };
+    return <Badge className={config.className}>{config.label}</Badge>;
+  };
+
+  // Handle delete assessment
+  const handleDeleteAssessment = async () => {
+    if (!selectedAssessmentId) return;
+    try {
+      await api.deleteAssessment(selectedAssessmentId);
+      toast({
+        title: "Assessment eliminado",
+        description: "El assessment ha sido eliminado exitosamente.",
+      });
+      loadDashboardData();
+    } catch (error) {
+      console.error('Error deleting assessment:', error);
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el assessment.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteDialogOpen(false);
+      setSelectedAssessmentId(null);
+    }
   };
 
   return (
@@ -496,6 +562,69 @@ const Dashboard = () => {
             </div>
           </div>
 
+          {/* Assessment History */}
+          {allAssessments.length > 0 && (
+            <div className="panel overflow-hidden">
+              <div className="panel-header">
+                <div className="flex items-center gap-2">
+                  <History className="h-4 w-4 text-primary" />
+                  <span className="panel-title">Assessment History</span>
+                </div>
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {allAssessments.length} assessments
+                </Badge>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-transparent">
+                    <TableHead className="pl-6 h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Dominio</TableHead>
+                    <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Estado</TableHead>
+                    <TableHead className="h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Fecha</TableHead>
+                    <TableHead className="pr-6 text-right h-11 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allAssessments.map((assessment) => (
+                    <TableRow key={assessment.id} className="border-border hover:bg-secondary/30 transition-colors">
+                      <TableCell className="pl-6 font-medium text-foreground py-4">
+                        <div className="flex items-center gap-2">
+                          {assessment.id === latestAssessment?.id && (
+                            <Badge className="badge-low text-[9px] px-1.5 py-0">Actual</Badge>
+                          )}
+                          <span className="font-mono text-sm">{assessment.domain || assessment.domain_name || 'N/A'}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-4">{getStatusBadge(assessment.status)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground py-4">
+                        {format(new Date(assessment.created_at), "dd MMM yyyy HH:mm", { locale: es })}
+                      </TableCell>
+                      <TableCell className="text-right pr-6 py-4">
+                        <div className="flex items-center justify-end gap-1">
+                          <Link to={`/assessment/${assessment.id}`}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg hover:bg-primary/10 hover:text-primary transition-colors">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </Link>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSelectedAssessmentId(assessment.id);
+                              setDeleteDialogOpen(true);
+                            }}
+                            className="h-8 w-8 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
           {/* Remediation Modal */}
           <RemediationModal
             isOpen={isRemediationOpen}
@@ -504,6 +633,24 @@ const Dashboard = () => {
           />
         </>
       )}
+
+      {/* Delete Assessment Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="rounded-xl border-border bg-background">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-foreground">¿Estás seguro?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Esta acción no se puede deshacer. Se eliminarán todos los datos relacionados con este assessment.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-lg border-border">Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteAssessment} className="rounded-lg bg-destructive hover:bg-destructive/90">
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
