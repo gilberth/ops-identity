@@ -1808,34 +1808,110 @@ function Get-DCHealthDetails {
                     }
                 } catch {}
 
-                # Antivirus status
+                # Antivirus status - Extended detection for enterprise AV products
                 $avStatus = "Unknown"
                 try {
                     # Try Defender module first
                     $av = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
                         Get-MpComputerStatus -ErrorAction SilentlyContinue | Select-Object AntivirusEnabled, RealTimeProtectionEnabled, AntivirusSignatureLastUpdated
                     } -ErrorAction SilentlyContinue
-                    
-                    if ($av) {
+
+                    if ($av -and $av.AntivirusEnabled) {
                         $avStatus = @{
+                            Product = "Windows Defender"
                             Enabled = $av.AntivirusEnabled
                             RealTimeEnabled = $av.RealTimeProtectionEnabled
                             SignatureLastUpdated = $av.AntivirusSignatureLastUpdated
                             Method = "Defender Module"
                         }
                     } else {
-                        # Fallback to WMI SecurityCenter2 (Client) or Service Check (Server)
+                        # Extended AV service detection for enterprise products
                         $avService = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
-                            Get-Service -Name "WinDefend", "SepMasterService", "McAfeeFramework" -ErrorAction SilentlyContinue | Where-Object {$_.Status -eq "Running"}
+                            # Comprehensive list of enterprise AV services
+                            $avServices = @{
+                                # Windows Defender
+                                "WinDefend" = "Windows Defender"
+                                "Sense" = "Windows Defender ATP"
+                                # Kaspersky
+                                "AVP" = "Kaspersky Endpoint Security"
+                                "klnagent" = "Kaspersky Network Agent"
+                                "kavfs" = "Kaspersky File Server"
+                                "kavfsslp" = "Kaspersky for Windows Servers"
+                                # Fortinet
+                                "FortiEDRService" = "FortiEDR"
+                                "FortiEDRCollectorService" = "FortiEDR Collector"
+                                "FA_Scheduler" = "FortiClient"
+                                # CrowdStrike
+                                "CSFalconService" = "CrowdStrike Falcon"
+                                "csagent" = "CrowdStrike Agent"
+                                # Symantec/Broadcom
+                                "SepMasterService" = "Symantec Endpoint Protection"
+                                "ccSvcHst" = "Symantec Common Client"
+                                "SmcService" = "Symantec Management Client"
+                                # McAfee/Trellix
+                                "McAfeeFramework" = "McAfee Agent"
+                                "mfefire" = "McAfee Firewall"
+                                "mfemms" = "McAfee Management Service"
+                                "masvc" = "McAfee Agent Service"
+                                # Trend Micro
+                                "Ntrtscan" = "Trend Micro OfficeScan"
+                                "TMBMSRV" = "Trend Micro Unauthorized Change Prevention"
+                                "TMBMServer" = "Trend Micro Behavior Monitor"
+                                # Sophos
+                                "SAVService" = "Sophos Anti-Virus"
+                                "SAVAdminService" = "Sophos Admin Service"
+                                "Sophos Endpoint Defense Service" = "Sophos Endpoint"
+                                # ESET
+                                "ekrn" = "ESET Kernel Service"
+                                "ERAAgent" = "ESET Remote Administrator Agent"
+                                # Bitdefender
+                                "EPSecurityService" = "Bitdefender Endpoint Security"
+                                "EPProtectedService" = "Bitdefender Protected Service"
+                                # Palo Alto
+                                "CortexXDR" = "Cortex XDR"
+                                "Traps" = "Palo Alto Traps"
+                                # SentinelOne
+                                "SentinelAgent" = "SentinelOne"
+                                "SentinelStaticEngine" = "SentinelOne Static Engine"
+                                # Carbon Black
+                                "CbDefense" = "Carbon Black Defense"
+                                "CarbonBlack" = "Carbon Black"
+                                # Cylance
+                                "CylanceSvc" = "Cylance"
+                            }
+
+                            $detected = @()
+                            foreach ($svc in $avServices.Keys) {
+                                $service = Get-Service -Name $svc -ErrorAction SilentlyContinue
+                                if ($service -and $service.Status -eq "Running") {
+                                    $detected += @{
+                                        ServiceName = $svc
+                                        Product = $avServices[$svc]
+                                        Status = $service.Status.ToString()
+                                    }
+                                }
+                            }
+                            return $detected
                         } -ErrorAction SilentlyContinue
-                        
-                        if ($avService) {
-                             $avStatus = @{
+
+                        if ($avService -and $avService.Count -gt 0) {
+                            $primaryAV = $avService[0]
+                            $avStatus = @{
+                                Product = $primaryAV.Product
                                 Enabled = $true
                                 RealTimeEnabled = "Assumed (Service Running)"
                                 SignatureLastUpdated = "Unknown"
-                                ServiceName = $avService.Name
+                                ServiceName = $primaryAV.ServiceName
+                                AllDetected = ($avService | ForEach-Object { $_.Product }) -join ", "
                                 Method = "Service Check"
+                            }
+                        } else {
+                            $avStatus = @{
+                                Product = "None Detected"
+                                Enabled = $false
+                                RealTimeEnabled = $false
+                                Method = "Service Check"
+                                Warning = "No recognized AV service running"
                             }
                         }
                     }

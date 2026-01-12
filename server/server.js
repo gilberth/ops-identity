@@ -3849,20 +3849,13 @@ app.post('/api/upload-large-file', upload.single('file'), async (req, res) => {
     console.log(`[${timestamp()}] [UPLOAD] JSON parsed successfully`);
     await addLog(assessmentId, 'info', 'Datos JSON procesados correctamente');
 
-    // Compress JSON before storing
-    const jsonString = JSON.stringify(jsonData);
-    const compressed = zlib.gzipSync(jsonString);
-    const compressionRatio = Math.round((1 - compressed.length / jsonString.length) * 100);
-    console.log(`[${timestamp()}] [UPLOAD] Compressed ${Math.round(jsonString.length / 1024 / 1024)} MB to ${Math.round(compressed.length / 1024 / 1024)} MB (${compressionRatio}% reduction)`);
-    console.log(`[${timestamp()}] [UPLOAD] Compressed data type: ${typeof compressed}, isBuffer: ${Buffer.isBuffer(compressed)}`);
-    await addLog(assessmentId, 'info', `Comprimiendo datos (${compressionRatio}% reducción)...`);
-
-    // Store compressed data in assessment_data table (Buffer is automatically converted to bytea by pg driver)
-    await addLog(assessmentId, 'info', 'Guardando datos comprimidos en la base de datos...');
+    // Store JSON data directly (JSONB column handles storage efficiently)
+    await addLog(assessmentId, 'info', 'Guardando datos en la base de datos...');
     await pool.query(
       'INSERT INTO assessment_data (assessment_id, data) VALUES ($1, $2) ON CONFLICT (assessment_id) DO UPDATE SET data = $2',
-      [assessmentId, compressed]
+      [assessmentId, jsonData]
     );
+    console.log(`[${timestamp()}] [UPLOAD] Data stored as JSONB`);
 
     // Update assessment status
     await pool.query(
