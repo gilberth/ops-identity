@@ -2556,6 +2556,39 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }),
         ]),
 
+        // DNS Forwarders Configuration
+        new Paragraph({
+          text: "Configuración de Reenviadores DNS",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DNSConfiguration?.Forwarders || []).length > 0 ? [
+          new Paragraph({
+            text: "Los reenviadores DNS son servidores externos utilizados para resolver nombres no autoritativos.",
+            spacing: { after: 100 }
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["DC", "Reenviadores", "Timeout", "Advertencias"], true),
+              ...(rawData?.DNSConfiguration?.Forwarders || []).map((fwd: any) =>
+                createTableRow([
+                  fwd.DCName || "N/A",
+                  (fwd.Forwarders || []).join(", "),
+                  fwd.ForwardingTimeout ? `${fwd.ForwardingTimeout}s` : "N/A",
+                  fwd.SecurityWarning || "-"
+                ], false, fwd.SecurityWarning ? "medium" : "low")
+              ),
+            ],
+          }),
+          new Paragraph({ text: "", spacing: { after: 200 } })
+        ] : [
+          new Paragraph({
+            text: "⚠️ No se encontraron reenviadores DNS configurados. Los servidores dependen exclusivamente de Root Hints.",
+            spacing: { after: 100 },
+          }),
+        ]),
+
         // 1. Conflictos DNS
         new Paragraph({
           text: "Conflictos de Registros DNS",
@@ -2708,6 +2741,44 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ] : [
           new Paragraph({
             text: "No se encontraron ámbitos DHCP configurados.",
+            spacing: { after: 100 },
+          }),
+        ]),
+
+        // Failover DHCP Configuration
+        new Paragraph({
+          text: "Configuración de Redundancia (Failover)",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DHCPConfiguration?.FailoverConfig || []).length > 0 ? [
+          new Paragraph({
+            text: "Se han detectado configuraciones de alta disponibilidad DHCP mediante Failover.",
+            spacing: { after: 100 }
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Servidor", "Nombre", "Socio", "Modo", "Estado"], true),
+              ...(rawData?.DHCPConfiguration?.FailoverConfig || []).map((failover: any) =>
+                createTableRow([
+                  failover.ServerName || "N/A",
+                  failover.Name || "N/A",
+                  failover.PartnerServer || "N/A",
+                  failover.Mode || "N/A",
+                  failover.State || "N/A"
+                ], false, failover.State?.toLowerCase() === "normal" ? "low" : "medium")
+              ),
+            ],
+          }),
+          new Paragraph({ text: "", spacing: { after: 200 } })
+        ] : [
+          new Paragraph({
+            children: [new TextRun({
+              text: "⚠️ ADVERTENCIA: No se detectó configuración de Failover DHCP. La falta de redundancia puede causar pérdida de servicio si el servidor DHCP falla.",
+              color: COLORS.medium,
+              bold: true
+            })],
             spacing: { after: 100 },
           }),
         ]),

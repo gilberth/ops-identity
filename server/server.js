@@ -57,7 +57,8 @@ const CATEGORIES = [
   'Users', 'GPOs', 'Computers', 'OUs', 'Groups', 'Domains',
   'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos', 'Sites',
   'FSMORolesHealth', 'ReplicationHealthAllDCs', 'LingeringObjectsRisk', 'TrustHealth', 'OrphanedTrusts',
-  'DNSRootHints', 'DNSConflicts', 'DNSScavengingDetailed', 'DHCPRogueServers', 'DHCPOptionsAudit'
+  'DNSRootHints', 'DNSConflicts', 'DNSScavengingDetailed', 'DHCPRogueServers', 'DHCPOptionsAudit',
+  'PasswordPolicies'
 ];
 
 const MAX_PROMPT = 8000;
@@ -424,6 +425,30 @@ function extractCategoryData(jsonData, categoryName) {
       if (originalCount !== result.length) {
         console.log(`[SmartFilter] 'DNS' category reduced from ${originalCount} to ${result.length} items`);
       }
+    }
+  }
+
+  // NEW: Inject DNS Forwarders configuration to DNS category
+  // DNS Forwarders are collected in DNSConfiguration.Forwarders but not extracted by default
+  if (categoryName.toLowerCase() === 'dns' && jsonData.DNSConfiguration?.Forwarders) {
+    const forwarders = jsonData.DNSConfiguration.Forwarders;
+    if (Array.isArray(forwarders) && forwarders.length > 0) {
+      // Add forwarders as a special object type to the DNS analysis
+      forwarders.forEach(fwd => {
+        if (fwd && fwd.Forwarders && fwd.Forwarders.length > 0) {
+          result.push({
+            Type: 'ForwardersConfig',
+            DCName: fwd.DCName,
+            Forwarders: fwd.Forwarders,
+            ForwardingTimeout: fwd.ForwardingTimeout,
+            IsSlave: fwd.IsSlave,
+            SecurityWarning: fwd.SecurityWarning || null,
+            // Flag for easy identification by LLM
+            _isForwarderConfig: true
+          });
+        }
+      });
+      console.log(`[extractCategoryData] Added ${forwarders.length} DNS Forwarder configs to DNS category`);
     }
   }
 
@@ -1047,6 +1072,77 @@ const ATTRIBUTE_VALIDATION_RULES = {
       const source = (obj.TimeSyncConfig?.Source || '').toLowerCase();
       return source.includes('local cmos') || source.includes('free-running') ||
              source.includes('vm ic time');
+    }
+  },
+
+  // DNS-related findings
+  'DNS_FORWARDERS_PUBLIC': {
+    category: 'DNS',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      // obj is from DNSConfiguration.Forwarders array
+      if (obj._isForwarderConfig) return true; // Injected by extractCategoryData
+      return obj.Forwarders && obj.Forwarders.length > 0;
+    }
+  },
+  'DNS_FORWARDERS_INSECURE': {
+    category: 'DNS',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (obj._isForwarderConfig) return true;
+      return obj.SecurityWarning && obj.SecurityWarning.length > 0;
+    }
+  },
+  'DNS_ZONE_TRANSFER': {
+    category: 'DNS',
+    identifierField: 'ZoneName',
+    validate: (obj) => obj.SecureSecondaries === false || obj.SecureSecondaries === 'NoSecurity'
+  },
+  'DNS_DYNAMIC_UPDATE': {
+    category: 'DNS',
+    identifierField: 'ZoneName',
+    validate: (obj) => obj.DynamicUpdate === 'NonsecureAndSecure' || obj.DynamicUpdate === 'Insecure'
+  },
+
+  // PasswordPolicies-related findings
+  'PASSWORD_POLICY_WEAK_LENGTH': {
+    category: 'PasswordPolicies',
+    identifierField: 'Name',
+    validate: (obj) => {
+      // obj can be DefaultDomainPolicy or a FineGrainedPolicy
+      return obj.MinPasswordLength !== undefined && obj.MinPasswordLength < 12;
+    }
+  },
+  'PASSWORD_POLICY_NO_COMPLEXITY': {
+    category: 'PasswordPolicies',
+    identifierField: 'Name',
+    validate: (obj) => obj.ComplexityEnabled === false
+  },
+  'PASSWORD_POLICY_REVERSIBLE_ENCRYPTION': {
+    category: 'PasswordPolicies',
+    identifierField: 'Name',
+    validate: (obj) => obj.ReversibleEncryptionEnabled === true
+  },
+  'PASSWORD_POLICY_NO_LOCKOUT': {
+    category: 'PasswordPolicies',
+    identifierField: 'Name',
+    validate: (obj) => obj.LockoutThreshold === 0 || obj.LockoutThreshold === undefined
+  },
+  'PASSWORD_POLICY_LONG_MAX_AGE': {
+    category: 'PasswordPolicies',
+    identifierField: 'Name',
+    validate: (obj) => {
+      // MaxPasswordAge typically in days or TimeSpan format
+      if (obj.MaxPasswordAge === 0) return true; // Never expires
+      if (typeof obj.MaxPasswordAge === 'number') return obj.MaxPasswordAge > 90;
+      return false;
+    }
+  },
+  'PASSWORD_POLICY_WEAK_HISTORY': {
+    category: 'PasswordPolicies',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return obj.PasswordHistoryCount !== undefined && obj.PasswordHistoryCount < 12;
     }
   }
 };
@@ -1974,17 +2070,32 @@ Para CADA hallazgo (ya sea tradicional o de HygieneAnalysis), proporciona:
 **⚠️ CONTEXTO DE ANÁLISIS:**
 DNS es crítico en AD - todos los servicios dependen de él (Kerberos, LDAP, replicación). Un DNS mal configurado puede permitir ataques de man-in-the-middle, DNS spoofing, y denial of service.
 
+**⚠️ REGLA ANTI-ALUCINACIÓN:**
+Solo reporta configuraciones DNS que aparezcan EXPLÍCITAMENTE en los datos proporcionados.
+Para DNS Forwarders, los datos incluyen objetos con estructura: {DCName, Forwarders[], ForwardingTimeout, IsSlave, SecurityWarning}.
+NO inventes nombres de DCs, IPs de forwarders, o zonas DNS que no existan en los datos.
+
 **🎯 BUSCA ESPECÍFICAMENTE:**
 
-1. **⚠️ MEDIUM: DNS sin Forwarders configurados**
-   - Si Forwarders array está vacío o no existe
-   - Riesgo: Resolución DNS lenta para dominios externos, dependencia total de root hints
-   - Impacto: Puede causar timeouts en aplicaciones, degradación de performance
-   - CIS Control: 2.2.5 - Configure DNS forwarders
+1. **⚠️ MEDIUM: DNS Forwarders con Servidores Públicos (Riesgo de Exposición)**
+   - Si encuentras objetos en los datos con Type='ForwardersConfig' o campo 'Forwarders' con IPs públicas
+   - IPs públicas conocidas: 8.8.8.8, 8.8.4.4 (Google), 1.1.1.1, 1.0.0.1 (Cloudflare), 208.67.222.222, 208.67.220.220 (OpenDNS)
+   - Riesgo: Consultas DNS internas pueden filtrarse a proveedores externos, revelando nombres internos de servidores
+   - Impacto: Pérdida de privacidad, posible enumeración de infraestructura interna
+   - CIS Control: 2.2.5 - Configure DNS forwarders to internal or controlled servers
    - Comando verificar: Get-DnsServerForwarder
-   - Comando fix: Add-DnsServerForwarder -IPAddress "8.8.8.8","1.1.1.1"
-   - Recomendación: Usar DNS internos corporativos o públicos confiables (Google 8.8.8.8, Cloudflare 1.1.1.1)
-   - Timeline: Configurar en 30 días
+   - Comando fix: Remove-DnsServerForwarder -IPAddress "8.8.8.8"; Add-DnsServerForwarder -IPAddress "IP_DNS_INTERNO"
+   - Recomendación: Usar servidores DNS internos o proxies DNS corporativos que no filtren consultas
+   - Timeline: Remediar en 30 días
+
+2. **⚠️ LOW: DNS sin Forwarders configurados (Solo Root Hints)**
+   - Si Forwarders array está vacío o no existe
+   - Riesgo: Resolución DNS más lenta para dominios externos, mayor dependencia de root hints
+   - Impacto: Puede causar timeouts leves en aplicaciones, pero es una configuración válida
+   - Comando verificar: Get-DnsServerForwarder
+   - Comando fix: Add-DnsServerForwarder -IPAddress "IP_DNS_CORPORATIVO"
+   - Recomendación: Evaluar si es intencional (por políticas de seguridad) o necesita configuración
+   - Timeline: Evaluar en 60 días
 
 2. **🔴 HIGH: Zonas DNS con transferencias no seguras**
    - Si AllowZoneTransfer = true sin restricción de IPs
@@ -2605,6 +2716,91 @@ Esta categoría consolida múltiples configuraciones de seguridad críticas: NTL
   * affected_objects: ["krbtgt"]
   * affected_count: 1
   * details: "KRBTGTPasswordAge: [DÍAS] días ([AÑOS] años), KRBTGTPasswordLastSet: [FECHA_EXACTA], Última rotación: [FECHA_HUMANA], Desvío sobre baseline: [DÍAS-180] días, Compliance: CRÍTICO - Excede 180 días recomendados por Microsoft, CIS, NIST"`,
+
+    PasswordPolicies: `Eres un especialista en políticas de contraseñas de Active Directory y cumplimiento de seguridad.
+
+**⚠️ CONTEXTO DE ANÁLISIS:**
+Las políticas de contraseñas son la primera línea de defensa contra ataques de fuerza bruta, credential stuffing y password spraying.
+Los datos incluyen:
+- DefaultDomainPolicy: Política de contraseñas a nivel de dominio
+- FineGrainedPolicies: Password Settings Objects (PSOs) para grupos específicos
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:**
+Solo reporta configuraciones que aparezcan EXPLÍCITAMENTE en los datos proporcionados.
+La estructura de datos es:
+- DefaultDomainPolicy: {MinPasswordLength, PasswordHistoryCount, MaxPasswordAge, MinPasswordAge, ComplexityEnabled, ReversibleEncryptionEnabled, LockoutThreshold, LockoutDuration, LockoutObservationWindow}
+- FineGrainedPolicies: Array de objetos PSO con las mismas propiedades más {Name, Precedence, AppliesTo}
+
+**🎯 BUSCA ESPECÍFICAMENTE:**
+
+1. **🔴 HIGH: Longitud Mínima de Contraseña Débil**
+   - Si MinPasswordLength < 12 caracteres
+   - Riesgo: Passwords cortos son vulnerables a ataques de fuerza bruta y rainbow tables
+   - CIS Control: 5.2.2 - Set minimum password length to 14 or more characters
+   - NIST 800-63B: Recomienda mínimo 8, pero mejores prácticas actuales indican 12-14
+   - Comando verificar: Get-ADDefaultDomainPasswordPolicy | Select MinPasswordLength
+   - Comando fix: Set-ADDefaultDomainPasswordPolicy -MinPasswordLength 14
+   - Impacto: Los usuarios deberán cambiar contraseñas en el próximo cambio programado
+   - Timeline: Configurar en 30 días, aplicar en próxima ventana de cambio
+
+2. **🔴 HIGH: Historial de Contraseñas Insuficiente**
+   - Si PasswordHistoryCount < 12
+   - Riesgo: Usuarios pueden reciclar contraseñas antiguas comprometidas
+   - CIS Control: 5.2.3 - Set password history to 24 or more passwords remembered
+   - Comando verificar: Get-ADDefaultDomainPasswordPolicy | Select PasswordHistoryCount
+   - Comando fix: Set-ADDefaultDomainPasswordPolicy -PasswordHistoryCount 24
+   - Timeline: Configurar en 30 días
+
+3. **🔴 CRITICAL: Complejidad de Contraseñas Deshabilitada**
+   - Si ComplexityEnabled = false
+   - Riesgo: Permite contraseñas simples como "Password123" o "Company2024"
+   - CIS Control: 5.2.4 - Ensure password complexity requirements are enabled
+   - Comando verificar: Get-ADDefaultDomainPasswordPolicy | Select ComplexityEnabled
+   - Comando fix: Set-ADDefaultDomainPasswordPolicy -ComplexityEnabled $true
+   - Timeline: Remediar INMEDIATAMENTE (24 horas)
+
+4. **🔴 CRITICAL: Cifrado Reversible Habilitado**
+   - Si ReversibleEncryptionEnabled = true
+   - Riesgo: Las contraseñas se almacenan con cifrado reversible (equivalente a plaintext)
+   - CIS Control: 5.2.5 - Ensure 'Store passwords using reversible encryption' is disabled
+   - Comando verificar: Get-ADDefaultDomainPasswordPolicy | Select ReversibleEncryptionEnabled
+   - Comando fix: Set-ADDefaultDomainPasswordPolicy -ReversibleEncryptionEnabled $false
+   - Timeline: Remediar INMEDIATAMENTE (< 1 hora)
+
+5. **⚠️ MEDIUM: Sin Política de Bloqueo de Cuenta**
+   - Si LockoutThreshold = 0 (nunca bloquea)
+   - Riesgo: Permite ataques de password spraying sin detección ni bloqueo
+   - CIS Control: 5.2.6 - Set account lockout threshold to 5 or fewer invalid logon attempts
+   - Comando verificar: Get-ADDefaultDomainPasswordPolicy | Select LockoutThreshold
+   - Comando fix: Set-ADDefaultDomainPasswordPolicy -LockoutThreshold 5 -LockoutDuration "00:30:00" -LockoutObservationWindow "00:30:00"
+   - Balance: Threshold muy bajo (< 3) puede causar DoS accidental
+   - Timeline: Configurar en 14 días
+
+6. **⚠️ MEDIUM: MaxPasswordAge Muy Largo**
+   - Si MaxPasswordAge > 90 días (o 0 = nunca expira)
+   - Riesgo: Contraseñas comprometidas permanecen válidas por mucho tiempo
+   - CIS Control: 5.2.7 - Set maximum password age to 60 days or less
+   - Comando verificar: Get-ADDefaultDomainPasswordPolicy | Select MaxPasswordAge
+   - Comando fix: Set-ADDefaultDomainPasswordPolicy -MaxPasswordAge "60.00:00:00"
+   - Timeline: Configurar en 60 días
+
+7. **ℹ️ INFO: Fine-Grained Password Policies (PSOs)**
+   - Reportar si existen PSOs configurados y a qué grupos se aplican
+   - PSOs permiten políticas más estrictas para cuentas privilegiadas
+   - Best Practice: Domain Admins y Enterprise Admins deberían tener PSO con MinPasswordLength >= 20
+   - Comando verificar: Get-ADFineGrainedPasswordPolicy -Filter *
+
+**FORMATO DE REPORTE:**
+- **type_id**: PASSWORD_POLICY_WEAK_LENGTH, PASSWORD_POLICY_NO_COMPLEXITY, PASSWORD_POLICY_REVERSIBLE_ENCRYPTION, PASSWORD_POLICY_NO_LOCKOUT, PASSWORD_POLICY_LONG_MAX_AGE, PASSWORD_POLICY_WEAK_HISTORY
+- **Título**: "Longitud mínima de contraseña débil (N caracteres)" o "Cifrado reversible habilitado en política de dominio"
+- **Descripción**: Riesgo específico, vector de ataque, impacto regulatorio
+- **Recomendación**: Comandos PowerShell con valores específicos recomendados
+- **Evidencia**: Configuración actual vs recomendada, affected_objects: ["Default Domain Policy"] o nombres de PSOs
+
+**⚠️ VALIDACIÓN:**
+- Solo genera findings si los datos MUESTRAN configuraciones débiles
+- Si todos los valores cumplen con best practices, devuelve {"findings": []}
+- NO inventes valores - usa los datos exactos proporcionados`,
 
     ADCSInventory: `Analiza la infraestructura de Certificados (ADCS) en busca de vulnerabilidades críticas.
 **BUSCA:**
