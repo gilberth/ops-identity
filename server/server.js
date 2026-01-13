@@ -56,7 +56,7 @@ app.use(express.text({ limit: '500mb' }));
 const CATEGORIES = [
   'Users', 'GPOs', 'Computers', 'OUs', 'Groups', 'Domains',
   'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos', 'Sites',
-  'FSMORolesHealth', 'ReplicationHealthAllDCs', 'LingeringObjectsRisk', 'TrustHealth', 'OrphanedTrusts',
+  'FSMORolesHealth', 'ReplicationStatus', 'ReplicationHealthAllDCs', 'LingeringObjectsRisk', 'TrustHealth', 'OrphanedTrusts',
   'DNSRootHints', 'DNSConflicts', 'DNSScavengingDetailed', 'DHCPRogueServers', 'DHCPOptionsAudit',
   'PasswordPolicies'
 ];

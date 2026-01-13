@@ -1735,16 +1735,56 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // Soporta múltiples formatos de datos de replicación
         ...(() => {
           // Intentar extraer datos de replicación de varias fuentes posibles
-          const replData = rawData?.ReplicationHealthAllDCs || rawData?.ReplicationStatus || rawData?.Replication || [];
-          const replArray = Array.isArray(replData) ? replData :
-                           (replData?.DCReplicationHealth ? replData.DCReplicationHealth : []);
+          const replHealthAllDCs = rawData?.ReplicationHealthAllDCs;
+          const replStatus = rawData?.ReplicationStatus;
+          
+          // ReplicationHealthAllDCs tiene estructura: { Summary, DomainControllers: [...], FailedReplications, LingeringObjectsRisk }
+          // Cada DC tiene InboundPartners con la información de replicación
+          let replArray: any[] = [];
+          
+          if (replHealthAllDCs?.DomainControllers && Array.isArray(replHealthAllDCs.DomainControllers)) {
+            // Formato nuevo: ReplicationHealthAllDCs.DomainControllers con InboundPartners
+            replArray = replHealthAllDCs.DomainControllers;
+          } else if (Array.isArray(replHealthAllDCs)) {
+            replArray = replHealthAllDCs;
+          } else if (replStatus?.DomainControllers && Array.isArray(replStatus.DomainControllers)) {
+            replArray = replStatus.DomainControllers;
+          } else if (Array.isArray(replStatus)) {
+            replArray = replStatus;
+          } else if (replHealthAllDCs?.DCReplicationHealth) {
+            replArray = replHealthAllDCs.DCReplicationHealth;
+          } else {
+            replArray = [];
+          }
 
           // Determinar el formato de los datos
-          const hasPartners = replArray.some((dc: any) => dc.ReplicationPartners);
+          const hasInboundPartners = replArray.some((dc: any) => dc.InboundPartners);
+          const hasReplicationPartners = replArray.some((dc: any) => dc.ReplicationPartners);
 
           let tableRows: any[] = [];
 
-          if (hasPartners) {
+          if (hasInboundPartners) {
+            // Formato con InboundPartners (estructura actual del PowerShell collector)
+            tableRows = replArray.flatMap((dc: any) =>
+              (dc.InboundPartners || []).map((partner: any) => {
+                const isHealthy = partner.LastReplicationResult === 0 && partner.ConsecutiveFailures === 0;
+                const statusText = partner.Status || (isHealthy ? "OK" : `ERROR ${partner.LastReplicationResult}`);
+                const color = isHealthy ? "low" : (partner.ConsecutiveFailures > 0 ? "critical" : "medium");
+                // Extraer nombre del DC del DN completo
+                const partnerDCMatch = partner.PartnerDC?.match(/CN=NTDS Settings,CN=([^,]+)/);
+                const partnerName = partnerDCMatch ? partnerDCMatch[1] : partner.PartnerDC || "N/A";
+                const lagText = partner.ReplicationLagMinutes !== undefined 
+                  ? `${partner.ReplicationLagMinutes.toFixed(1)} min` 
+                  : "";
+                return createTableRow([
+                  dc.DCName || dc.HostName || "N/A",
+                  partnerName,
+                  `${statusText}${lagText ? ` (${lagText})` : ""}`,
+                  (partner.ConsecutiveFailures || 0).toString()
+                ], false, color);
+              })
+            );
+          } else if (hasReplicationPartners) {
             // Formato con ReplicationPartners anidados
             tableRows = replArray.flatMap((dc: any) =>
               (dc.ReplicationPartners || []).map((partner: any) => {
@@ -1752,7 +1792,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 const statusText = isHealthy ? "OK" : `ERROR ${partner.LastReplicationResult}`;
                 const color = isHealthy ? "low" : "critical";
                 return createTableRow([
-                  dc.SourceDC || dc.DC || dc.Server || "N/A",
+                  dc.SourceDC || dc.DC || dc.Server || dc.DCName || "N/A",
                   partner.Partner || partner.PartnerDC || "N/A",
                   statusText,
                   partner.ConsecutiveFailureCount?.toString() || "0"
@@ -1766,13 +1806,19 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               const isHealthy = status === "OK" || status === "Success" || r.ConsecutiveFailures === 0;
               const color = isHealthy ? "low" : "critical";
               return createTableRow([
-                r.SourceDC || r.DC || r.Server || "N/A",
+                r.SourceDC || r.DC || r.Server || r.DCName || "N/A",
                 r.PartnerDC || r.Partner || r.DestinationDC || "N/A",
                 status,
                 (r.ConsecutiveFailures || r.FailureCount || 0).toString()
               ], false, color);
             });
           }
+          
+          // Agregar resumen si existe
+          const summary = replHealthAllDCs?.Summary;
+          const summaryText = summary 
+            ? `Resumen: ${summary.HealthyDCs || 0} DCs sanos, ${summary.DegradedDCs || 0} degradados, ${summary.FailedLinks || 0} enlaces fallidos de ${summary.TotalDCs || 0} totales.`
+            : "";
 
           return [
             new Paragraph({
@@ -1782,15 +1828,25 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             }),
             new Paragraph({
               text: "Análisis del estado de replicación entre controladores de dominio. Se muestran posibles fallos y latencias excesivas.",
-              spacing: { after: 200 },
+              spacing: { after: 100 },
             }),
+            ...(summaryText ? [new Paragraph({
+              text: summaryText,
+              spacing: { after: 200 },
+              shading: { fill: "E8F5E9", type: ShadingType.CLEAR },
+            })] : []),
             new Table({
               width: { size: 100, type: WidthType.PERCENTAGE },
               rows: [
-                createTableRow(["DC Origen", "Socio (Partner)", "Estado", "Fallas Consec."], true),
-                ...tableRows.slice(0, 20), // Limit detailed rows to prevent overflow
+                createTableRow(["DC Origen", "Socio (Partner)", "Estado (Latencia)", "Fallas Consec."], true),
+                ...tableRows.slice(0, 30), // Limit detailed rows to prevent overflow
               ],
             }),
+            ...(tableRows.length === 0 ? [new Paragraph({
+              text: "No se encontraron datos de replicación o todos los enlaces están sanos sin información detallada.",
+              spacing: { before: 100, after: 200 },
+              shading: { fill: "FFF3E0", type: ShadingType.CLEAR },
+            })] : []),
           ];
         })(),
 
