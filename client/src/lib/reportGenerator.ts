@@ -1663,81 +1663,73 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         }),
 
         // DOMAIN CONTROLLER HEALTH (SEMAPHORE STYLE)
-        ...(rawData?.DomainControllers && rawData.DomainControllers.length > 0 ? [
-          new Paragraph({
-            heading: HeadingLevel.HEADING_2,
-            children: [new TextRun({ text: "Estado de Controladores de Dominio" })],
-            spacing: { before: 400, after: 200 },
-          }),
-          new Table({
-            columnWidths: TABLE_WIDTHS.fourCol,
-            rows: [
-              createTableRow(["Hostname", "IPv4", "OS", "Estado"], true, undefined, TABLE_WIDTHS.fourCol),
-              ...rawData.DomainControllers.map((dc: any) => {
-                // Simulate health checks based on available data
-                // In a real scenario, we would check specific health flags
-                const isHealthy = true; // Default to true for layout demo
-                const statusText = isHealthy ? "OK" : "REVISAR";
-                const statusColor = isHealthy ? "low" : "high"; // Blue for healthy (info), Orange for warning
+        new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun({ text: "Estado de Controladores de Dominio" })],
+          spacing: { before: 400, after: 200 },
+        }),
+        new Table({
+          columnWidths: TABLE_WIDTHS.fourCol,
+          rows: [
+            createTableRow(["Hostname", "IPv4", "OS", "Estado"], true, undefined, TABLE_WIDTHS.fourCol),
+            ...(rawData?.DomainControllers || []).map((dc: any) => {
+              const isHealthy = true;
+              const statusText = isHealthy ? "OK" : "REVISAR";
+              const statusColor = isHealthy ? "low" : "high";
 
-                return createTableRow([
-                  dc.HostName || dc.Name || "N/A",
-                  dc.IPv4Address || dc.IPAddress || "N/A",
-                  dc.OperatingSystem || "N/A",
-                  statusText
-                ], false, statusColor);
-              }),
-            ],
-          }),
-        ] : []),
+              return createTableRow([
+                dc.HostName || dc.Name || "N/A",
+                dc.IPv4Address || dc.IPAddress || "N/A",
+                dc.OperatingSystem || "N/A",
+                statusText
+              ], false, statusColor);
+            }),
+          ],
+        }),
 
         // SALUD DE ROLES FSMO
-        ...(rawData?.FSMORolesHealth ? [
-          new Paragraph({
-            text: "Salud y Ubicación de Roles FSMO",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: `Estado General: ${rawData.FSMORolesHealth.OverallHealth || "Desconocido"}`,
-            spacing: { after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Rol", "Titular", "Alcance", "Estado", "Latencia"], true),
-              ...(rawData.FSMORolesHealth.Roles || []).map((role: any) => {
-                const status = role.Health === "Healthy" ? "OK" : "ERROR";
-                const statusColor = role.Health === "Healthy" ? "low" : "critical";
-                const latency = role.ADResponseTimeMs ? `${role.ADResponseTimeMs.toFixed(1)} ms` : "N/A";
-                return createTableRow([
-                  role.RoleName || "Desconocido",
-                  role.Holder || "Desconocido",
-                  role.Scope || "N/A",
-                  status,
-                  latency
-                ], false, statusColor);
-              }),
-            ],
-          }),
-          // RID Pool Status
-          ...(rawData.FSMORolesHealth.RIDPoolStatus ? [
-            new Paragraph({
-              text: "Estado del Pool RID",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
+        new Paragraph({
+          text: "Salud y Ubicación de Roles FSMO",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: `Estado General: ${rawData?.FSMORolesHealth?.OverallHealth || "Desconocido"}`,
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Rol", "Titular", "Alcance", "Estado", "Latencia"], true),
+            ...(rawData?.FSMORolesHealth?.Roles || []).map((role: any) => {
+              const status = role.Health === "Healthy" ? "OK" : "ERROR";
+              const statusColor = role.Health === "Healthy" ? "low" : "critical";
+              const latency = role.ADResponseTimeMs ? `${role.ADResponseTimeMs.toFixed(1)} ms` : "N/A";
+              return createTableRow([
+                role.RoleName || "Desconocido",
+                role.Holder || "Desconocido",
+                role.Scope || "N/A",
+                status,
+                latency
+              ], false, statusColor);
             }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Métrica", "Valor"], true),
-                createTableRow(["RIDs Emitidos", rawData.FSMORolesHealth.RIDPoolStatus.RIDsIssued?.toString() || "N/A"]),
-                createTableRow(["RIDs Restantes", rawData.FSMORolesHealth.RIDPoolStatus.RIDsRemaining?.toString() || "N/A"]),
-                createTableRow(["% Utilizado", `${rawData.FSMORolesHealth.RIDPoolStatus.PercentUsed || 0}%`]),
-              ],
-            }),
-          ] : []),
-        ] : []),
+          ],
+        }),
+        // RID Pool Status
+        new Paragraph({
+          text: "Estado del Pool RID",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Métrica", "Valor"], true),
+            createTableRow(["RIDs Emitidos", rawData?.FSMORolesHealth?.RIDPoolStatus?.RIDsIssued?.toString() || "N/A"]),
+            createTableRow(["RIDs Restantes", rawData?.FSMORolesHealth?.RIDPoolStatus?.RIDsRemaining?.toString() || "N/A"]),
+            createTableRow(["% Utilizado", `${rawData?.FSMORolesHealth?.RIDPoolStatus?.PercentUsed || 0}%`]),
+          ],
+        }),
 
         // SALUD DE REPLICACIÓN
         // Soporta múltiples formatos de datos de replicación
@@ -1746,8 +1738,6 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           const replData = rawData?.ReplicationHealthAllDCs || rawData?.ReplicationStatus || rawData?.Replication || [];
           const replArray = Array.isArray(replData) ? replData :
                            (replData?.DCReplicationHealth ? replData.DCReplicationHealth : []);
-
-          if (replArray.length === 0) return [];
 
           // Determinar el formato de los datos
           const hasPartners = replArray.some((dc: any) => dc.ReplicationPartners);
@@ -1784,7 +1774,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             });
           }
 
-          return tableRows.length > 0 ? [
+          return [
             new Paragraph({
               text: "Salud de Replicación Active Directory",
               heading: HeadingLevel.HEADING_1,
@@ -1801,7 +1791,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 ...tableRows.slice(0, 20), // Limit detailed rows to prevent overflow
               ],
             }),
-          ] : [];
+          ];
         })(),
 
         // TOPOLOGÍA DE SITIOS Y SUBNETS
@@ -1978,177 +1968,180 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         })(),
 
         // ANÁLISIS DE OBJETOS DE DIRECTIVA DE GRUPO
-        ...(rawData?.GPOs && rawData.GPOs.length > 0 ? [
-          new Paragraph({
-            text: "Análisis de Objetos de Directiva de Grupo",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: `Se identificaron un total de ${rawData.GPOs.length} Objetos de Directiva de Grupo en el dominio. La siguiente sección proporciona información detallada sobre cada GPO, incluyendo su estado, enlaces, permisos y mejoras recomendadas.`,
-            spacing: { after: 200 },
-          }),
-          // ... (resto del bloque GPO existente)
+        new Paragraph({
+          text: "Análisis de Objetos de Directiva de Grupo",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: `Se identificaron un total de ${(rawData?.GPOs || []).length} Objetos de Directiva de Grupo en el dominio.`,
+          spacing: { after: 200 },
+        }),
 
+        // Tabla de Resumen de GPO
+        new Paragraph({
+          text: "Resumen de GPOs",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Nombre de GPO", "Estado", "Enlaces", "Última Modificación"], true),
+            ...(rawData?.GPOs || []).slice(0, 20).map((gpo: any) => {
+              const displayName = gpo.DisplayName || gpo.Name || "N/A";
+              const status = gpo.GpoStatus || "AllSettingsEnabled";
+              const linksCount = gpo.Links?.length?.toString() || gpo.LinksCount?.toString() || "0";
+              let lastModified = "N/A";
 
-          // Tabla de Resumen de GPO
-          new Paragraph({
-            text: "Resumen de GPOs",
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 300, after: 100 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Nombre de GPO", "Estado", "Enlaces", "Última Modificación"], true),
-              ...rawData.GPOs.slice(0, 20).map((gpo: any) => {
-                const displayName = gpo.DisplayName || gpo.Name || "N/A";
-                const status = gpo.GpoStatus || "AllSettingsEnabled";
-                const linksCount = gpo.Links?.length?.toString() || gpo.LinksCount?.toString() || "0";
-                let lastModified = "N/A";
-
-                if (gpo.ModificationTime) {
-                  try {
-                    const date = new Date(gpo.ModificationTime);
-                    if (!isNaN(date.getTime())) {
-                      lastModified = date.toLocaleDateString('es-ES', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit'
-                      });
-                    }
-                  } catch (e) {
-                    console.error('Error parsing date:', gpo.ModificationTime, e);
+              if (gpo.ModificationTime) {
+                try {
+                  const date = new Date(gpo.ModificationTime);
+                  if (!isNaN(date.getTime())) {
+                    lastModified = date.toLocaleDateString('es-ES', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    });
                   }
+                } catch (e) {
+                  console.error('Error parsing date:', gpo.ModificationTime, e);
                 }
+              }
 
-                return createTableRow([displayName, status, linksCount, lastModified]);
-              }),
-            ],
-          }),
+              return createTableRow([displayName, status, linksCount, lastModified]);
+            }),
+          ],
+        }),
 
-          // Análisis de Estado de GPOs
-          new Paragraph({
-            text: "Distribución de Estado de GPOs",
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 300, after: 100 },
-          }),
-          new Paragraph({
-            text: (() => {
-              const statusCount = rawData.GPOs.reduce((acc: any, gpo: any) => {
-                const status = gpo.GpoStatus || "Desconocido";
-                acc[status] = (acc[status] || 0) + 1;
-                return acc;
-              }, {});
-              return `GPO Status: ${Object.entries(statusCount).map(([status, count]) => `${status}: ${count}`).join(", ")}`;
-            })(),
-            spacing: { after: 200 },
-          }),
+        // Análisis de Estado de GPOs
+        new Paragraph({
+          text: "Distribución de Estado de GPOs",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        new Paragraph({
+          text: (() => {
+            const statusCount = (rawData?.GPOs || []).reduce((acc: any, gpo: any) => {
+              const status = gpo.GpoStatus || "Desconocido";
+              acc[status] = (acc[status] || 0) + 1;
+              return acc;
+            }, {});
+            return Object.keys(statusCount).length > 0 
+              ? `GPO Status: ${Object.entries(statusCount).map(([status, count]) => `${status}: ${count}`).join(", ")}`
+              : "No hay GPOs para analizar";
+          })(),
+          spacing: { after: 200 },
+        }),
 
-          // Recomendaciones para GPOs
-          new Paragraph({
-            text: "Recomendaciones de GPO",
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 300, after: 100 },
-          }),
-          new Paragraph({
-            text: "Basado en el análisis de GPO, se recomiendan las siguientes mejoras:",
-            spacing: { after: 100 },
-          }),
-          ...(() => {
-            const recommendations = [];
-            let recNumber = 1; // Numeración dinámica
+        // Recomendaciones para GPOs
+        new Paragraph({
+          text: "Recomendaciones de GPO",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        new Paragraph({
+          text: "Basado en el análisis de GPO, se recomiendan las siguientes mejoras:",
+          spacing: { after: 100 },
+        }),
+        ...(() => {
+          const gpos = rawData?.GPOs || [];
+          const recommendations = [];
+          let recNumber = 1;
 
-            // Verificar GPOs no enlazadas
-            const unlinkedGPOs = rawData.GPOs.filter((gpo: any) => !gpo.Links || gpo.Links.length === 0);
-            if (unlinkedGPOs.length > 0) {
-              recommendations.push(
-                new Paragraph({
-                  text: `${recNumber}. GPOs No Enlazadas: ${unlinkedGPOs.length} GPO(s) no están enlazadas a ninguna OU. Considere eliminarlas o enlazarlas:`,
-                  spacing: { before: 100, after: 50 },
-                }),
-                ...unlinkedGPOs.slice(0, 5).map((gpo: any) =>
-                  new Paragraph({
-                    text: `   • ${gpo.DisplayName}`,
-                    spacing: { after: 50 },
-                  })
-                )
-              );
-              recNumber++;
-            }
-
-            // Verificar GPOs deshabilitadas
-            const disabledGPOs = rawData.GPOs.filter((gpo: any) => gpo.GpoStatus === "AllSettingsDisabled");
-            if (disabledGPOs.length > 0) {
-              recommendations.push(
-                new Paragraph({
-                  text: `${recNumber}. GPOs Deshabilitadas: ${disabledGPOs.length} GPO(s) tienen todas las configuraciones deshabilitadas. Revise si aún son necesarias:`,
-                  spacing: { before: 100, after: 50 },
-                }),
-                ...disabledGPOs.slice(0, 5).map((gpo: any) =>
-                  new Paragraph({
-                    text: `   • ${gpo.DisplayName}`,
-                    spacing: { after: 50 },
-                  })
-                )
-              );
-              recNumber++;
-            }
-
-            // Verificar GPOs antiguas (no modificadas en 180+ días)
-            const now = new Date();
-            const oldGPOs = rawData.GPOs.filter((gpo: any) => {
-              if (!gpo.ModificationTime) return false;
-              const modDate = new Date(gpo.ModificationTime);
-              const daysDiff = (now.getTime() - modDate.getTime()) / (1000 * 3600 * 24);
-              return daysDiff > 180;
-            });
-            if (oldGPOs.length > 0) {
-              recommendations.push(
-                new Paragraph({
-                  text: `${recNumber}. GPOs Obsoletas: ${oldGPOs.length} GPO(s) no se han modificado en más de 180 días. Revise si siguen siendo relevantes.`,
-                  spacing: { before: 100, after: 50 },
-                })
-              );
-              recNumber++;
-            }
-
-            // Verificar GPOs con problemas de permisos
-            const gposWithAuthUsers = rawData.GPOs.filter((gpo: any) =>
-              gpo.Permissions?.some((p: any) => p.Trustee === "Authenticated Users" && p.Permission !== "GpoApply")
-            );
-            if (gposWithAuthUsers.length > 0) {
-              recommendations.push(
-                new Paragraph({
-                  text: `${recNumber}. Problemas de Permisos: ${gposWithAuthUsers.length} GPO(s) pueden tener acceso excesivamente permisivo. Revise permisos para:`,
-                  spacing: { before: 100, after: 50 },
-                }),
-                ...gposWithAuthUsers.slice(0, 5).map((gpo: any) =>
-                  new Paragraph({
-                    text: `   • ${gpo.DisplayName}`,
-                    spacing: { after: 50 },
-                  })
-                )
-              );
-              recNumber++;
-            }
-
-            // Recomendación general siempre al final
-            recommendations.push(
+          if (gpos.length === 0) {
+            return [
               new Paragraph({
-                text: `${recNumber}. Mejores Prácticas: Asegure que todas las GPOs sigan convenciones de nomenclatura, tengan documentación adecuada y sean revisadas regularmente para el cumplimiento de seguridad.`,
-                spacing: { before: 100, after: 100 },
-              })
-            );
-
-            return recommendations.length > 0 ? recommendations : [
-              new Paragraph({
-                text: "No se identificaron mejoras específicas de GPO en este momento. Continúe monitoreando la salud de las GPO regularmente.",
+                text: "No hay GPOs para analizar.",
                 spacing: { after: 100 },
               })
             ];
-          })(),
-        ] : []),
+          }
+
+          // Verificar GPOs no enlazadas
+          const unlinkedGPOs = gpos.filter((gpo: any) => !gpo.Links || gpo.Links.length === 0);
+          if (unlinkedGPOs.length > 0) {
+            recommendations.push(
+              new Paragraph({
+                text: `${recNumber}. GPOs No Enlazadas: ${unlinkedGPOs.length} GPO(s) no están enlazadas a ninguna OU.`,
+                spacing: { before: 100, after: 50 },
+              }),
+              ...unlinkedGPOs.slice(0, 5).map((gpo: any) =>
+                new Paragraph({
+                  text: `   - ${gpo.DisplayName}`,
+                  spacing: { after: 50 },
+                })
+              )
+            );
+            recNumber++;
+          }
+
+          // Verificar GPOs deshabilitadas
+          const disabledGPOs = gpos.filter((gpo: any) => gpo.GpoStatus === "AllSettingsDisabled");
+          if (disabledGPOs.length > 0) {
+            recommendations.push(
+              new Paragraph({
+                text: `${recNumber}. GPOs Deshabilitadas: ${disabledGPOs.length} GPO(s) tienen todas las configuraciones deshabilitadas.`,
+                spacing: { before: 100, after: 50 },
+              }),
+              ...disabledGPOs.slice(0, 5).map((gpo: any) =>
+                new Paragraph({
+                  text: `   - ${gpo.DisplayName}`,
+                  spacing: { after: 50 },
+                })
+              )
+            );
+            recNumber++;
+          }
+
+          // Verificar GPOs antiguas (no modificadas en 180+ días)
+          const now = new Date();
+          const oldGPOs = gpos.filter((gpo: any) => {
+            if (!gpo.ModificationTime) return false;
+            const modDate = new Date(gpo.ModificationTime);
+            const daysDiff = (now.getTime() - modDate.getTime()) / (1000 * 3600 * 24);
+            return daysDiff > 180;
+          });
+          if (oldGPOs.length > 0) {
+            recommendations.push(
+              new Paragraph({
+                text: `${recNumber}. GPOs Obsoletas: ${oldGPOs.length} GPO(s) no se han modificado en más de 180 días.`,
+                spacing: { before: 100, after: 50 },
+              })
+            );
+            recNumber++;
+          }
+
+          // Verificar GPOs con problemas de permisos
+          const gposWithAuthUsers = gpos.filter((gpo: any) =>
+            gpo.Permissions?.some((p: any) => p.Trustee === "Authenticated Users" && p.Permission !== "GpoApply")
+          );
+          if (gposWithAuthUsers.length > 0) {
+            recommendations.push(
+              new Paragraph({
+                text: `${recNumber}. Problemas de Permisos: ${gposWithAuthUsers.length} GPO(s) pueden tener acceso excesivamente permisivo.`,
+                spacing: { before: 100, after: 50 },
+              }),
+              ...gposWithAuthUsers.slice(0, 5).map((gpo: any) =>
+                new Paragraph({
+                  text: `   - ${gpo.DisplayName}`,
+                  spacing: { after: 50 },
+                })
+              )
+            );
+            recNumber++;
+          }
+
+          // Recomendación general siempre al final
+          recommendations.push(
+            new Paragraph({
+              text: `${recNumber}. Mejores Prácticas: Asegure que todas las GPOs sigan convenciones de nomenclatura y sean revisadas regularmente.`,
+              spacing: { before: 100, after: 100 },
+            })
+          );
+
+          return recommendations;
+        })(),
 
         // RELACIONES DE CONFIANZA Y OBJETOS HUÉRFANOS
         // Buscar trusts en múltiples ubicaciones posibles del JSON
@@ -2268,12 +2261,11 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         })(),
 
         // RIESGO DE OBJETOS PERSISTENTES (LINGERING OBJECTS)
-        ...(rawData?.LingeringObjectsRisk ? [
-          new Paragraph({
-            text: "Análisis de Riesgo: Objetos Persistentes (Lingering Objects)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
+        new Paragraph({
+          text: "Análisis de Riesgo: Objetos Persistentes (Lingering Objects)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
           // EXPLICACIÓN EJECUTIVA
           new Paragraph({
             children: [new TextRun({
@@ -2298,80 +2290,115 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             })],
             spacing: { after: 200 },
           }),
-          ...(Array.isArray(rawData.LingeringObjectsRisk) ? [
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["DC", "Estado de Riesgo", "Detalles"], true),
-                ...rawData.LingeringObjectsRisk.map((risk: any) => {
-                  const isSafe = risk.Status === "Pass" || risk.RiskLevel === "Low";
-                  const statusIcon = isSafe ? "BAJO RIESGO" : "ALTO RIESGO";
-                  const color = isSafe ? "low" : "critical";
-                  return createTableRow([
-                    risk.TargetDC || "N/A",
-                    statusIcon,
-                    risk.Message || "Sin problemas detectados"
-                  ], false, color);
-                }),
-              ],
-            })
-          ] : [
-            // Object format with RiskLevel, DetectionMethod, Indicators array
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Nivel de Riesgo", "Método de Detección"], true),
-                createTableRow([
-                  rawData.LingeringObjectsRisk.RiskLevel || "Desconocido",
-                  rawData.LingeringObjectsRisk.DetectionMethod || "N/A"
-                ], false, rawData.LingeringObjectsRisk.RiskLevel === "Low" ? "low" : "medium")
-              ]
-            }),
-            // Indicators as separate list (they are objects, not strings)
-            ...(rawData.LingeringObjectsRisk.Indicators && rawData.LingeringObjectsRisk.Indicators.length > 0 ? [
-              new Paragraph({
-                text: "Indicadores Detectados:",
-                spacing: { before: 200, after: 100 },
-              }),
-              // Explicación de severidades
-              new Paragraph({
-                children: [
-                  new TextRun({ text: "Niveles de severidad: ", bold: true, size: 20 }),
-                  new TextRun({ text: "[LOW] = Información/Bajo riesgo, ", size: 20, color: COLORS.low }),
-                  new TextRun({ text: "[MEDIUM] = Atención recomendada, ", size: 20, color: COLORS.medium }),
-                  new TextRun({ text: "[HIGH] = Acción requerida, ", size: 20, color: COLORS.high }),
-                  new TextRun({ text: "[CRITICAL] = Urgente", size: 20, color: COLORS.critical }),
-                ],
-                spacing: { after: 100 },
-                shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
-              }),
-              ...rawData.LingeringObjectsRisk.Indicators.map((indicator: any) => {
-                const severity = (indicator.Severity || "INFO").toUpperCase();
-                const color = severity === "CRITICAL" ? COLORS.critical :
-                              severity === "HIGH" ? COLORS.high :
-                              severity === "MEDIUM" ? COLORS.medium :
-                              severity === "LOW" ? COLORS.low : COLORS.info;
-                return new Paragraph({
-                  children: [
-                    new TextRun({ text: `• [${severity}] `, bold: true, color: color, size: 22 }),
-                    new TextRun({ text: indicator.Description || indicator.Type || "Sin descripción", size: 22 }),
+          // Lingering Objects data table - handles array, object, or no data
+          ...(() => {
+            const lingeringData = rawData?.LingeringObjectsRisk;
+            
+            // No data case
+            if (!lingeringData) {
+              return [
+                new Paragraph({
+                  text: "No se encontraron datos de análisis de objetos persistentes.",
+                  spacing: { before: 100, after: 100 },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
+                })
+              ];
+            }
+            
+            // Array format case
+            if (Array.isArray(lingeringData)) {
+              if (lingeringData.length === 0) {
+                return [
+                  new Paragraph({
+                    text: "No se detectaron objetos persistentes.",
+                    spacing: { before: 100, after: 100 },
+                  })
+                ];
+              }
+              return [
+                new Table({
+                  width: { size: 100, type: WidthType.PERCENTAGE },
+                  rows: [
+                    createTableRow(["DC", "Estado de Riesgo", "Detalles"], true),
+                    ...lingeringData.map((risk: any) => {
+                      const isSafe = risk.Status === "Pass" || risk.RiskLevel === "Low";
+                      const statusIcon = isSafe ? "BAJO RIESGO" : "ALTO RIESGO";
+                      const color = isSafe ? "low" : "critical";
+                      return createTableRow([
+                        risk.TargetDC || "N/A",
+                        statusIcon,
+                        risk.Message || "Sin problemas detectados"
+                      ], false, color);
+                    }),
                   ],
-                  spacing: { after: 50 },
-                });
+                })
+              ];
+            }
+            
+            // Object format case with RiskLevel, DetectionMethod, Indicators array
+            const result: any[] = [
+              new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: [
+                  createTableRow(["Nivel de Riesgo", "Método de Detección"], true),
+                  createTableRow([
+                    lingeringData.RiskLevel || "Desconocido",
+                    lingeringData.DetectionMethod || "N/A"
+                  ], false, lingeringData.RiskLevel === "Low" ? "low" : "medium")
+                ]
               })
-            ] : [
-              new Paragraph({
-                text: "No se detectaron indicadores de riesgo.",
-                spacing: { before: 100, after: 100 },
-              })
-            ]),
+            ];
+            
+            // Indicators as separate list (they are objects, not strings)
+            if (lingeringData.Indicators && lingeringData.Indicators.length > 0) {
+              result.push(
+                new Paragraph({
+                  text: "Indicadores Detectados:",
+                  spacing: { before: 200, after: 100 },
+                }),
+                // Explicación de severidades
+                new Paragraph({
+                  children: [
+                    new TextRun({ text: "Niveles de severidad: ", bold: true, size: 20 }),
+                    new TextRun({ text: "[LOW] = Información/Bajo riesgo, ", size: 20, color: COLORS.low }),
+                    new TextRun({ text: "[MEDIUM] = Atención recomendada, ", size: 20, color: COLORS.medium }),
+                    new TextRun({ text: "[HIGH] = Acción requerida, ", size: 20, color: COLORS.high }),
+                    new TextRun({ text: "[CRITICAL] = Urgente", size: 20, color: COLORS.critical }),
+                  ],
+                  spacing: { after: 100 },
+                  shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
+                }),
+                ...lingeringData.Indicators.map((indicator: any) => {
+                  const severity = (indicator.Severity || "INFO").toUpperCase();
+                  const color = severity === "CRITICAL" ? COLORS.critical :
+                                severity === "HIGH" ? COLORS.high :
+                                severity === "MEDIUM" ? COLORS.medium :
+                                severity === "LOW" ? COLORS.low : COLORS.info;
+                  return new Paragraph({
+                    children: [
+                      new TextRun({ text: `• [${severity}] `, bold: true, color: color, size: 22 }),
+                      new TextRun({ text: indicator.Description || indicator.Type || "Sin descripción", size: 22 }),
+                    ],
+                    spacing: { after: 50 },
+                  });
+                })
+              );
+            } else {
+              result.push(
+                new Paragraph({
+                  text: "No se detectaron indicadores de riesgo.",
+                  spacing: { before: 100, after: 100 },
+                })
+              );
+            }
+            
             // USN Analysis if available
-            ...(rawData.LingeringObjectsRisk.USNAnalysis ? (() => {
-              const gap = rawData.LingeringObjectsRisk.USNAnalysis.Gap || 0;
+            if (lingeringData.USNAnalysis) {
+              const gap = lingeringData.USNAnalysis.Gap || 0;
               const isLargeGap = gap > 1000000; // Más de 1 millón es significativo
               const isCriticalGap = gap > 5000000; // Más de 5 millones es crítico
 
-              return [
+              result.push(
                 new Paragraph({
                   text: "Análisis USN (Update Sequence Number):",
                   spacing: { before: 200, after: 100 },
@@ -2395,17 +2422,17 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     createTableRow(["Métrica", "Valor", "Significado"], true),
                     createTableRow([
                       "DCs Analizados",
-                      rawData.LingeringObjectsRisk.USNAnalysis.DCsAnalyzed?.toString() || "N/A",
+                      lingeringData.USNAnalysis.DCsAnalyzed?.toString() || "N/A",
                       "Número de Controladores de Dominio comparados"
                     ]),
                     createTableRow([
                       "USN Más Alto",
-                      rawData.LingeringObjectsRisk.USNAnalysis.HighestUSN?.toLocaleString() || "N/A",
+                      lingeringData.USNAnalysis.HighestUSN?.toLocaleString() || "N/A",
                       "El DC más actualizado tiene este número"
                     ]),
                     createTableRow([
                       "USN Más Bajo",
-                      rawData.LingeringObjectsRisk.USNAnalysis.LowestUSN?.toLocaleString() || "N/A",
+                      lingeringData.USNAnalysis.LowestUSN?.toLocaleString() || "N/A",
                       "El DC menos actualizado tiene este número"
                     ]),
                     createTableRow([
@@ -2433,45 +2460,45 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                     color: isCriticalGap ? COLORS.critical : isLargeGap ? COLORS.high : undefined,
                   })],
                   spacing: { before: 150, after: 200 },
-                }),
-              ];
-            })() : [])
-          ]),
-        ] : []),
+                })
+              );
+            }
+            
+            return result;
+          })(),
 
         // ANÁLISIS DE CONFIGURACIÓN DNS
-        ...(rawData?.DNSConfiguration ? [
-          new Paragraph({
-            text: "Análisis de Configuración DNS",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: `Se analizó la configuración DNS en los controladores de dominio. Método utilizado: ${rawData.DNSConfiguration.Method || "DNSServer Module"}.`,
-            spacing: { after: 200 },
-          }),
+        new Paragraph({
+          text: "Análisis de Configuración DNS",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: `Se analizó la configuración DNS en los controladores de dominio. Método utilizado: ${rawData?.DNSConfiguration?.Method || "DNSServer Module"}.`,
+          spacing: { after: 200 },
+        }),
 
-          // Tabla de Zonas DNS
-          ...(rawData.DNSConfiguration.Zones && rawData.DNSConfiguration.Zones.length > 0 ? [
-            new Paragraph({
-              text: "Zonas DNS",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Nombre de Zona", "Tipo", "Actualización Dinámica", "DNSSEC"], true),
-                ...rawData.DNSConfiguration.Zones.slice(0, 15).map((zone: any) => {
-                  return createTableRow([
-                    zone.ZoneName || "N/A",
-                    zone.ZoneType || "N/A",
-                    zone.DynamicUpdate || "N/A",
-                    zone.DNSSECStatus || "N/A"
-                  ]);
-                }),
-              ],
-            }),
+        // Tabla de Zonas DNS
+        new Paragraph({
+          text: "Zonas DNS",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DNSConfiguration?.Zones || []).length > 0 ? [
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Nombre de Zona", "Tipo", "Actualización Dinámica", "DNSSEC"], true),
+              ...(rawData?.DNSConfiguration?.Zones || []).slice(0, 15).map((zone: any) => {
+                return createTableRow([
+                  zone.ZoneName || "N/A",
+                  zone.ZoneType || "N/A",
+                  zone.DynamicUpdate || "N/A",
+                  zone.DNSSECStatus || "N/A"
+                ]);
+              }),
+            ],
+          }),
             // EXPLICACIÓN DE COLUMNAS PARA EJECUTIVOS
             new Paragraph({
               children: [new TextRun({
@@ -2498,185 +2525,205 @@ export async function generateReport(data: ReportData): Promise<Blob> {
                 new TextRun({ text: '"Not Signed" indica que la zona no tiene protección contra ataques de envenenamiento DNS. ', size: 21, color: COLORS.medium }),
                 new TextRun({ text: 'Para zonas internas de Active Directory, DNSSEC es opcional pero recomendado en ambientes de alta seguridad.', size: 21 }),
               ],
-              spacing: { after: 200 },
-            }),
-          ] : []),
-
-          // Problemas de Seguridad DNS
-          ...(rawData.DNSConfiguration.GlobalSettings && rawData.DNSConfiguration.GlobalSettings.some((s: any) => s.SecurityIssues && s.SecurityIssues.length > 0) ? [
-            new Paragraph({
-              text: "Problemas de Seguridad DNS Detectados",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            ...rawData.DNSConfiguration.GlobalSettings.flatMap((setting: any) =>
-              (setting.SecurityIssues || []).map((issue: string) =>
-                new Paragraph({
-                  text: `• [${setting.DCName}] ${translateDNSIssue(issue)}`,
-                  spacing: { after: 50 },
-                  bullet: { level: 0 }
-                })
-              )
-            )
-          ] : []),
-
-          // DETALLES AVANZADOS DE DNS
-
-          // 1. Conflictos DNS
-          ...(rawData?.DNSConflicts && rawData.DNSConflicts.length > 0 ? [
-            new Paragraph({
-              text: "Conflictos de Registros DNS",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Paragraph({
-              text: "Se han detectado registros duplicados o en conflicto.",
-              spacing: { after: 100 }
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Registro", "Conflicto", "Detalle"], true),
-                ...rawData.DNSConflicts.slice(0, 15).map((conflict: any) =>
-                  createTableRow([
-                    conflict.RecordName || "N/A",
-                    conflict.ConflictType || "Duplicado",
-                    conflict.Message || "-"
-                  ], false, "high")
-                ),
-              ],
-            }),
-            new Paragraph({ text: "", spacing: { after: 200 } })
-          ] : []),
-
-          // 2. Scavenging Detallado
-          ...(rawData?.DNSScavengingDetailed ? [
-            new Paragraph({
-              text: "Análisis de Limpieza DNS (Scavenging)",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            ...(rawData.DNSScavengingDetailed.ConfigurationMismatches && rawData.DNSScavengingDetailed.ConfigurationMismatches.length > 0 ? [
-              new Paragraph({
-                children: [new TextRun({
-                  text: "[ALERTA] Desalineación de Configuración: La configuración de limpieza difiere entre zonas y servidor.",
-                  color: COLORS.high
-                })],
-                spacing: { after: 100 }
-              }),
-              ...rawData.DNSScavengingDetailed.ConfigurationMismatches.map((mismatch: string) =>
-                new Paragraph({
-                  text: `• ${mismatch}`,
-                  bullet: { level: 0 },
-                  spacing: { after: 50 }
-                })
-              )
-            ] : [
-              new Paragraph({
-                text: "La configuración (Aging/Scavenging) es consistente.",
-                spacing: { after: 100 }
-              })
-            ]),
-            new Paragraph({ text: "", spacing: { after: 200 } })
-          ] : []),
-
-          // 3. Root Hints
-          ...(rawData?.DNSRootHints && rawData.DNSRootHints.UnresponsiveHints && rawData.DNSRootHints.UnresponsiveHints.length > 0 ? [
-            new Paragraph({
-              text: "Problemas con Root Hints",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Paragraph({
-              text: "Algunos servidores raíz no responden:",
-              spacing: { after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Servidor Raíz", "Estado"], true),
-                ...rawData.DNSRootHints.UnresponsiveHints.map((hint: any) =>
-                  createTableRow([
-                    hint.NameServer || hint.ToString(),
-                    "No Responde"
-                  ], false, "medium")
-                )
-              ]
-            })
-          ] : [])
-
-        ] : []),
-
-        // ANÁLISIS DE CONFIGURACIÓN DHCP
-        ...(rawData?.DHCPConfiguration ? [
-          new Paragraph({
-            text: "Análisis de Configuración DHCP",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: `Se analizó la infraestructura DHCP. Método utilizado: ${rawData.DHCPConfiguration.Method || "Desconocido"}.`,
             spacing: { after: 200 },
           }),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron zonas DNS configuradas.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
-          // Servidores Autorizados
-          ...(rawData.DHCPConfiguration.AuthorizedServers && rawData.DHCPConfiguration.AuthorizedServers.length > 0 ? [
-            new Paragraph({
-              text: "Servidores DHCP Autorizados",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Servidor", "IP", "Estado"], true),
-                ...rawData.DHCPConfiguration.AuthorizedServers.map((server: any) => {
-                  return createTableRow([
-                    server.DNSName || "N/A",
-                    server.IPAddress || "N/A",
-                    "Autorizado"
-                  ]);
-                }),
-              ],
-            }),
-          ] : []),
+        // Problemas de Seguridad DNS
+        new Paragraph({
+          text: "Problemas de Seguridad DNS",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DNSConfiguration?.GlobalSettings || []).some((s: any) => s.SecurityIssues && s.SecurityIssues.length > 0) ? [
+          ...(rawData?.DNSConfiguration?.GlobalSettings || []).flatMap((setting: any) =>
+            (setting.SecurityIssues || []).map((issue: string) =>
+              new Paragraph({
+                text: `- [${setting.DCName}] ${translateDNSIssue(issue)}`,
+                spacing: { after: 50 },
+              })
+            )
+          )
+        ] : [
+          new Paragraph({
+            text: "No se detectaron problemas de seguridad DNS.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
-          // Scopes DHCP
-          ...(rawData.DHCPConfiguration.Scopes && rawData.DHCPConfiguration.Scopes.length > 0 ? [
+        // 1. Conflictos DNS
+        new Paragraph({
+          text: "Conflictos de Registros DNS",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DNSConflicts || []).length > 0 ? [
+          new Paragraph({
+            text: "Se han detectado registros duplicados o en conflicto.",
+            spacing: { after: 100 }
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Registro", "Conflicto", "Detalle"], true),
+              ...(rawData?.DNSConflicts || []).slice(0, 15).map((conflict: any) =>
+                createTableRow([
+                  conflict.RecordName || "N/A",
+                  conflict.ConflictType || "Duplicado",
+                  conflict.Message || "-"
+                ], false, "high")
+              ),
+            ],
+          }),
+          new Paragraph({ text: "", spacing: { after: 200 } })
+        ] : [
+          new Paragraph({
+            text: "No se detectaron conflictos de registros DNS.",
+            spacing: { after: 100 },
+          }),
+        ]),
+
+          // 2. Scavenging Detallado
+          new Paragraph({
+            text: "Análisis de Limpieza DNS (Scavenging)",
+            heading: HeadingLevel.HEADING_2,
+            spacing: { before: 300, after: 100 },
+          }),
+        ...(rawData?.DNSScavengingDetailed?.ConfigurationMismatches && rawData.DNSScavengingDetailed.ConfigurationMismatches.length > 0 ? [
+          new Paragraph({
+            children: [new TextRun({
+              text: "[ALERTA] Desalineación de Configuración: La configuración de limpieza difiere entre zonas y servidor.",
+              color: COLORS.high
+            })],
+            spacing: { after: 100 }
+          }),
+          ...rawData.DNSScavengingDetailed.ConfigurationMismatches.map((mismatch: string) =>
             new Paragraph({
-              text: "Ámbitos (Scopes) DHCP",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Nombre", "Subnet", "Estado", "% Uso"], true),
-                ...rawData.DHCPConfiguration.Scopes.slice(0, 15).map((scope: any) => {
-                  return createTableRow([
-                    scope.Name || "N/A",
-                    scope.SubnetMask || "N/A",
-                    scope.State || "N/A",
-                    scope.PercentageInUse ? `${scope.PercentageInUse}%` : "N/A"
-                  ]);
-                }),
-              ],
-            }),
-          ] : []),
-        ] : []),
+              text: `- ${mismatch}`,
+              spacing: { after: 50 }
+            })
+          )
+        ] : [
+          new Paragraph({
+            text: "La configuración (Aging/Scavenging) es consistente.",
+            spacing: { after: 100 }
+          })
+        ]),
+        new Paragraph({ text: "", spacing: { after: 200 } }),
+
+        // 3. Root Hints
+        new Paragraph({
+          text: "Estado de Root Hints",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DNSRootHints?.UnresponsiveHints || []).length > 0 ? [
+          new Paragraph({
+            text: "Algunos servidores raíz no responden:",
+            spacing: { after: 100 },
+          }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Servidor Raíz", "Estado"], true),
+              ...(rawData?.DNSRootHints?.UnresponsiveHints || []).map((hint: any) =>
+                createTableRow([
+                  hint.NameServer || String(hint),
+                  "No Responde"
+                ], false, "medium")
+              )
+            ]
+          })
+        ] : [
+          new Paragraph({
+            text: "Todos los servidores raíz responden correctamente.",
+            spacing: { after: 100 },
+          }),
+        ]),
+
+        // ANÁLISIS DE CONFIGURACIÓN DHCP
+        new Paragraph({
+          text: "Análisis de Configuración DHCP",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: `Se analizó la infraestructura DHCP. Método utilizado: ${rawData?.DHCPConfiguration?.Method || "Desconocido"}.`,
+          spacing: { after: 200 },
+        }),
+
+        // Servidores Autorizados
+        new Paragraph({
+          text: "Servidores DHCP Autorizados",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DHCPConfiguration?.AuthorizedServers || []).length > 0 ? [
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Servidor", "IP", "Estado"], true),
+              ...(rawData?.DHCPConfiguration?.AuthorizedServers || []).map((server: any) => {
+                return createTableRow([
+                  server.DNSName || "N/A",
+                  server.IPAddress || "N/A",
+                  "Autorizado"
+                ]);
+              }),
+            ],
+          }),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron servidores DHCP autorizados.",
+            spacing: { after: 100 },
+          }),
+        ]),
+
+        // Scopes DHCP
+        new Paragraph({
+          text: "Ámbitos (Scopes) DHCP",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DHCPConfiguration?.Scopes || []).length > 0 ? [
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Nombre", "Subnet", "Estado", "% Uso"], true),
+              ...(rawData?.DHCPConfiguration?.Scopes || []).slice(0, 15).map((scope: any) => {
+                return createTableRow([
+                  scope.Name || "N/A",
+                  scope.SubnetMask || "N/A",
+                  scope.State || "N/A",
+                  scope.PercentageInUse ? `${scope.PercentageInUse}%` : "N/A"
+                ]);
+              }),
+            ],
+          }),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron ámbitos DHCP configurados.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
         // DETALLES AVANZADOS DE DHCP
 
         // 1. Servidores Rogue (No Autorizados)
-        ...(rawData?.DHCPRogueServers && rawData.DHCPRogueServers.RogueServers && rawData.DHCPRogueServers.RogueServers.length > 0 ? [
-          new Paragraph({
-            text: "🚨 Servidores DHCP Rogue Detectados",
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 300, after: 100 },
-          }),
+        new Paragraph({
+          text: "Servidores DHCP Rogue",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DHCPRogueServers?.RogueServers || []).length > 0 ? [
           new Paragraph({
             children: [new TextRun({
-              text: "CRÍTICO: Se han detectado servidores DHCP respondiendo en la red que NO están autorizados en Active Directory. Esto representa un riesgo grave de seguridad (Man-in-the-Middle) o interrupción de servicio.",
+              text: "CRÍTICO: Se han detectado servidores DHCP respondiendo en la red que NO están autorizados en Active Directory.",
               color: COLORS.critical,
               bold: true
             })],
@@ -2686,7 +2733,7 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["IP Server", "Mensaje"], true),
-              ...rawData.DHCPRogueServers.RogueServers.map((rogue: any) =>
+              ...(rawData?.DHCPRogueServers?.RogueServers || []).map((rogue: any) =>
                 createTableRow([
                   rogue.ServerIpAddress || "N/A",
                   "No Autorizado en AD"
@@ -2695,63 +2742,71 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             ]
           }),
           new Paragraph({ text: "", spacing: { after: 200 } })
-        ] : []),
-
-        // 2. Auditoría de Opciones DHCP (WINS, DNS obsoletos, etc.)
-        ...(rawData?.DHCPOptionsAudit && rawData.DHCPOptionsAudit.Issues && rawData.DHCPOptionsAudit.Issues.length > 0 ? [
+        ] : [
           new Paragraph({
-            text: "Auditoría de Opciones de Ámbito",
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 300, after: 100 },
+            text: "No se detectaron servidores DHCP rogue en la red.",
+            spacing: { after: 100 },
           }),
+        ]),
+
+        // 2. Auditoría de Opciones DHCP
+        new Paragraph({
+          text: "Auditoría de Opciones de Ámbito",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        ...((rawData?.DHCPOptionsAudit?.Issues || []).length > 0 ? [
           new Paragraph({
-            text: "Se han detectado configuraciones obsoletas o inseguras en las opciones de ámbito DHCP (ej. Servidores WINS, DNS heredados).",
+            text: "Se han detectado configuraciones obsoletas o inseguras en las opciones de ámbito DHCP.",
             spacing: { after: 100 }
           }),
-          ...rawData.DHCPOptionsAudit.Issues.map((issue: string) =>
+          ...(rawData?.DHCPOptionsAudit?.Issues || []).map((issue: string) =>
             new Paragraph({
-              text: `• ${issue}`,
+              text: `- ${issue}`,
               bullet: { level: 0 },
               spacing: { after: 50 }
             })
           ),
           new Paragraph({ text: "", spacing: { after: 200 } })
-        ] : []),
+        ] : [
+          new Paragraph({
+            text: "No se detectaron problemas de configuración en opciones DHCP.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
 
 
         // SALUD DE CONTROLADORES DE DOMINIO
-        // Uses analyzeDCHealthDetailed() for comprehensive root cause analysis
-        ...(rawData?.DCHealth ? [
-          new Paragraph({
-            text: "Salud de Controladores de Dominio",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            children: [new TextRun({
-              text: "Estado de salud basado en indicadores críticos de AD: errores de replicación (NTDS), autenticación (NETLOGON, KDC), sincronización de tiempo (W32Time), DNS y SYSVOL (DFSR).",
-              size: 20,
-              italics: true,
-              color: COLORS.info,
-            })],
-            spacing: { after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["DC Name", "Estado General", "Eventos Críticos", "Problemas Detectados"], true),
-              ...(rawData.DCHealth.DomainControllers || []).map((dc: any) => {
-                const health = analyzeDCHealthDetailed(dc);
-                const criticalEvents = dc.CriticalEvents?.length || 0;
-                const issuesSummary = health.issues.length > 0
-                  ? health.issues.slice(0, 2).join("; ") + (health.issues.length > 2 ? "..." : "")
-                  : "Sin problemas";
-                return createTableRow([
-                  dc.Name || "N/A",
-                  health.status,
-                  criticalEvents.toString(),
-                  issuesSummary
+        new Paragraph({
+          text: "Salud de Controladores de Dominio",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: "Estado de salud basado en indicadores críticos de AD: errores de replicación (NTDS), autenticación (NETLOGON, KDC), sincronización de tiempo (W32Time), DNS y SYSVOL (DFSR).",
+            size: 20,
+            italics: true,
+            color: COLORS.info,
+          })],
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["DC Name", "Estado General", "Eventos Críticos", "Problemas Detectados"], true),
+            ...(rawData?.DCHealth?.DomainControllers || []).map((dc: any) => {
+              const health = analyzeDCHealthDetailed(dc);
+              const criticalEvents = dc.CriticalEvents?.length || 0;
+              const issuesSummary = health.issues.length > 0
+                ? health.issues.slice(0, 2).join("; ") + (health.issues.length > 2 ? "..." : "")
+                : "Sin problemas";
+              return createTableRow([
+                dc.Name || "N/A",
+                health.status,
+                criticalEvents.toString(),
+                issuesSummary
                 ], false, health.color);
               }),
             ],
@@ -2983,208 +3038,199 @@ export async function generateReport(data: ReportData): Promise<Blob> {
 
             return sections;
           })(),
-        ] : []),
 
         // ═══════════════════════════════════════════════════════════════════
         // SECCIONES DE SEGURIDAD CRÍTICA
         // ═══════════════════════════════════════════════════════════════════
 
         // CONFIGURACIÓN KERBEROS Y KRBTGT
-        ...(rawData?.KerberosConfig ? [
+        new Paragraph({
+          text: "Configuración Kerberos",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "La seguridad de Kerberos depende de la rotación regular de la contraseña de la cuenta KRBTGT. Una contraseña antigua permite ataques Golden Ticket.",
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Métrica", "Valor", "Estado"], true),
+            (() => {
+              const age = rawData?.KerberosConfig?.KRBTGTPasswordAge || 0;
+              const status = age > 180 ? "[CRITICO]" : age > 90 ? "ADVERTENCIA" : "OK";
+              const color = age > 180 ? "critical" : age > 90 ? "medium" : "low";
+              return createTableRow([
+                "Edad de Contraseña KRBTGT",
+                `${age} días`,
+                status
+              ], false, color);
+            })(),
+            createTableRow([
+              "Última Rotación",
+              rawData?.KerberosConfig?.KRBTGTPasswordLastSet ?
+                new Date(parseInt(rawData.KerberosConfig.KRBTGTPasswordLastSet.match(/\d+/)?.[0] || 0)).toLocaleDateString('es-ES') :
+                "Desconocido",
+              ""
+            ]),
+          ],
+        }),
+        ...((rawData?.KerberosConfig?.KRBTGTPasswordAge || 0) > 180 ? [
           new Paragraph({
-            text: "Configuración Kerberos",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
+            children: [new TextRun({
+              text: "[ACCION REQUERIDA]: La contraseña KRBTGT tiene más de 180 días. Se recomienda rotarla dos veces (con intervalo de 10+ horas entre rotaciones).",
+              color: COLORS.critical,
+              bold: true
+            })],
+            spacing: { before: 200, after: 100 },
           }),
           new Paragraph({
-            text: "La seguridad de Kerberos depende de la rotación regular de la contraseña de la cuenta KRBTGT. Una contraseña antigua permite ataques Golden Ticket.",
+            text: "Comando PowerShell para rotar:",
+            spacing: { after: 50 },
+          }),
+          new Paragraph({
+            children: [new TextRun({
+              text: "Reset-KrbtgtKeyInteractive.ps1 (Microsoft Script)",
+              italics: true
+            })],
             spacing: { after: 200 },
           }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Métrica", "Valor", "Estado"], true),
-              (() => {
-                const age = rawData.KerberosConfig.KRBTGTPasswordAge || 0;
-                const status = age > 180 ? "[CRITICO]" : age > 90 ? "ADVERTENCIA" : "OK";
-                const color = age > 180 ? "critical" : age > 90 ? "medium" : "low";
-                return createTableRow([
-                  "Edad de Contraseña KRBTGT",
-                  `${age} días`,
-                  status
-                ], false, color);
-              })(),
-              createTableRow([
-                "Última Rotación",
-                rawData.KerberosConfig.KRBTGTPasswordLastSet ?
-                  new Date(parseInt(rawData.KerberosConfig.KRBTGTPasswordLastSet.match(/\d+/)?.[0] || 0)).toLocaleDateString('es-ES') :
-                  "Desconocido",
-                ""
-              ]),
-            ],
-          }),
-          ...(rawData.KerberosConfig.KRBTGTPasswordAge > 180 ? [
-            new Paragraph({
-              children: [new TextRun({
-                text: "[ACCION REQUERIDA]: La contraseña KRBTGT tiene más de 180 días. Se recomienda rotarla dos veces (con intervalo de 10+ horas entre rotaciones).",
-                color: COLORS.critical,
-                bold: true
-              })],
-              spacing: { before: 200, after: 100 },
-            }),
-            new Paragraph({
-              text: "Comando PowerShell para rotar:",
-              spacing: { after: 50 },
-            }),
-            new Paragraph({
-              children: [new TextRun({
-                text: "Reset-KrbtgtKeyInteractive.ps1 (Microsoft Script)",
-                italics: true
-              })],
-              spacing: { after: 200 },
-            }),
-          ] : []),
         ] : []),
 
         // POLÍTICAS DE CONTRASEÑA
-        ...(rawData?.PasswordPolicies ? [
-          new Paragraph({
-            text: "Políticas de Contraseña del Dominio",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Política", "Valor Actual", "Recomendado"], true),
+        new Paragraph({
+          text: "Políticas de Contraseña del Dominio",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Política", "Valor Actual", "Recomendado"], true),
+            createTableRow([
+              "Longitud Mínima",
+              `${rawData?.PasswordPolicies?.MinPasswordLength || 0} caracteres`,
+              "14+ caracteres"
+            ], false, (rawData?.PasswordPolicies?.MinPasswordLength || 0) >= 14 ? "low" : "medium"),
+            createTableRow([
+              "Complejidad Requerida",
+              rawData?.PasswordPolicies?.ComplexityEnabled ? "HABILITADA" : "DESHABILITADA",
+              "Habilitada"
+            ], false, rawData?.PasswordPolicies?.ComplexityEnabled ? "low" : "critical"),
+            createTableRow([
+              "Historial de Contraseñas",
+              `${rawData?.PasswordPolicies?.PasswordHistoryCount || 0} contraseñas`,
+              "24+ contraseñas"
+            ]),
+            createTableRow([
+              "Edad Máxima",
+              `${rawData?.PasswordPolicies?.MaxPasswordAge || "N/A"} días`,
+              "60-90 días"
+            ]),
+            createTableRow([
+              "Edad Mínima",
+              `${rawData?.PasswordPolicies?.MinPasswordAge || 0} días`,
+              "1+ día"
+            ]),
+            createTableRow([
+              "Duración de Bloqueo",
+              `${rawData?.PasswordPolicies?.LockoutDuration || 0} minutos`,
+              "15+ minutos"
+            ]),
+            createTableRow([
+              "Umbral de Bloqueo",
+              `${rawData?.PasswordPolicies?.LockoutThreshold || 0} intentos`,
+              "5-10 intentos"
+            ]),
+          ],
+        }),
+        // Fine-Grained Password Policies
+        new Paragraph({
+          text: "Políticas de Contraseña Detalladas (Fine-Grained)",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 100 },
+        }),
+        new Paragraph({
+          text: `Se encontraron ${rawData?.PasswordPolicies?.FineGrainedPolicies?.length || 0} política(s) fine-grained configurada(s).`,
+          spacing: { after: 100 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Nombre", "Precedencia", "Longitud Mín.", "Aplicado a"], true),
+            ...(rawData?.PasswordPolicies?.FineGrainedPolicies || []).slice(0, 5).map((fgpp: any) =>
               createTableRow([
-                "Longitud Mínima",
-                `${rawData.PasswordPolicies.MinPasswordLength || 0} caracteres`,
-                "14+ caracteres"
-              ], false, (rawData.PasswordPolicies.MinPasswordLength || 0) >= 14 ? "low" : "medium"),
-              createTableRow([
-                "Complejidad Requerida",
-                rawData.PasswordPolicies.ComplexityEnabled ? "HABILITADA" : "DESHABILITADA",
-                "Habilitada"
-              ], false, rawData.PasswordPolicies.ComplexityEnabled ? "low" : "critical"),
-              createTableRow([
-                "Historial de Contraseñas",
-                `${rawData.PasswordPolicies.PasswordHistoryCount || 0} contraseñas`,
-                "24+ contraseñas"
-              ]),
-              createTableRow([
-                "Edad Máxima",
-                `${rawData.PasswordPolicies.MaxPasswordAge || "N/A"} días`,
-                "60-90 días"
-              ]),
-              createTableRow([
-                "Edad Mínima",
-                `${rawData.PasswordPolicies.MinPasswordAge || 0} días`,
-                "1+ día"
-              ]),
-              createTableRow([
-                "Duración de Bloqueo",
-                `${rawData.PasswordPolicies.LockoutDuration || 0} minutos`,
-                "15+ minutos"
-              ]),
-              createTableRow([
-                "Umbral de Bloqueo",
-                `${rawData.PasswordPolicies.LockoutThreshold || 0} intentos`,
-                "5-10 intentos"
-              ]),
-            ],
-          }),
-          // Fine-Grained Password Policies
-          ...(rawData.PasswordPolicies.FineGrainedPolicies && rawData.PasswordPolicies.FineGrainedPolicies.length > 0 ? [
-            new Paragraph({
-              text: "Políticas de Contraseña Detalladas (Fine-Grained)",
-              heading: HeadingLevel.HEADING_2,
-              spacing: { before: 300, after: 100 },
-            }),
-            new Paragraph({
-              text: `Se encontraron ${rawData.PasswordPolicies.FineGrainedPolicies.length} política(s) fine-grained configurada(s).`,
-              spacing: { after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Nombre", "Precedencia", "Longitud Mín.", "Aplicado a"], true),
-                ...rawData.PasswordPolicies.FineGrainedPolicies.slice(0, 5).map((fgpp: any) =>
-                  createTableRow([
-                    fgpp.Name || "N/A",
-                    fgpp.Precedence?.toString() || "N/A",
-                    `${fgpp.MinPasswordLength || 0} chars`,
-                    fgpp.AppliesTo?.length ? `${fgpp.AppliesTo.length} objeto(s)` : "N/A"
-                  ])
-                ),
-              ],
-            }),
-          ] : []),
-        ] : []),
+                fgpp.Name || "N/A",
+                fgpp.Precedence?.toString() || "N/A",
+                `${fgpp.MinPasswordLength || 0} chars`,
+                fgpp.AppliesTo?.length ? `${fgpp.AppliesTo.length} objeto(s)` : "N/A"
+              ])
+            ),
+          ],
+        }),
 
         // PERMISOS DCSYNC
-        ...(rawData?.DCSyncPermissions && rawData.DCSyncPermissions.length > 0 ? [
-          new Paragraph({
-            text: "🚨 Permisos DCSync (Replicación de Directorio)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            children: [new TextRun({
-              text: "¿Qué es DCSync? ",
-              bold: true,
-              size: 22,
-            }), new TextRun({
-              text: "DCSync es una técnica de ataque donde un atacante con permisos de replicación puede extraer todos los hashes de contraseñas del dominio, incluyendo la cuenta KRBTGT (usada para ataques Golden Ticket). Solo los Controladores de Dominio y cuentas de administración crítica deberían tener estos permisos.",
-              size: 22,
-            })],
-            spacing: { after: 150 },
-            shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
-          }),
-          new Paragraph({
-            children: [new TextRun({
-              text: "Referencia MITRE ATT&CK: ",
-              bold: true,
-              size: 20,
-            }), new TextRun({
-              text: "T1003.006 - Credential Dumping: DCSync. Esta técnica permite a atacantes con privilegios de replicación simular un Controlador de Dominio y solicitar hashes de contraseñas.",
-              size: 20,
-              italics: true,
-            })],
-            spacing: { after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Identidad", "Evaluación", "Riesgo"], true),
-              ...rawData.DCSyncPermissions.filter((perm: any) => perm.IdentityReference || perm.Identity).map((perm: any) => {
-                // Field can be IdentityReference (from PowerShell) or Identity
-                const identity = perm.IdentityReference || perm.Identity || "N/A";
-                const isExpected = identity.includes("Domain Controllers") ||
-                                   identity.includes("Enterprise Admins") ||
-                                   identity.includes("Domain Admins") ||
-                                   identity.includes("Administrators") ||
-                                   identity.includes("ENTERPRISE DOMAIN CONTROLLERS") ||
-                                   identity.includes("Controladores de dominio") ||
-                                   identity.includes("Administradores");
-                const color = isExpected ? "low" : "critical";
-                const riskLevel = isExpected ? "Bajo - Cuenta de sistema esperada" : "ALTO - Revisar legitimidad de este acceso";
-                return createTableRow([
-                  identity,
-                  isExpected ? "ESPERADO" : "REVISAR",
-                  riskLevel
-                ], false, color);
-              }),
-            ],
-          }),
-          new Paragraph({
-            text: `Total: ${rawData.DCSyncPermissions.filter((p: any) => p.IdentityReference || p.Identity).length} identidades con permisos DCSync`,
-            spacing: { before: 100, after: 100 },
-          }),
-          new Paragraph({
-            children: [new TextRun({
-              text: "Acción recomendada: ",
-              bold: true,
+        new Paragraph({
+          text: "Permisos DCSync (Replicación de Directorio)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: "¿Qué es DCSync? ",
+            bold: true,
+            size: 22,
+          }), new TextRun({
+            text: "DCSync es una técnica de ataque donde un atacante con permisos de replicación puede extraer todos los hashes de contraseñas del dominio. Solo los Controladores de Dominio deberían tener estos permisos.",
+            size: 22,
+          })],
+          spacing: { after: 150 },
+          shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: "Referencia MITRE ATT&CK: ",
+            bold: true,
+            size: 20,
+          }), new TextRun({
+            text: "T1003.006 - Credential Dumping: DCSync. Esta técnica permite a atacantes con privilegios de replicación simular un Controlador de Dominio y solicitar hashes de contraseñas.",
+            size: 20,
+            italics: true,
+          })],
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Identidad", "Evaluación", "Riesgo"], true),
+            ...(rawData?.DCSyncPermissions || []).filter((perm: any) => perm.IdentityReference || perm.Identity).map((perm: any) => {
+              const identity = perm.IdentityReference || perm.Identity || "N/A";
+              const isExpected = identity.includes("Domain Controllers") ||
+                                 identity.includes("Enterprise Admins") ||
+                                 identity.includes("Domain Admins") ||
+                                 identity.includes("Administrators") ||
+                                 identity.includes("ENTERPRISE DOMAIN CONTROLLERS") ||
+                                 identity.includes("Controladores de dominio") ||
+                                 identity.includes("Administradores");
+              const color = isExpected ? "low" : "critical";
+              const riskLevel = isExpected ? "Bajo - Cuenta de sistema esperada" : "ALTO - Revisar legitimidad";
+              return createTableRow([
+                identity,
+                isExpected ? "ESPERADO" : "REVISAR",
+                riskLevel
+              ], false, color);
+            }),
+          ],
+        }),
+        new Paragraph({
+          text: `Total: ${(rawData?.DCSyncPermissions || []).filter((p: any) => p.IdentityReference || p.Identity).length} identidades con permisos DCSync`,
+          spacing: { before: 100, after: 100 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: "Acción recomendada: ",
+            bold: true,
               size: 20,
             }), new TextRun({
               text: "Revise las identidades marcadas como 'REVISAR'. Si no son cuentas de servicio legítimas (como Azure AD Connect MSOL_*), considere remover estos permisos inmediatamente.",
@@ -3192,211 +3238,202 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             })],
             spacing: { after: 200 },
           }),
-        ] : []),
 
         // GRUPO PROTECTED USERS
-        ...(rawData?.ProtectedUsers ? [
+        new Paragraph({
+          text: "Grupo Protected Users",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "El grupo Protected Users proporciona protecciones adicionales contra robo de credenciales (no NTLM, no delegación, tickets Kerberos de corta duración).",
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Métrica", "Valor"], true),
+            createTableRow([
+              "Miembros Actuales",
+              (rawData?.ProtectedUsers?.MemberCount || 0).toString()
+            ], false, (rawData?.ProtectedUsers?.MemberCount || 0) > 0 ? "low" : "critical"),
+            createTableRow([
+              "Estado",
+              rawData?.ProtectedUsers?.Exists ? "EXISTE" : "NO ENCONTRADO"
+            ]),
+          ],
+        }),
+        ...((rawData?.ProtectedUsers?.MemberCount || 0) === 0 ? [
           new Paragraph({
-            text: "Grupo Protected Users",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
+            children: [new TextRun({
+              text: "[RECOMENDACION]: El grupo Protected Users está vacío. Se recomienda agregar cuentas de administradores de Tier 0 (Domain Admins, Enterprise Admins) para protección adicional.",
+              color: COLORS.high,
+              bold: true
+            })],
+            spacing: { before: 200, after: 200 },
           }),
+        ] : [
           new Paragraph({
-            text: "El grupo Protected Users proporciona protecciones adicionales contra robo de credenciales (no NTLM, no delegación, tickets Kerberos de corta duración).",
-            spacing: { after: 200 },
+            text: "Miembros del grupo:",
+            spacing: { before: 200, after: 100 },
           }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Métrica", "Valor"], true),
-              createTableRow([
-                "Miembros Actuales",
-                (rawData.ProtectedUsers.MemberCount || 0).toString()
-              ], false, (rawData.ProtectedUsers.MemberCount || 0) > 0 ? "low" : "critical"),
-              createTableRow([
-                "Estado",
-                rawData.ProtectedUsers.Exists ? "EXISTE" : "NO ENCONTRADO"
-              ]),
-            ],
-          }),
-          ...(rawData.ProtectedUsers.MemberCount === 0 ? [
+          ...(rawData?.ProtectedUsers?.Members || []).slice(0, 10).map((member: any) =>
             new Paragraph({
-              children: [new TextRun({
-                text: "[RECOMENDACION]: El grupo Protected Users está vacío. Se recomienda agregar cuentas de administradores de Tier 0 (Domain Admins, Enterprise Admins) para protección adicional.",
-                color: COLORS.high,
-                bold: true
-              })],
-              spacing: { before: 200, after: 200 },
-            }),
-          ] : [
-            new Paragraph({
-              text: "Miembros del grupo:",
-              spacing: { before: 200, after: 100 },
-            }),
-            ...(rawData.ProtectedUsers.Members || []).slice(0, 10).map((member: any) =>
-              new Paragraph({
-                text: `• ${typeof member === 'string' ? member : member.Name || member.SamAccountName || 'N/A'}`,
-                spacing: { after: 30 },
-              })
-            )
-          ]),
-        ] : []),
+              text: `• ${typeof member === 'string' ? member : member.Name || member.SamAccountName || 'N/A'}`,
+              spacing: { after: 30 },
+            })
+          )
+        ]),
 
         // ESTADO DE AD RECYCLE BIN
-        ...(rawData?.RecycleBinStatus ? [
-          new Paragraph({
-            text: "Estado de AD Recycle Bin",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Característica", "Estado"], true),
+        new Paragraph({
+          text: "Estado de AD Recycle Bin",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Característica", "Estado"], true),
+            createTableRow([
+              "AD Recycle Bin",
+              rawData?.RecycleBinStatus?.Enabled ? "HABILITADO" : "DESHABILITADO"
+            ], false, rawData?.RecycleBinStatus?.Enabled ? "low" : "critical"),
+            ...(rawData?.RecycleBinStatus?.EnabledDate ? [
               createTableRow([
-                "AD Recycle Bin",
-                rawData.RecycleBinStatus.Enabled ? "HABILITADO" : "DESHABILITADO"
-              ], false, rawData.RecycleBinStatus.Enabled ? "low" : "critical"),
-              ...(rawData.RecycleBinStatus.EnabledDate ? [
-                createTableRow([
-                  "Fecha de Habilitación",
-                  rawData.RecycleBinStatus.EnabledDate
-                ])
-              ] : []),
-            ],
-          }),
-          ...(!rawData.RecycleBinStatus.Enabled ? [
-            new Paragraph({
-              children: [new TextRun({
-                text: "[CRITICO]: AD Recycle Bin está deshabilitado. Sin esta característica, los objetos eliminados no pueden recuperarse fácilmente. Habilitar requiere Forest Functional Level 2008 R2+.",
-                color: COLORS.critical,
-                bold: true
-              })],
-              spacing: { before: 200, after: 100 },
-            }),
-            new Paragraph({
-              text: "Comando para habilitar:",
-              spacing: { after: 50 },
-            }),
-            new Paragraph({
-              children: [new TextRun({
-                text: "Enable-ADOptionalFeature -Identity 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name",
-                italics: true,
-                size: 20
-              })],
-              spacing: { after: 200 },
-            }),
-          ] : []),
-        ] : []),
-
-        // ESTADO SMBv1
-        ...(rawData?.SMBv1Status ? [
+                "Fecha de Habilitación",
+                rawData.RecycleBinStatus.EnabledDate
+              ])
+            ] : []),
+          ],
+        }),
+        ...(!rawData?.RecycleBinStatus?.Enabled ? [
           new Paragraph({
-            text: "Estado de Protocolo SMBv1",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
+            children: [new TextRun({
+              text: "[CRITICO]: AD Recycle Bin está deshabilitado. Sin esta característica, los objetos eliminados no pueden recuperarse fácilmente. Habilitar requiere Forest Functional Level 2008 R2+.",
+              color: COLORS.critical,
+              bold: true
+            })],
+            spacing: { before: 200, after: 100 },
           }),
           new Paragraph({
-            text: "SMBv1 es un protocolo obsoleto con vulnerabilidades conocidas (WannaCry, EternalBlue). Debe estar deshabilitado en todos los sistemas.",
-            spacing: { after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Servidor", "SMBv1 Estado"], true),
-              ...(rawData.SMBv1Status.DomainControllers && rawData.SMBv1Status.DomainControllers.length > 0 ?
-                rawData.SMBv1Status.DomainControllers.map((dc: any) =>
-                  createTableRow([
-                    dc.Name || dc.HostName || "N/A",
-                    dc.SMBv1Enabled ? "[ALERTA] HABILITADO" : "DESHABILITADO"
-                  ], false, dc.SMBv1Enabled ? "critical" : "low")
-                ) : [
-                  createTableRow([
-                    "Estado General",
-                    rawData.SMBv1Status.IsEnabled ? "[ALERTA] HABILITADO" : "DESHABILITADO"
-                  ], false, rawData.SMBv1Status.IsEnabled ? "critical" : "low")
-                ]
-              ),
-            ],
-          }),
-        ] : []),
-
-        // ESTADO DE LAPS
-        ...(rawData?.LAPS ? [
-          new Paragraph({
-            text: "Estado de LAPS (Local Administrator Password Solution)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: "LAPS proporciona gestión automatizada de contraseñas de administrador local, eliminando contraseñas compartidas/estáticas.",
-            spacing: { after: 200 },
-          }),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              createTableRow(["Métrica", "Valor"], true),
-              createTableRow([
-                "LAPS Desplegado",
-                rawData.LAPS.Deployed ? "SI" : "NO"
-              ], false, rawData.LAPS.Deployed ? "low" : "critical"),
-              ...(rawData.LAPS.SchemaExtended !== undefined ? [
-                createTableRow([
-                  "Schema Extendido",
-                  rawData.LAPS.SchemaExtended ? "SI" : "NO"
-                ])
-              ] : []),
-              ...(rawData.LAPS.ComputersWithLAPS !== undefined ? [
-                createTableRow([
-                  "Equipos con LAPS",
-                  rawData.LAPS.ComputersWithLAPS.toString()
-                ])
-              ] : []),
-              ...(rawData.LAPS.ComputersWithoutLAPS !== undefined ? [
-                createTableRow([
-                  "Equipos sin LAPS",
-                  rawData.LAPS.ComputersWithoutLAPS.toString()
-                ], false, rawData.LAPS.ComputersWithoutLAPS > 0 ? "medium" : "low")
-              ] : []),
-              ...(rawData.LAPS.CoveragePercentage !== undefined ? [
-                createTableRow([
-                  "Cobertura",
-                  `${rawData.LAPS.CoveragePercentage}%`
-                ], false, rawData.LAPS.CoveragePercentage >= 90 ? "low" : rawData.LAPS.CoveragePercentage >= 50 ? "medium" : "critical")
-              ] : []),
-            ],
-          }),
-          ...(!rawData.LAPS.Deployed ? [
-            new Paragraph({
-              children: [new TextRun({
-                text: "[CRITICO]: LAPS no está desplegado. Las contraseñas de administrador local pueden ser compartidas o estáticas, facilitando movimiento lateral.",
-                color: COLORS.critical,
-                bold: true
-              })],
-              spacing: { before: 200, after: 200 },
-            }),
-          ] : []),
-        ] : []),
-
-        // USUARIOS CON CONTRASEÑAS ANTIGUAS
-        ...(rawData?.OldPasswords && rawData.OldPasswords.length > 0 ? [
-          new Paragraph({
-            text: "⏰ Usuarios con Contraseñas Antiguas (>365 días)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
+            text: "Comando para habilitar:",
+            spacing: { after: 50 },
           }),
           new Paragraph({
             children: [new TextRun({
-              text: `Se encontraron ${rawData.OldPasswords.length} usuarios con contraseñas sin cambiar en más de 1 año.`,
-              color: rawData.OldPasswords.length > 100 ? COLORS.critical : COLORS.high
+              text: "Enable-ADOptionalFeature -Identity 'Recycle Bin Feature' -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name",
+              italics: true,
+              size: 20
             })],
             spacing: { after: 200 },
           }),
+        ] : []),
+
+        // ESTADO SMBv1
+        new Paragraph({
+          text: "Estado de Protocolo SMBv1",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "SMBv1 es un protocolo obsoleto con vulnerabilidades conocidas (WannaCry, EternalBlue). Debe estar deshabilitado en todos los sistemas.",
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Servidor", "SMBv1 Estado"], true),
+            ...(rawData?.SMBv1Status?.DomainControllers && rawData.SMBv1Status.DomainControllers.length > 0 ?
+              rawData.SMBv1Status.DomainControllers.map((dc: any) =>
+                createTableRow([
+                  dc.Name || dc.HostName || "N/A",
+                  dc.SMBv1Enabled ? "[ALERTA] HABILITADO" : "DESHABILITADO"
+                ], false, dc.SMBv1Enabled ? "critical" : "low")
+              ) : [
+                createTableRow([
+                  "Estado General",
+                  rawData?.SMBv1Status?.IsEnabled ? "[ALERTA] HABILITADO" : "Sin datos"
+                ], false, rawData?.SMBv1Status?.IsEnabled ? "critical" : "medium")
+              ]
+            ),
+          ],
+        }),
+
+        // ESTADO DE LAPS
+        new Paragraph({
+          text: "Estado de LAPS (Local Administrator Password Solution)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "LAPS proporciona gestión automatizada de contraseñas de administrador local, eliminando contraseñas compartidas/estáticas.",
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Métrica", "Valor"], true),
+            createTableRow([
+              "LAPS Desplegado",
+              rawData?.LAPS?.Deployed ? "SI" : "NO"
+            ], false, rawData?.LAPS?.Deployed ? "low" : "critical"),
+            ...(rawData?.LAPS?.SchemaExtended !== undefined ? [
+              createTableRow([
+                "Schema Extendido",
+                rawData.LAPS.SchemaExtended ? "SI" : "NO"
+              ])
+            ] : []),
+            ...(rawData?.LAPS?.ComputersWithLAPS !== undefined ? [
+              createTableRow([
+                "Equipos con LAPS",
+                rawData.LAPS.ComputersWithLAPS.toString()
+              ])
+            ] : []),
+            ...(rawData?.LAPS?.ComputersWithoutLAPS !== undefined ? [
+              createTableRow([
+                "Equipos sin LAPS",
+                rawData.LAPS.ComputersWithoutLAPS.toString()
+              ], false, rawData.LAPS.ComputersWithoutLAPS > 0 ? "medium" : "low")
+            ] : []),
+            ...(rawData?.LAPS?.CoveragePercentage !== undefined ? [
+              createTableRow([
+                "Cobertura",
+                `${rawData.LAPS.CoveragePercentage}%`
+              ], false, rawData.LAPS.CoveragePercentage >= 90 ? "low" : rawData.LAPS.CoveragePercentage >= 50 ? "medium" : "critical")
+            ] : []),
+          ],
+        }),
+        ...(!rawData?.LAPS?.Deployed ? [
+          new Paragraph({
+            children: [new TextRun({
+              text: "[CRITICO]: LAPS no está desplegado. Las contraseñas de administrador local pueden ser compartidas o estáticas, facilitando movimiento lateral.",
+              color: COLORS.critical,
+              bold: true
+            })],
+            spacing: { before: 200, after: 200 },
+          }),
+        ] : []),
+
+        // USUARIOS CON CONTRASEÑAS ANTIGUAS
+        new Paragraph({
+          text: "Usuarios con Contraseñas Antiguas (>365 días)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: `Se encontraron ${(rawData?.OldPasswords || []).length} usuarios con contraseñas sin cambiar en más de 1 año.`,
+            color: (rawData?.OldPasswords || []).length > 100 ? COLORS.critical : (rawData?.OldPasswords || []).length > 0 ? COLORS.high : COLORS.low
+          })],
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.OldPasswords || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Usuario", "Última Cambio", "Días"], true),
-              ...rawData.OldPasswords.slice(0, 15).map((user: any) => {
+              ...(rawData?.OldPasswords || []).slice(0, 15).map((user: any) => {
                 const days = user.PasswordAgeDays || user.DaysSinceChange || "N/A";
                 return createTableRow([
                   sanitizeValue(user.SamAccountName || user.Name),
@@ -3406,9 +3443,9 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               }),
             ],
           }),
-          ...(rawData.OldPasswords.length > 15 ? [
+          ...((rawData?.OldPasswords || []).length > 15 ? [
             new Paragraph({
-              text: `... y ${rawData.OldPasswords.length - 15} usuarios más.`,
+              text: `... y ${(rawData?.OldPasswords || []).length - 15} usuarios más.`,
               spacing: { before: 100, after: 200 },
             }),
           ] : []),
@@ -3419,136 +3456,137 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         // ═══════════════════════════════════════════════════════════════════
 
         // DELEGACIONES (Unconstrained/Constrained) - Critical según Coverage Matrix
-        ...(rawData?.DelegationIssues && (rawData.DelegationIssues.UnconstrainedDelegation?.length > 0 || rawData.DelegationIssues.ConstrainedDelegation?.length > 0) ? [
+        new Paragraph({
+          text: "Análisis de Delegación Kerberos",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "La delegación Kerberos permite a servicios actuar en nombre de usuarios. La delegación sin restricciones (Unconstrained) es un riesgo crítico de seguridad.",
+          spacing: { after: 200 },
+        }),
+        // Unconstrained Delegation
+        ...(rawData?.DelegationIssues?.UnconstrainedDelegation?.length > 0 ? [
           new Paragraph({
-            text: "🔓 Análisis de Delegación Kerberos",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
+            children: [new TextRun({
+              text: `[CRITICO] Delegación Sin Restricciones: ${rawData.DelegationIssues.UnconstrainedDelegation.length} objeto(s)`,
+              bold: true,
+              color: COLORS.critical
+            })],
+            spacing: { before: 200, after: 100 },
           }),
           new Paragraph({
-            text: "La delegación Kerberos permite a servicios actuar en nombre de usuarios. La delegación sin restricciones (Unconstrained) es un riesgo crítico de seguridad.",
-            spacing: { after: 200 },
-          }),
-          // Unconstrained Delegation
-          ...(rawData.DelegationIssues.UnconstrainedDelegation?.length > 0 ? [
-            new Paragraph({
-              children: [new TextRun({
-                text: `[CRITICO] Delegación Sin Restricciones: ${rawData.DelegationIssues.UnconstrainedDelegation.length} objeto(s)`,
-                bold: true,
-                color: COLORS.critical
-              })],
-              spacing: { before: 200, after: 100 },
-            }),
-            new Paragraph({
-              text: "CRÍTICO: Estos objetos pueden suplantar a CUALQUIER usuario que se autentique contra ellos (incluidos Domain Admins).",
-              spacing: { after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Nombre", "Tipo", "DN"], true),
-                ...rawData.DelegationIssues.UnconstrainedDelegation.slice(0, 10).map((obj: any) =>
-                  createTableRow([
-                    sanitizeValue(obj.Name || obj.SamAccountName),
-                    sanitizeValue(obj.ObjectClass || "Computer"),
-                    sanitizeValue(obj.DistinguishedName).substring(0, 50) + "..."
-                  ], false, "critical")
-                ),
-              ],
-            }),
-          ] : []),
-          // Constrained Delegation
-          ...(rawData.DelegationIssues.ConstrainedDelegation?.length > 0 ? [
-            new Paragraph({
-              children: [new TextRun({
-                text: `[ALTO] Delegación Restringida: ${rawData.DelegationIssues.ConstrainedDelegation.length} objeto(s)`,
-                bold: true,
-                color: COLORS.high
-              })],
-              spacing: { before: 200, after: 100 },
-            }),
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                createTableRow(["Nombre", "Servicios Permitidos"], true),
-                ...rawData.DelegationIssues.ConstrainedDelegation.slice(0, 10).map((obj: any) =>
-                  createTableRow([
-                    sanitizeValue(obj.Name || obj.SamAccountName),
-                    sanitizeValue(obj.AllowedToDelegateTo)
-                  ], false, "high")
-                ),
-              ],
-            }),
-          ] : []),
-        ] : []),
-
-        // GRUPOS PRIVILEGIADOS - Critical según Coverage Matrix
-        ...(rawData?.PrivilegedGroups && rawData.PrivilegedGroups.length > 0 ? [
-          new Paragraph({
-            text: "👑 Análisis de Grupos Privilegiados (Tier 0)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: "Los grupos Tier 0 tienen control total sobre el dominio. El acceso debe ser mínimo y auditado regularmente.",
-            spacing: { after: 200 },
+            text: "CRÍTICO: Estos objetos pueden suplantar a CUALQUIER usuario que se autentique contra ellos (incluidos Domain Admins).",
+            spacing: { after: 100 },
           }),
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
-              createTableRow(["Grupo", "Miembros", "Estado"], true),
-              ...rawData.PrivilegedGroups.map((group: any) => {
-                const memberCount = group.MemberCount || group.Members?.length || 0;
-                const status = memberCount > 10 ? "[CRITICO] Excesivo" : memberCount > 5 ? "[ALTO]" : "OK";
-                const color = memberCount > 10 ? "critical" : memberCount > 5 ? "high" : "low";
-                return createTableRow([
-                  sanitizeValue(group.Name || group.GroupName),
-                  memberCount.toString(),
-                  status
-                ], false, color);
-              }),
+              createTableRow(["Nombre", "Tipo", "DN"], true),
+              ...rawData.DelegationIssues.UnconstrainedDelegation.slice(0, 10).map((obj: any) =>
+                createTableRow([
+                  sanitizeValue(obj.Name || obj.SamAccountName),
+                  sanitizeValue(obj.ObjectClass || "Computer"),
+                  sanitizeValue(obj.DistinguishedName).substring(0, 50) + "..."
+                ], false, "critical")
+              ),
             ],
           }),
-          // Detalles de miembros si existen
-          ...rawData.PrivilegedGroups.filter((g: any) => g.Members && g.Members.length > 0).slice(0, 3).flatMap((group: any) => [
-            new Paragraph({
-              text: `Miembros de ${sanitizeValue(group.Name)}:`,
-              spacing: { before: 200, after: 100 },
-            }),
-            ...group.Members.slice(0, 5).map((member: any) =>
-              new Paragraph({
-                text: `  • ${sanitizeValue(member.Name || member.SamAccountName || member)}`,
-                spacing: { after: 30 },
-              })
-            ),
-            ...(group.Members.length > 5 ? [
-              new Paragraph({
-                text: `  ... y ${group.Members.length - 5} más`,
-                spacing: { after: 100 },
-              })
-            ] : [])
-          ]),
-        ] : []),
-
-        // CUENTAS DE SERVICIO EN GRUPOS ADMIN - Critical según Coverage Matrix
-        ...(rawData?.ServiceAccountsInAdminGroups && rawData.ServiceAccountsInAdminGroups.length > 0 ? [
+        ] : [
           new Paragraph({
-            text: "🚨 Cuentas de Servicio en Grupos Administrativos",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
+            text: "No se encontraron objetos con delegación sin restricciones.",
+            spacing: { after: 100 },
           }),
+        ]),
+        // Constrained Delegation
+        ...(rawData?.DelegationIssues?.ConstrainedDelegation?.length > 0 ? [
           new Paragraph({
             children: [new TextRun({
-              text: "CRÍTICO: Las cuentas de servicio NO deberían ser miembros de grupos administrativos. Esto viola el principio de mínimo privilegio y aumenta el riesgo de compromiso.",
-              color: COLORS.critical
+              text: `[ALTO] Delegación Restringida: ${rawData.DelegationIssues.ConstrainedDelegation.length} objeto(s)`,
+              bold: true,
+              color: COLORS.high
             })],
-            spacing: { after: 200 },
+            spacing: { before: 200, after: 100 },
           }),
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [
+              createTableRow(["Nombre", "Servicios Permitidos"], true),
+              ...rawData.DelegationIssues.ConstrainedDelegation.slice(0, 10).map((obj: any) =>
+                createTableRow([
+                  sanitizeValue(obj.Name || obj.SamAccountName),
+                  sanitizeValue(obj.AllowedToDelegateTo)
+                ], false, "high")
+              ),
+            ],
+          }),
+        ] : []),
+
+        // GRUPOS PRIVILEGIADOS - Critical según Coverage Matrix
+        new Paragraph({
+          text: "Análisis de Grupos Privilegiados (Tier 0)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "Los grupos Tier 0 tienen control total sobre el dominio. El acceso debe ser mínimo y auditado regularmente.",
+          spacing: { after: 200 },
+        }),
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [
+            createTableRow(["Grupo", "Miembros", "Estado"], true),
+            ...(rawData?.PrivilegedGroups || []).map((group: any) => {
+              const memberCount = group.MemberCount || group.Members?.length || 0;
+              const status = memberCount > 10 ? "[CRITICO] Excesivo" : memberCount > 5 ? "[ALTO]" : "OK";
+              const color = memberCount > 10 ? "critical" : memberCount > 5 ? "high" : "low";
+              return createTableRow([
+                sanitizeValue(group.Name || group.GroupName),
+                memberCount.toString(),
+                status
+              ], false, color);
+            }),
+          ],
+        }),
+        // Detalles de miembros si existen
+        ...(rawData?.PrivilegedGroups || []).filter((g: any) => g.Members && g.Members.length > 0).slice(0, 3).flatMap((group: any) => [
+          new Paragraph({
+            text: `Miembros de ${sanitizeValue(group.Name)}:`,
+            spacing: { before: 200, after: 100 },
+          }),
+          ...group.Members.slice(0, 5).map((member: any) =>
+            new Paragraph({
+              text: `  - ${sanitizeValue(member.Name || member.SamAccountName || member)}`,
+              spacing: { after: 30 },
+            })
+          ),
+          ...(group.Members.length > 5 ? [
+            new Paragraph({
+              text: `  ... y ${group.Members.length - 5} más`,
+              spacing: { after: 100 },
+            })
+          ] : [])
+        ]),
+
+        // CUENTAS DE SERVICIO EN GRUPOS ADMIN - Critical según Coverage Matrix
+        new Paragraph({
+          text: "Cuentas de Servicio en Grupos Administrativos",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: "Las cuentas de servicio NO deberían ser miembros de grupos administrativos. Esto viola el principio de mínimo privilegio.",
+            color: (rawData?.ServiceAccountsInAdminGroups || []).length > 0 ? COLORS.critical : COLORS.low
+          })],
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.ServiceAccountsInAdminGroups || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Cuenta de Servicio", "Grupo Admin", "Tipo"], true),
-              ...rawData.ServiceAccountsInAdminGroups.slice(0, 15).map((svc: any) =>
+              ...(rawData?.ServiceAccountsInAdminGroups || []).slice(0, 15).map((svc: any) =>
                 createTableRow([
                   sanitizeValue(svc.ServiceAccount || svc.Name),
                   sanitizeValue(svc.AdminGroup || svc.Group),
@@ -3557,24 +3595,29 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ),
             ],
           }),
-        ] : []),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron cuentas de servicio en grupos administrativos.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
         // ADMINSDSHOLDER ORPHANS - High según Coverage Matrix
-        ...(rawData?.AdminSDHolderOrphans && rawData.AdminSDHolderOrphans.length > 0 ? [
-          new Paragraph({
-            text: "Objetos Huérfanos de AdminSDHolder",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: "Estos objetos tienen el flag AdminCount=1 pero ya NO son miembros de grupos protegidos. Sus ACLs no se restauran automáticamente, creando inconsistencias de seguridad.",
-            spacing: { after: 200 },
-          }),
+        new Paragraph({
+          text: "Objetos Huérfanos de AdminSDHolder",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "Objetos con AdminCount=1 que ya NO son miembros de grupos protegidos. Sus ACLs no se restauran automáticamente.",
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.AdminSDHolderOrphans || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Nombre", "Tipo", "Último Grupo Protegido"], true),
-              ...rawData.AdminSDHolderOrphans.slice(0, 15).map((orphan: any) =>
+              ...(rawData?.AdminSDHolderOrphans || []).slice(0, 15).map((orphan: any) =>
                 createTableRow([
                   sanitizeValue(orphan.Name || orphan.SamAccountName),
                   sanitizeValue(orphan.ObjectClass || "User"),
@@ -3587,27 +3630,32 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: "Recomendación: Ejecutar 'Set-ADUser -Identity <user> -Replace @{AdminCount=0}' y restablecer ACLs heredadas.",
             spacing: { before: 100, after: 200 },
           }),
-        ] : []),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron objetos huérfanos de AdminSDHolder.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
-        // USUARIOS KERBEROASTABLE - Ya existe parcialmente, mejoramos
-        ...(rawData?.KerberoastableUsers && rawData.KerberoastableUsers.length > 0 ? [
-          new Paragraph({
-            text: "🎫 Usuarios Kerberoastable (SPN configurado)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            children: [new TextRun({
-              text: `Se encontraron ${rawData.KerberoastableUsers.length} cuentas de usuario con SPNs configurados. Atacantes pueden solicitar tickets TGS y realizar ataques offline de fuerza bruta.`,
-              color: rawData.KerberoastableUsers.length > 20 ? COLORS.critical : COLORS.high
-            })],
-            spacing: { after: 200 },
-          }),
+        // USUARIOS KERBEROASTABLE
+        new Paragraph({
+          text: "Usuarios Kerberoastable (SPN configurado)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: `Se encontraron ${(rawData?.KerberoastableUsers || []).length} cuentas de usuario con SPNs configurados.`,
+            color: (rawData?.KerberoastableUsers || []).length > 20 ? COLORS.critical : (rawData?.KerberoastableUsers || []).length > 0 ? COLORS.high : COLORS.low
+          })],
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.KerberoastableUsers || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Usuario", "SPN", "Antigüedad Contraseña"], true),
-              ...rawData.KerberoastableUsers.slice(0, 15).map((user: any) => {
+              ...(rawData?.KerberoastableUsers || []).slice(0, 15).map((user: any) => {
                 const spns = Array.isArray(user.ServicePrincipalNames) ? user.ServicePrincipalNames[0] : user.ServicePrincipalName || "N/A";
                 return createTableRow([
                   sanitizeValue(user.SamAccountName || user.Name),
@@ -3624,24 +3672,24 @@ export async function generateReport(data: ReportData): Promise<Blob> {
         ] : []),
 
         // USUARIOS AS-REP ROASTABLE - PreAuth disabled
-        ...(rawData?.ASREPRoastableUsers && rawData.ASREPRoastableUsers.length > 0 ? [
-          new Paragraph({
-            text: "Usuarios AS-REP Roastable (PreAuth Disabled)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            children: [new TextRun({
-              text: `CRÍTICO: ${rawData.ASREPRoastableUsers.length} cuentas tienen pre-autenticación Kerberos deshabilitada. Atacantes pueden solicitar AS-REP sin conocer la contraseña.`,
-              color: COLORS.critical
-            })],
-            spacing: { after: 200 },
-          }),
+        new Paragraph({
+          text: "Usuarios AS-REP Roastable (PreAuth Disabled)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: `Se encontraron ${(rawData?.ASREPRoastableUsers || []).length} cuentas con pre-autenticación Kerberos deshabilitada.`,
+            color: (rawData?.ASREPRoastableUsers || []).length > 0 ? COLORS.critical : COLORS.low
+          })],
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.ASREPRoastableUsers || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Usuario", "Estado", "Última Autenticación"], true),
-              ...rawData.ASREPRoastableUsers.slice(0, 15).map((user: any) =>
+              ...(rawData?.ASREPRoastableUsers || []).slice(0, 15).map((user: any) =>
                 createTableRow([
                   sanitizeValue(user.SamAccountName || user.Name),
                   "[CRITICO] PreAuth Disabled",
@@ -3654,24 +3702,29 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             text: "Recomendación: Habilitar pre-autenticación Kerberos: Set-ADAccountControl -Identity <user> -DoesNotRequirePreAuth $false",
             spacing: { before: 100, after: 200 },
           }),
-        ] : []),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron usuarios con pre-autenticación deshabilitada.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
         // TOKEN BLOAT RISK - Critical según Coverage Matrix
-        ...(rawData?.TokenBloatRisk && rawData.TokenBloatRisk.length > 0 ? [
-          new Paragraph({
-            text: "Riesgo de Token Bloat (>40 grupos)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: "Usuarios con membresía en más de 40 grupos pueden experimentar problemas de autenticación debido al tamaño del token Kerberos (límite ~12KB).",
-            spacing: { after: 200 },
-          }),
+        new Paragraph({
+          text: "Riesgo de Token Bloat (>40 grupos)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "Usuarios con membresía en más de 40 grupos pueden experimentar problemas de autenticación debido al tamaño del token Kerberos.",
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.TokenBloatRisk || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Usuario", "# Grupos", "Tamaño Estimado", "Estado"], true),
-              ...rawData.TokenBloatRisk.slice(0, 15).map((user: any) => {
+              ...(rawData?.TokenBloatRisk || []).slice(0, 15).map((user: any) => {
                 const groupCount = user.GroupCount || user.TotalGroups || 0;
                 const tokenSize = user.EstimatedTokenSize || (groupCount * 40 + 1200);
                 const status = tokenSize > 12000 ? "CRITICO" : tokenSize > 8000 ? "[ALTO]" : "OK";
@@ -3685,24 +3738,29 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               }),
             ],
           }),
-        ] : []),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron usuarios con riesgo de token bloat.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
         // NESTED GROUPS DEPTH - High según Coverage Matrix
-        ...(rawData?.NestedGroupsAnalysis && rawData.NestedGroupsAnalysis.DeepNesting?.length > 0 ? [
-          new Paragraph({
-            text: "📁 Análisis de Anidamiento de Grupos (Depth >3)",
-            heading: HeadingLevel.HEADING_1,
-            spacing: { before: 400, after: 200 },
-          }),
-          new Paragraph({
-            text: "El anidamiento excesivo de grupos dificulta la auditoría de permisos y puede causar problemas de rendimiento.",
-            spacing: { after: 200 },
-          }),
+        new Paragraph({
+          text: "Análisis de Anidamiento de Grupos (Depth >3)",
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          text: "El anidamiento excesivo de grupos dificulta la auditoría de permisos y puede causar problemas de rendimiento.",
+          spacing: { after: 200 },
+        }),
+        ...((rawData?.NestedGroupsAnalysis?.DeepNesting || []).length > 0 ? [
           new Table({
             width: { size: 100, type: WidthType.PERCENTAGE },
             rows: [
               createTableRow(["Grupo", "Profundidad", "Ruta de Anidamiento"], true),
-              ...rawData.NestedGroupsAnalysis.DeepNesting.slice(0, 10).map((group: any) =>
+              ...(rawData?.NestedGroupsAnalysis?.DeepNesting || []).slice(0, 10).map((group: any) =>
                 createTableRow([
                   sanitizeValue(group.Name || group.GroupName),
                   (group.NestingDepth || group.Depth || 0).toString(),
@@ -3711,7 +3769,12 @@ export async function generateReport(data: ReportData): Promise<Blob> {
               ),
             ],
           }),
-        ] : []),
+        ] : [
+          new Paragraph({
+            text: "No se encontraron grupos con anidamiento excesivo.",
+            spacing: { after: 100 },
+          }),
+        ]),
 
         // RESUMEN EJECUTIVO
         new Paragraph({
