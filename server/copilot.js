@@ -34,26 +34,10 @@ const COPILOT_CONSTANTS = {
   TOKEN_REFRESH_BUFFER_MS: 5 * 60 * 1000
 };
 
-// Available models in GitHub Copilot (updated Jan 2026)
-// Source: https://docs.github.com/en/copilot/using-github-copilot/ai-models/changing-the-ai-model-for-copilot-chat
+// Available models in GitHub Copilot - Only Claude 4.5 models
 const COPILOT_MODELS = [
-  // OpenAI Models
-  { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI - Most capable model' },
-  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'OpenAI - Fast and efficient' },
-  { id: 'gpt-4.1', name: 'GPT-4.1', description: 'OpenAI - Latest GPT-4 variant' },
-  { id: 'o1', name: 'o1', description: 'OpenAI - Advanced reasoning' },
-  { id: 'o1-mini', name: 'o1 Mini', description: 'OpenAI - Efficient reasoning' },
-  { id: 'o3-mini', name: 'o3 Mini', description: 'OpenAI - Latest reasoning model' },
-  { id: 'o4-mini', name: 'o4 Mini', description: 'OpenAI - Newest mini reasoning' },
-  
-  // Anthropic Models (Claude)
-  { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic - Balanced performance' },
-  { id: 'claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', description: 'Anthropic - Latest Sonnet' },
-  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', description: 'Anthropic - Claude 4 Sonnet' },
-  
-  // Google Models
-  { id: 'gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', description: 'Google - Fast responses' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Google - Advanced capabilities' }
+  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'Anthropic - Most capable model' },
+  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', description: 'Anthropic - Balanced performance' }
 ];
 
 /**
