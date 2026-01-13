@@ -34,15 +34,26 @@ const COPILOT_CONSTANTS = {
   TOKEN_REFRESH_BUFFER_MS: 5 * 60 * 1000
 };
 
-// Available models in GitHub Copilot (may vary by subscription)
+// Available models in GitHub Copilot (updated Jan 2026)
+// Source: https://docs.github.com/en/copilot/using-github-copilot/ai-models/changing-the-ai-model-for-copilot-chat
 const COPILOT_MODELS = [
-  { id: 'gpt-4o', name: 'GPT-4o (OpenAI)', description: 'Most capable model' },
-  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast and efficient' },
-  { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic model' },
-  { id: 'gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', description: 'Google model' },
-  { id: 'o1', name: 'o1 (Preview)', description: 'Advanced reasoning' },
-  { id: 'o1-mini', name: 'o1 Mini', description: 'Efficient reasoning' },
-  { id: 'o3-mini', name: 'o3 Mini (Preview)', description: 'Latest reasoning model' }
+  // OpenAI Models
+  { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI - Most capable model' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'OpenAI - Fast and efficient' },
+  { id: 'gpt-4.1', name: 'GPT-4.1', description: 'OpenAI - Latest GPT-4 variant' },
+  { id: 'o1', name: 'o1', description: 'OpenAI - Advanced reasoning' },
+  { id: 'o1-mini', name: 'o1 Mini', description: 'OpenAI - Efficient reasoning' },
+  { id: 'o3-mini', name: 'o3 Mini', description: 'OpenAI - Latest reasoning model' },
+  { id: 'o4-mini', name: 'o4 Mini', description: 'OpenAI - Newest mini reasoning' },
+  
+  // Anthropic Models (Claude)
+  { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic - Balanced performance' },
+  { id: 'claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', description: 'Anthropic - Latest Sonnet' },
+  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', description: 'Anthropic - Claude 4 Sonnet' },
+  
+  // Google Models
+  { id: 'gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', description: 'Google - Fast responses' },
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Google - Advanced capabilities' }
 ];
 
 /**
@@ -489,12 +500,66 @@ class CopilotClient {
   }
 
   /**
-   * Get available models
-   * Note: Actual available models depend on your Copilot subscription
+   * Get available models from Copilot API
+   * Falls back to static list if API call fails
    */
   async getModels() {
-    // Return static list for now
-    // In the future, could query the API for available models
+    try {
+      // Try to get models from API
+      const token = await this.ensureValidToken();
+      
+      const response = await fetch(COPILOT_CONSTANTS.MODELS_URL, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': COPILOT_CONSTANTS.USER_AGENT,
+          'Accept': 'application/json',
+          'Editor-Version': COPILOT_CONSTANTS.EDITOR_VERSION,
+          'Editor-Plugin-Version': COPILOT_CONSTANTS.PLUGIN_VERSION,
+          'Copilot-Integration-Id': COPILOT_CONSTANTS.INTEGRATION_ID
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('[Copilot] Models from API:', JSON.stringify(data).substring(0, 500));
+        
+        // Parse the API response into our format
+        if (data.models && Array.isArray(data.models)) {
+          const apiModels = data.models.map(m => ({
+            id: m.id || m.name,
+            name: m.name || m.id,
+            description: m.description || `${m.vendor || 'AI'} model`
+          }));
+          
+          if (apiModels.length > 0) {
+            console.log(`[Copilot] Found ${apiModels.length} models from API`);
+            return apiModels;
+          }
+        }
+        
+        // If data structure is different, try to extract model info
+        if (data.data && Array.isArray(data.data)) {
+          const apiModels = data.data.map(m => ({
+            id: m.id || m.model,
+            name: m.name || m.id || m.model,
+            description: m.description || `Model: ${m.id || m.model}`
+          }));
+          
+          if (apiModels.length > 0) {
+            console.log(`[Copilot] Found ${apiModels.length} models from API (data format)`);
+            return apiModels;
+          }
+        }
+      } else {
+        console.warn('[Copilot] Models API returned:', response.status);
+      }
+    } catch (error) {
+      console.warn('[Copilot] Could not fetch models from API:', error.message);
+    }
+    
+    // Return static list as fallback
+    console.log('[Copilot] Using static model list');
     return COPILOT_MODELS;
   }
 
