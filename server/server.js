@@ -11,6 +11,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { analyzeUsersDeterministic } from './analyzers/userRules.js';
 import { WebAuthentikSetup } from './authentik-setup.js';
+import { CopilotClient, COPILOT_MODELS } from './copilot.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -167,6 +168,12 @@ async function setConfig(key, value) {
     return false;
   }
 }
+
+// =============================================================================
+// v2.0.0: GITHUB COPILOT INTEGRATION
+// Allows using GitHub Copilot subscription for AI analysis
+// =============================================================================
+const copilotClient = new CopilotClient(getConfig, setConfig);
 
 // Helper: Extract Category Data
 // v1.8.1: Added alias mapping for common category name variations
@@ -668,8 +675,16 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
     // v1.9.5: Read API keys from database (system_config) with env fallback
     const provider = await getConfig('ai_provider') || process.env.AI_PROVIDER || 'anthropic';
 
-    let apiKey;
-    if (provider === 'anthropic') {
+    let apiKey = null;
+    // v2.0.0: Copilot provider doesn't need an API key
+    if (provider === 'copilot') {
+      // Check if Copilot is authenticated
+      const copilotStatus = await copilotClient.getAuthStatus();
+      if (!copilotStatus.authenticated) {
+        throw new Error('GitHub Copilot not authenticated. Please connect with GitHub first.');
+      }
+      apiKey = 'copilot'; // Placeholder - not actually used
+    } else if (provider === 'anthropic') {
       apiKey = await getConfig('anthropic_api_key') || process.env.ANTHROPIC_API_KEY;
     } else if (provider === 'openai') {
       apiKey = await getConfig('openai_api_key') || process.env.OPENAI_API_KEY;
@@ -681,9 +696,12 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
       apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
     }
 
-    // v1.8.0: Dynamic model selection for Anthropic
+    // v2.0.0: Dynamic model selection
     let model;
-    if (provider === 'anthropic') {
+    if (provider === 'copilot') {
+      model = await getConfig('copilot_model') || 'gpt-4o';
+      await addLog(assessmentId, 'info', `Usando GitHub Copilot con modelo: ${model}`, category);
+    } else if (provider === 'anthropic') {
       const forceOpus = options.deepAnalysis || false;
       model = selectAnthropicModel(category, forceOpus);
       await addLog(assessmentId, 'info', `Modelo seleccionado: ${model.includes('opus') ? 'Opus 4.5' : 'Sonnet 4.5'}`, category);
@@ -691,7 +709,7 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
       model = process.env.AI_MODEL || 'gpt-4o';
     }
 
-    if (!apiKey) {
+    if (!apiKey && provider !== 'copilot') {
       throw new Error('AI API Key not configured');
     }
 
@@ -3089,6 +3107,9 @@ async function callAI(prompt, provider, model, apiKey) {
       return await callDeepSeek(prompt, model, apiKey);
     } else if (provider === 'anthropic') {
       return await callAnthropic(prompt, model, apiKey);
+    } else if (provider === 'copilot') {
+      // v2.0.0: GitHub Copilot provider - no API key needed
+      return await callCopilot(prompt, model);
     } else {
       throw new Error(`Unknown AI provider: ${provider}`);
     }
@@ -3584,6 +3605,84 @@ function parseAIResponse(content, provider) {
   return [];
 }
 
+// =============================================================================
+// v2.0.0: GITHUB COPILOT AI PROVIDER
+// Uses GitHub Copilot subscription for AI analysis (no separate API key needed)
+// =============================================================================
+
+async function callCopilot(prompt, model) {
+  console.log(`[${timestamp()}] [COPILOT] Calling model: ${model}`);
+  
+  const systemPrompt = `Eres un analista de seguridad de Active Directory experto.
+
+⚠️ REGLA DE ORO - GROUNDING OBLIGATORIO:
+Los nombres en "affected_objects" DEBEN existir TEXTUALMENTE en el JSON de entrada.
+El sistema VALIDA y RECHAZA automáticamente cualquier nombre inventado.
+Si inventas nombres → Tu finding será ELIMINADO.
+
+PRINCIPIOS:
+1. SOLO reporta problemas verificables en los datos
+2. Si count = 0 o no hay objetos reales → NO generes finding
+3. Calidad sobre cantidad: Mejor 0 findings que 1 inventado
+
+FORMATO JSON ESTRICTO (sin texto adicional, sin markdown):
+{
+  "findings": [
+    {
+      "type_id": "RULE_ID",
+      "severity": "critical|high|medium|low",
+      "title": "Título descriptivo",
+      "description": "Descripción técnica",
+      "recommendation": "Recomendación",
+      "mitre_attack": "T1234 - Técnica",
+      "cis_control": "X.Y.Z",
+      "impact_business": "Impacto en el negocio",
+      "remediation_commands": "Comandos PowerShell",
+      "prerequisites": "Requisitos",
+      "operational_impact": "Impacto operativo",
+      "microsoft_docs": "URL documentación",
+      "current_vs_recommended": "Actual vs Recomendado",
+      "timeline": "24h|7d|30d|60d",
+      "affected_count": 0,
+      "evidence": {
+        "affected_objects": ["nombre1", "nombre2"],
+        "count": 2,
+        "details": "Detalles exactos del JSON"
+      }
+    }
+  ]
+}
+Si no hay problemas verificables: {"findings": []}
+
+IMPORTANTE: Responde SOLO con JSON válido, sin texto explicativo antes o después.`;
+
+  try {
+    const response = await copilotClient.chat(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt.substring(0, MAX_PROMPT) }
+      ],
+      model,
+      { temperature: 0.2, max_tokens: 8192 }
+    );
+
+    const content = response.choices?.[0]?.message?.content;
+    
+    if (content) {
+      // Use the same robust parsing as other providers
+      const findings = parseAIResponse(content, `Copilot/${model}`);
+      console.log(`[${timestamp()}] [COPILOT] Parsed ${findings.length} findings`);
+      return findings;
+    }
+
+    console.log(`[${timestamp()}] [COPILOT] No content in response`);
+    return [];
+  } catch (error) {
+    console.error(`[${timestamp()}] [COPILOT] Call failed:`, error.message);
+    throw error;
+  }
+}
+
 // Main Processing Function
 async function processAssessment(assessmentId, jsonData) {
   try {
@@ -3714,6 +3813,10 @@ app.get('/api/config/ai', async (req, res) => {
     const hasGeminiKey = !!await getConfig('gemini_api_key');
     const hasDeepSeekKey = !!await getConfig('deepseek_api_key');
     const hasAnthropicKey = !!await getConfig('anthropic_api_key');
+    
+    // v2.0.0: Check Copilot authentication status
+    const copilotStatus = await copilotClient.getAuthStatus();
+    const copilotModel = await getConfig('copilot_model') || 'gpt-4o';
 
     res.json({
       provider,
@@ -3722,19 +3825,29 @@ app.get('/api/config/ai', async (req, res) => {
         openai: hasOpenAIKey,
         gemini: hasGeminiKey,
         deepseek: hasDeepSeekKey,
-        anthropic: hasAnthropicKey
+        anthropic: hasAnthropicKey,
+        copilot: copilotStatus.authenticated
       },
       models: {
         openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo'],
         gemini: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'],
         deepseek: ['deepseek-chat', 'deepseek-coder'],
-        anthropic: ['claude-opus-4-5-20250514', 'claude-sonnet-4-5-20250514', 'auto']
+        anthropic: ['claude-opus-4-5-20250514', 'claude-sonnet-4-5-20250514', 'auto'],
+        copilot: COPILOT_MODELS.map(m => m.id)
       },
       // v1.8.0: Inform frontend about dynamic model selection
       anthropic_auto_select: {
         enabled: true,
         opus_categories: Array.from(OPUS_CATEGORIES),
         description: 'Selección automática: Opus 4.5 para categorías críticas, Sonnet 4.5 para el resto'
+      },
+      // v2.0.0: Copilot configuration
+      copilot: {
+        authenticated: copilotStatus.authenticated,
+        userLogin: copilotStatus.userLogin,
+        tokenValid: copilotStatus.tokenValid,
+        selectedModel: copilotModel,
+        models: COPILOT_MODELS
       }
     });
   } catch (error) {
@@ -3766,6 +3879,95 @@ app.post('/api/config/ai', async (req, res) => {
     res.json({ success: true, message: 'AI configuration updated' });
   } catch (error) {
     console.error('Error updating AI config:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// =============================================================================
+// v2.0.0: GITHUB COPILOT ENDPOINTS
+// OAuth Device Flow authentication for GitHub Copilot integration
+// =============================================================================
+
+// POST /api/copilot/auth/start - Start OAuth Device Flow
+app.post('/api/copilot/auth/start', async (req, res) => {
+  try {
+    console.log('[Copilot API] Starting device flow...');
+    const result = await copilotClient.startDeviceFlow();
+    res.json({
+      success: true,
+      deviceCode: result.deviceCode,
+      userCode: result.userCode,
+      verificationUri: result.verificationUri,
+      expiresIn: result.expiresIn,
+      interval: result.interval
+    });
+  } catch (error) {
+    console.error('[Copilot API] Start error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/copilot/auth/poll - Poll for device authorization
+app.post('/api/copilot/auth/poll', async (req, res) => {
+  try {
+    const { deviceCode } = req.body;
+    if (!deviceCode) {
+      return res.status(400).json({ error: 'deviceCode is required' });
+    }
+    
+    const result = await copilotClient.pollDeviceFlow(deviceCode);
+    res.json(result);
+  } catch (error) {
+    console.error('[Copilot API] Poll error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/copilot/auth/status - Get authentication status
+app.get('/api/copilot/auth/status', async (req, res) => {
+  try {
+    const status = await copilotClient.getAuthStatus();
+    res.json(status);
+  } catch (error) {
+    console.error('[Copilot API] Status error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/copilot/auth/logout - Logout from Copilot
+app.post('/api/copilot/auth/logout', async (req, res) => {
+  try {
+    await copilotClient.logout();
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('[Copilot API] Logout error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/copilot/models - Get available Copilot models
+app.get('/api/copilot/models', async (req, res) => {
+  try {
+    const models = await copilotClient.getModels();
+    res.json({ models });
+  } catch (error) {
+    console.error('[Copilot API] Models error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/copilot/model - Set the preferred Copilot model
+app.post('/api/copilot/model', async (req, res) => {
+  try {
+    const { model } = req.body;
+    if (!model) {
+      return res.status(400).json({ error: 'model is required' });
+    }
+    
+    await setConfig('copilot_model', model);
+    res.json({ success: true, message: `Model set to ${model}` });
+  } catch (error) {
+    console.error('[Copilot API] Set model error:', error);
     res.status(500).json({ error: error.message });
   }
 });
