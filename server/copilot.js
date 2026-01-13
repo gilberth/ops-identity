@@ -34,10 +34,16 @@ const COPILOT_CONSTANTS = {
   TOKEN_REFRESH_BUFFER_MS: 5 * 60 * 1000
 };
 
-// Available models in GitHub Copilot - Only Claude 4.5 models
+// Available models in GitHub Copilot - Curated for AD security analysis
 const COPILOT_MODELS = [
-  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'Anthropic - Most capable model' },
-  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', description: 'Anthropic - Balanced performance' }
+  // Anthropic - Best for detailed security analysis
+  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'Anthropic - Análisis profundo (premium)' },
+  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', description: 'Anthropic - Balance calidad/velocidad' },
+  // OpenAI - Reasoning and general use
+  { id: 'o1', name: 'OpenAI o1', description: 'OpenAI - Razonamiento de seguridad' },
+  { id: 'gpt-4o', name: 'GPT-4o', description: 'OpenAI - Uso general' },
+  // Google - Large context processing
+  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', description: 'Google - Assessments grandes' }
 ];
 
 /**
