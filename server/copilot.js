@@ -501,66 +501,17 @@ class CopilotClient {
 
   /**
    * Get available models from Copilot API
-   * Falls back to static list if API call fails
+   * Filtered to show only Claude Opus 4.5 and Sonnet 4.5
    */
   async getModels() {
-    try {
-      // Try to get models from API
-      const token = await this.ensureValidToken();
-      
-      const response = await fetch(COPILOT_CONSTANTS.MODELS_URL, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'User-Agent': COPILOT_CONSTANTS.USER_AGENT,
-          'Accept': 'application/json',
-          'Editor-Version': COPILOT_CONSTANTS.EDITOR_VERSION,
-          'Editor-Plugin-Version': COPILOT_CONSTANTS.PLUGIN_VERSION,
-          'Copilot-Integration-Id': COPILOT_CONSTANTS.INTEGRATION_ID
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log('[Copilot] Models from API:', JSON.stringify(data).substring(0, 500));
-        
-        // Parse the API response into our format
-        if (data.models && Array.isArray(data.models)) {
-          const apiModels = data.models.map(m => ({
-            id: m.id || m.name,
-            name: m.name || m.id,
-            description: m.description || `${m.vendor || 'AI'} model`
-          }));
-          
-          if (apiModels.length > 0) {
-            console.log(`[Copilot] Found ${apiModels.length} models from API`);
-            return apiModels;
-          }
-        }
-        
-        // If data structure is different, try to extract model info
-        if (data.data && Array.isArray(data.data)) {
-          const apiModels = data.data.map(m => ({
-            id: m.id || m.model,
-            name: m.name || m.id || m.model,
-            description: m.description || `Model: ${m.id || m.model}`
-          }));
-          
-          if (apiModels.length > 0) {
-            console.log(`[Copilot] Found ${apiModels.length} models from API (data format)`);
-            return apiModels;
-          }
-        }
-      } else {
-        console.warn('[Copilot] Models API returned:', response.status);
-      }
-    } catch (error) {
-      console.warn('[Copilot] Could not fetch models from API:', error.message);
-    }
+    // Only return Claude 4.5 models (Opus and Sonnet)
+    const ALLOWED_MODELS = [
+      { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', description: 'Anthropic - Most capable model' },
+      { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', description: 'Anthropic - Balanced performance' }
+    ];
     
-    // Return static list as fallback
-    console.log('[Copilot] Using static model list');
-    return COPILOT_MODELS;
+    console.log('[Copilot] Returning filtered model list (Claude 4.5 only)');
+    return ALLOWED_MODELS;
   }
 
   /**
