@@ -1636,16 +1636,19 @@ function buildPrompt(cat, d) {
   const categoryInstructions = {
     Users: `Analiza estos usuarios de Active Directory para identificar vulnerabilidades de seguridad.
 
-**⚠️ INSTRUCCIONES DE ANÁLISIS DE DATOS (JSON):**
-1. Recibirás una lista de objetos JSON. CADA objeto es un usuario.
-2. Debes ITERAR mentalmente sobre CADA usuario de la lista.
-3. Verifica las condiciones de seguridad para CADA uno.
-4. CUENTA cuántos usuarios cumplen cada condición de vulnerabilidad.
-5. Si encuentras al menos 1 usuario vulnerable, GENERA EL HALLAZGO.
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta usuarios que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de usuarios (SamAccountName) ni conteos.
 
-**⚠️ VALIDACIÓN CRÍTICA:**
-- Los nombres de usuarios en affected_objects deben ser REALES de los datos analizados (propiedad 'SamAccountName').
-- Si los datos muestran 0 usuarios con un problema, NO generes finding para eso.
+**📋 INSTRUCCIONES DE ANÁLISIS:**
+1. Recibirás un array de objetos JSON. CADA objeto es un usuario.
+2. CUENTA cuántos usuarios cumplen cada condición de vulnerabilidad.
+3. Los nombres en affected_objects DEBEN ser valores REALES del campo 'SamAccountName'.
+4. Si los datos muestran 0 usuarios con un problema, NO generes finding para eso.
+
+**🚫 NO HACER:**
+- NO inventar nombres de usuarios
+- NO estimar conteos ("aproximadamente", "varios", "algunos")
+- NO generar findings sin evidencia en el JSON
+- NO usar nombres genéricos como "usuario1", "admin", "test"
 
 **BUSCA ESPECÍFICAMENTE (SOLO SI HAY EVIDENCIA):**
 
@@ -1754,11 +1757,19 @@ function buildPrompt(cat, d) {
 
     GPOs: `Analiza estas Group Policy Objects para identificar configuraciones inseguras.
 
-**⚠️ VALIDACIÓN CRÍTICA PARA GPOs:**
-- Si los datos muestran "cpassword": null o "cpassword" no aparece → NO generar finding de cpassword
-- Solo reporta GPOs que existan en los datos con valores problemáticos verificables
-- Los comandos PowerShell deben ser ESPECÍFICOS para GPO (Get-GPO, Get-GPOReport, Set-GPPermission)
-- NO uses comandos no relacionados como Get-WMIObject para problemas de GPO
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta GPOs que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de GPOs ni configuraciones.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del campo 'DisplayName' o 'Name' del JSON
+- Si "cpassword": null o no existe → NO generar finding de cpassword
+- Solo reporta configuraciones problemáticas que EXISTAN en los datos con valores verificables
+- CUENTA exactamente cuántas GPOs tienen cada problema
+
+**🚫 NO HACER:**
+- NO inventar nombres de GPOs
+- NO estimar conteos
+- NO asumir configuraciones que no estén en el JSON
+- NO usar nombres genéricos como "Default Domain Policy" si no está en los datos
 
 **BUSCA ESPECÍFICAMENTE (CON EVIDENCIA REAL):**
 1. **GPOs sin aplicar** (Links vacíos o deshabilitados)
@@ -1821,6 +1832,19 @@ function buildPrompt(cat, d) {
 - **Evidencia**: Nombres REALES de GPOs de los datos y sus configuraciones problemáticas con valores específicos`,
 
     Computers: `Analiza estos equipos de Active Directory para identificar riesgos.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta equipos que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de equipos (Name/DNSHostName) ni conteos.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del campo 'Name' o 'DNSHostName' del JSON
+- CUENTA exactamente cuántos equipos tienen cada problema
+- Para OS obsoletos, verifica el campo 'OperatingSystem' REAL del JSON
+
+**🚫 NO HACER:**
+- NO inventar nombres de equipos
+- NO estimar conteos ("aproximadamente", "varios")
+- NO asumir sistemas operativos que no estén en el JSON
+- NO usar nombres genéricos como "PC01", "SERVER01" si no están en los datos
 
 **BUSCA ESPECÍFICAMENTE:**
 1. **Sistemas operativos obsoletos** (Windows Server 2008/2003, Windows 7/XP/Vista)
@@ -1939,6 +1963,19 @@ Si Connections tiene 117 elementos, Partners tiene 2 con LastResult=0 y Failures
 
     Groups: `Eres un auditor de seguridad especializado en privilegios y gestión de identidades en Active Directory.
 
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta grupos y miembros que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de grupos ni de usuarios.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del campo 'Name' o 'SamAccountName' del JSON
+- CUENTA exactamente cuántos miembros tiene cada grupo privilegiado
+- Verifica que los grupos que reportas EXISTAN en los datos
+
+**🚫 NO HACER:**
+- NO inventar nombres de grupos ni usuarios
+- NO estimar conteos de miembros
+- NO asumir membresías que no estén en el JSON
+- NO usar nombres genéricos si no están en los datos
+
 **⚠️ CONTEXTO DE ANÁLISIS:**
 Los grupos son el mecanismo principal de asignación de permisos en AD. El exceso de privilegios es una de las vulnerabilidades más explotadas en compromisos de dominio. Debes buscar desviaciones del principio de least privilege y grupos con configuraciones que faciliten escalación de privilegios.
 
@@ -2022,6 +2059,19 @@ Los grupos son el mecanismo principal de asignación de permisos en AD. El exces
 - **Evidencia**: affected_objects con nombres REALES (máximo 10, luego "...y X más"), affected_count preciso, details con estadísticas (promedio LastLogonDate, distribución por OU)`,
 
     DCHealth: `Analiza la salud operativa y higiene de los controladores de dominio.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de controladores de dominio ni conteos.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del campo 'Name' o 'HostName' del JSON
+- CUENTA exactamente cuántos DCs tienen cada problema
+- Para HygieneAnalysis, verifica que los arrays (GhostComputers, TrustFailures, etc.) tengan elementos REALES
+
+**🚫 NO HACER:**
+- NO inventar nombres de DCs
+- NO estimar conteos
+- NO asumir problemas que no estén evidenciados en el JSON
+- NO usar nombres genéricos como "DC01", "DC02" si no están en los datos
 
 **⚠️ CONTEXTO DE ANÁLISIS:**
 Este es un análisis de HIGIENE OPERATIVA, no de seguridad ofensiva. El objetivo es identificar desorden administrativo, deuda técnica y configuraciones subóptimas que hacen la infraestructura inestable e ineficiente.
