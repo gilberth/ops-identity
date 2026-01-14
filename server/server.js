@@ -1142,6 +1142,108 @@ const ATTRIBUTE_VALIDATION_RULES = {
     }
   },
 
+  // ReplicationHealthAllDCs category findings - executive replication analysis
+  'REPLICATION_HEALTH_OPTIMAL': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      // Valid when Summary shows all DCs healthy
+      if (obj.Summary) {
+        return obj.Summary.HealthyDCs === obj.Summary.TotalDCs && 
+               obj.Summary.DegradedDCs === 0 && 
+               obj.Summary.FailedLinks === 0;
+      }
+      return false;
+    },
+    validateAffectedObject: (objName, data) => {
+      if (!data.DomainControllers) return false;
+      return data.DomainControllers.some(dc => 
+        (dc.DCName || '').toLowerCase() === objName.toLowerCase()
+      );
+    }
+  },
+  'REPLICATION_HEALTH_DEGRADED': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      // Valid when there are degraded DCs or some failed links but not critical
+      if (obj.Summary) {
+        return (obj.Summary.DegradedDCs > 0 || obj.Summary.FailedLinks > 0) &&
+               obj.Summary.HealthyDCs > 0;
+      }
+      return false;
+    }
+  },
+  'REPLICATION_HEALTH_CRITICAL': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      // Valid when there are unreachable DCs or major failures
+      if (obj.DomainControllers) {
+        return obj.DomainControllers.some(dc => dc.Health === 'Unreachable' || dc.Health === 'Critical');
+      }
+      return false;
+    }
+  },
+  'DC_UNREACHABLE': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (obj.DomainControllers) {
+        return obj.DomainControllers.some(dc => dc.Health === 'Unreachable');
+      }
+      return false;
+    },
+    validateAffectedObject: (objName, data) => {
+      if (!data.DomainControllers) return false;
+      return data.DomainControllers.some(dc => 
+        dc.Health === 'Unreachable' && 
+        (dc.DCName || '').toLowerCase() === objName.toLowerCase()
+      );
+    }
+  },
+  'REPLICATION_LATENCY_HIGH': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      // Check if any partner has high latency (> 60 minutes)
+      if (obj.DomainControllers) {
+        return obj.DomainControllers.some(dc => 
+          dc.InboundPartners && dc.InboundPartners.some(p => 
+            p.ReplicationLagMinutes >= 60 && p.ReplicationLagMinutes < 1440
+          )
+        );
+      }
+      return false;
+    }
+  },
+  'REPLICATION_LATENCY_CRITICAL': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      // Check if any partner has critical latency (> 24 hours)
+      if (obj.DomainControllers) {
+        return obj.DomainControllers.some(dc => 
+          dc.InboundPartners && dc.InboundPartners.some(p => 
+            p.ReplicationLagMinutes >= 1440
+          )
+        );
+      }
+      return false;
+    }
+  },
+  'REPLICATION_SITE_TOPOLOGY': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'Site',
+    validate: (obj) => {
+      // Always valid if we have site data
+      if (obj.DomainControllers) {
+        return obj.DomainControllers.some(dc => dc.Site);
+      }
+      return false;
+    }
+  },
+
   'OS_OBSOLETE_DC': {
     category: 'DCHealth',
     identifierField: 'Name',
@@ -2344,28 +2446,126 @@ Los roles FSMO son críticos para la operación de AD. Si un rol no es accesible
 - **Descripción**: Impacto operativo específico del rol fallido.
 - **Evidencia**: Tiempos de respuesta, errores de DNS.`,
 
-    ReplicationHealthAllDCs: `Analiza la topología y salud de replicación completa.
+    ReplicationHealthAllDCs: `Analiza la salud completa de replicación de Active Directory para un reporte ejecutivo.
 
-**⚠️ CONTEXTO:**
-Una visión global de la replicación es vital para detectar islas de replicación o fallos sistémicos.
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta datos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de DCs, sitios, ni métricas.
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **🔴 CRITICAL: DCs Inalcanzables o Aislados**
-   - Health = "Unreachable" o "Critical".
-   - Riesgo: DC desactualizado, puede servir datos antiguos o permitir accesos revocados.
+**📊 ESTRUCTURA DE DATOS:**
+El objeto ReplicationHealthAllDCs contiene:
 
-2. **🔴 CRITICAL: Latencia de Replicación Extrema**
-   - ReplicationLagMinutes > 1440 (24 horas).
-   - "Tombstone Lifetime" risk (objetos borrados pueden revivir).
+1. **Summary** - Resumen ejecutivo:
+   - TotalDCs: número total de controladores
+   - HealthyDCs: DCs funcionando correctamente
+   - DegradedDCs: DCs con problemas parciales
+   - FailedLinks: enlaces de replicación fallidos
 
-3. **⚠️ MEDIUM: Errores de Enlace**
-   - FailedLinks > 0.
-   - Analizar ErrorMessage (ej. "RPC server unavailable", "Access denied").
+2. **DomainControllers[]** - Detalle por DC:
+   - DCName: nombre del DC
+   - HostName: FQDN
+   - Site: sitio de AD donde está ubicado
+   - Health: "Healthy", "Degraded", "Unreachable"
+   - IsGC: si es Global Catalog
+   - Error: mensaje de error (si aplica)
+   - InboundPartners[]: partners de replicación entrante
+     - PartnerDC: DN del partner
+     - Status: "OK" o error
+     - ReplicationLagMinutes: latencia en minutos (CRÍTICO)
+     - LastReplicationSuccess: timestamp última replicación
+     - ConsecutiveFailures: fallos consecutivos
+     - LastReplicationResult: 0=éxito, otro=error
 
-**FORMATO REPORTE:**
-- **type_id**: REPLICATION_TOPOLOGY_BROKEN, REPLICATION_DC_UUNREACHABLE, REPLICATION_LAG_CRITICAL.
-- **Título**: "N DCs con fallos críticos de replicación" o "DC [NOMBRE] aislado del dominio".
-- **Recomendación**: Comandos repadmin o revisión de firewalls (puertos 135, 49152-65535, 389, 88).`,
+3. **LingeringObjectsRisk[]** - Riesgo de objetos fantasma
+4. **FailedReplications[]** - Replicaciones fallidas
+5. **TopologyMatrix[]** - Matriz de conectividad
+
+**📋 ANÁLISIS REQUERIDO - GENERA FINDINGS PARA:**
+
+### 1. ESTADO GENERAL (SIEMPRE generar uno de estos)
+**Si TODO está bien:**
+- type_id: REPLICATION_HEALTH_OPTIMAL
+- severity: INFO
+- Incluir: Total DCs, latencia promedio, latencia máxima, último éxito
+
+**Si hay problemas menores:**
+- type_id: REPLICATION_HEALTH_DEGRADED
+- severity: MEDIUM
+
+**Si hay problemas críticos:**
+- type_id: REPLICATION_HEALTH_CRITICAL
+- severity: CRITICAL
+
+### 2. DC INALCANZABLE (Health="Unreachable")
+- type_id: DC_UNREACHABLE
+- severity: CRITICAL
+- Incluir: nombre del DC, sitio, mensaje de error EXACTO del JSON
+- Impacto: usuarios de ese sitio pueden autenticarse con datos antiguos
+
+### 3. LATENCIA DE REPLICACIÓN
+Analiza ReplicationLagMinutes de CADA InboundPartner:
+- < 15 minutos: Óptimo ✅
+- 15-60 minutos: Aceptable para inter-site
+- 60-180 minutos: WARNING - posible congestión
+- > 180 minutos (3 horas): HIGH - investigar
+- > 1440 minutos (24 horas): CRITICAL - riesgo de inconsistencia
+
+type_id: REPLICATION_LATENCY_HIGH o REPLICATION_LATENCY_CRITICAL
+Incluir: DC origen, DC destino, latencia exacta en minutos
+
+### 4. FALLOS CONSECUTIVOS
+Si ConsecutiveFailures > 0:
+- type_id: REPLICATION_CONSECUTIVE_FAILURES
+- severity: HIGH si > 3, CRITICAL si > 10
+- Incluir: cuántos fallos, entre qué DCs
+
+### 5. DISTRIBUCIÓN POR SITIOS
+Analiza cuántos DCs hay por Site:
+- type_id: REPLICATION_SITE_TOPOLOGY
+- severity: INFO
+- Incluir: lista de sitios con cantidad de DCs
+
+**📤 FORMATO DE RESPUESTA OBLIGATORIO:**
+
+Para el finding de ESTADO GENERAL, incluir SIEMPRE:
+\`\`\`
+{
+  "type_id": "REPLICATION_HEALTH_OPTIMAL|DEGRADED|CRITICAL",
+  "title": "Estado de Replicación: [ÓPTIMO/DEGRADADO/CRÍTICO]",
+  "severity": "INFO|MEDIUM|CRITICAL",
+  "description": "Análisis de N controladores de dominio en M sitios.
+    
+    **Resumen Ejecutivo:**
+    - DCs Totales: X
+    - DCs Saludables: Y  
+    - DCs Degradados: Z
+    - DCs Inalcanzables: W
+    
+    **Métricas de Latencia:**
+    - Latencia Mínima: X.XX minutos
+    - Latencia Promedio: X.XX minutos
+    - Latencia Máxima: X.XX minutos
+    
+    **Última Replicación Exitosa:** [fecha/hora calculada del timestamp más reciente]
+    
+    **Conclusión:** [La replicación funciona correctamente / Hay problemas que requieren atención]",
+  "affected_objects": ["DC1", "DC2", ...],
+  "affected_count": N,
+  "recommendation": "Comandos de verificación: repadmin /replsummary, repadmin /showrepl",
+  "evidence": "Summary del JSON: HealthyDCs=X, DegradedDCs=Y, FailedLinks=Z"
+}
+\`\`\`
+
+**🚫 NO HACER:**
+- NO inventar nombres de DCs
+- NO estimar latencias
+- NO omitir DCs con Health="Unreachable" - son CRÍTICOS
+- NO ignorar el campo Error cuando existe
+
+**✅ EJEMPLO DE ANÁLISIS CORRECTO:**
+Si Summary muestra: HealthyDCs=4, TotalDCs=5, y un DC tiene Health="Unreachable":
+→ Generar finding CRITICAL por DC inalcanzable
+→ Generar finding con estado general DEGRADADO
+→ Calcular latencias de los InboundPartners
+→ Listar todos los DCs y sus estados`,
 
     LingeringObjectsRisk: `Analiza el riesgo de Lingering Objects (Objetos Fantasma).
 
