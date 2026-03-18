@@ -67,9 +67,22 @@ const CATEGORIES = [
   'DCServicesHealth', 'DCDiskSpace', 'SYSVOLReplicationState', 'GPOComplexity', 'DuplicateSPNs'
 ];
 
-const MAX_PROMPT = 8000;
-const CHUNK_SIZE = 50;
+const MAX_PROMPT = 8000; // Legacy, kept for reference
+const CHUNK_SIZE = 50;   // Legacy, kept for reference
 const MAX_PARALLEL_CHUNKS = 3;
+
+// v3.0.0: Token-aware limits per provider/model
+// Claude Opus/Sonnet: 200K tokens (~800K chars), reserve 30K for instructions+response
+// OpenAI GPT-4o: 128K tokens (~512K chars), reserve 20K
+// Conservative: use ~60% of available context for data to leave room for long prompts
+const MODEL_DATA_LIMITS = {
+  'anthropic': 120000,  // ~120K chars of data (Opus/Sonnet 200K context)
+  'openai': 80000,      // ~80K chars (GPT-4o 128K context)
+  'google': 80000,      // ~80K chars (Gemini 1M context, but conservative)
+  'deepseek': 60000,    // ~60K chars (DeepSeek 64K context)
+  'copilot': 60000,     // ~60K chars
+  'default': 60000
+};
 
 // =============================================================================
 // v1.8.0: ANTHROPIC MODEL SELECTION - Claude 4.5 (Opus & Sonnet)
@@ -604,6 +617,54 @@ function extractCategoryData(jsonData, categoryName) {
     }
   }
 
+  // v3.0.0: Smart Filtering for IsProblematic-based categories
+  // These categories set IsProblematic in the PS1 script — server filters accordingly
+  const isProblematicCategories = [
+    'dcserviceshealth', 'dcdiskspace', 'dcdiaghealth', 'rodchealth',
+    'dcconnectivitymatrix', 'orphaneddcs', 'sitetopologyissues',
+    'dcdnsresolution', 'gpocomplexity'
+  ];
+  if (isProblematicCategories.includes(categoryName.toLowerCase()) && Array.isArray(result) && result.length > 0) {
+    const originalCount = result.length;
+    const filtered = result.filter(item => item && item.IsProblematic === true);
+    // Only filter if there are problematic items; otherwise keep all (might be summary-only data)
+    if (filtered.length > 0) {
+      result = filtered;
+      if (originalCount !== result.length) {
+        console.log(`[SmartFilter] '${categoryName}' reduced from ${originalCount} to ${result.length} items (IsProblematic filter)`);
+      }
+    }
+  }
+
+  // v3.0.0: Smart Filtering for DuplicateSPNs — only send if duplicates exist
+  if (categoryName.toLowerCase() === 'duplicatespns' && result && !Array.isArray(result)) {
+    // DuplicateSPNs is an object, not array — wrap for AI processing
+    if (result.DuplicateCount === 0 || !result.Duplicates || result.Duplicates.length === 0) {
+      console.log(`[SmartFilter] 'DuplicateSPNs': No duplicates found, skipping AI analysis`);
+      result = [];
+    } else {
+      // Convert to array format for chunking compatibility
+      result = result.Duplicates || [];
+      console.log(`[SmartFilter] 'DuplicateSPNs': ${result.length} duplicate SPNs to analyze`);
+    }
+  }
+
+  // v3.0.0: Smart Filtering for SYSVOLReplicationState — extract DCs array or flag FRS
+  if (categoryName.toLowerCase() === 'sysvolreplicationstate' && result && !Array.isArray(result)) {
+    const sysvolObj = result;
+    if (!sysvolObj.IsProblematic && !sysvolObj.IsFRS) {
+      console.log(`[SmartFilter] 'SYSVOLReplicationState': Healthy, skipping AI analysis`);
+      result = [];
+    } else {
+      // Convert to array for processing
+      const items = [];
+      if (sysvolObj.IsFRS) items.push({ Type: 'FRS_DEPRECATED', ReplicationMechanism: 'FRS', IsProblematic: true });
+      (sysvolObj.DCs || []).forEach(dc => { if (dc.IsProblematic) items.push(dc); });
+      result = items.length > 0 ? items : [sysvolObj];
+      console.log(`[SmartFilter] 'SYSVOLReplicationState': ${result.length} items (FRS=${sysvolObj.IsFRS})`);
+    }
+  }
+
   // NEW: Smart Filtering for Kerberos (Focus on Security Issues)
   // Source: MITRE ATT&CK, Microsoft Kerberos Security
   if (categoryName.toLowerCase() === 'kerberos' && result.length > 0) {
@@ -680,6 +741,236 @@ function extractCategoryData(jsonData, categoryName) {
 }
 
 // ------------------------------------------------------------------
+// v3.0.0: DETERMINISTIC ANALYZERS FOR RULE-BASED CATEGORIES
+// These categories don't need LLM — results are mathematically certain.
+// ------------------------------------------------------------------
+
+const DETERMINISTIC_CATEGORIES = new Set([
+  'DCServicesHealth', 'DCDiskSpace', 'GPOComplexity', 'DuplicateSPNs'
+]);
+
+function analyzeDCServicesHealthDeterministic(data) {
+  if (!Array.isArray(data) || data.length === 0) return [];
+  const findings = [];
+  const problematic = data.filter(dc => dc.IsProblematic);
+
+  if (problematic.length === 0) return [];
+
+  // Critical: NTDS, KDC, Netlogon
+  const criticalStopped = problematic.filter(dc =>
+    dc.Services?.some(s => !s.IsRunning && ['NTDS', 'KDC', 'Netlogon'].includes(s.Name))
+  );
+  if (criticalStopped.length > 0) {
+    const names = criticalStopped.map(dc => dc.DCName);
+    const stoppedDetails = criticalStopped.map(dc => {
+      const stopped = dc.Services.filter(s => !s.IsRunning && ['NTDS', 'KDC', 'Netlogon'].includes(s.Name));
+      return `${dc.DCName}: ${stopped.map(s => s.Name).join(', ')}`;
+    }).join('; ');
+    findings.push({
+      type_id: 'DC_SERVICE_CRITICAL_STOPPED',
+      title: `${criticalStopped.length} DCs con servicios críticos (NTDS/KDC/Netlogon) detenidos`,
+      severity: 'critical',
+      description: `Se detectaron ${criticalStopped.length} Domain Controllers con servicios esenciales detenidos. Un DC con NTDS, KDC o Netlogon detenido es funcionalmente inactivo: no procesa autenticaciones, no participa en replicación y no resuelve consultas LDAP. Detalle: ${stoppedDetails}`,
+      recommendation: `Verificar y reiniciar los servicios: Get-Service -ComputerName [DC] -Name NTDS,KDC,Netlogon | Where Status -ne Running | Start-Service. Investigar la causa raíz (espacio en disco, corrupción, configuración).`,
+      evidence: { affected_objects: names.slice(0, 10), count: criticalStopped.length },
+      affected_count: criticalStopped.length,
+      cis_control: '4.1 - Maintain Inventory of Administrative Accounts',
+      timeline: 'Inmediato (< 4 horas)'
+    });
+  }
+
+  // High: DNS, DFSR, W32Time
+  const highStopped = problematic.filter(dc =>
+    dc.Services?.some(s => !s.IsRunning && ['DNS', 'DFSR', 'W32Time'].includes(s.Name))
+  );
+  if (highStopped.length > 0) {
+    const names = highStopped.map(dc => dc.DCName);
+    findings.push({
+      type_id: 'DC_SERVICE_HIGH_STOPPED',
+      title: `${highStopped.length} DCs con servicios importantes (DNS/DFSR/W32Time) detenidos`,
+      severity: 'high',
+      description: `${highStopped.length} DCs tienen servicios DNS, DFSR o W32Time detenidos. Sin DNS, los clientes no resuelven nombres. Sin DFSR, SYSVOL no replica GPOs. Sin W32Time, Kerberos puede fallar por desincronización.`,
+      recommendation: `Reiniciar servicios: Get-Service -ComputerName [DC] -Name DNS,DFSR,W32Time | Start-Service. Verificar sincronización NTP con: w32tm /query /status`,
+      evidence: { affected_objects: names.slice(0, 10), count: highStopped.length },
+      affected_count: highStopped.length,
+      timeline: 'Urgente (< 24 horas)'
+    });
+  }
+
+  // Unreachable DCs
+  const unreachable = problematic.filter(dc =>
+    dc.Services?.some(s => s.Status === 'Error')
+  );
+  if (unreachable.length > 0) {
+    findings.push({
+      type_id: 'DC_SERVICE_UNREACHABLE',
+      title: `${unreachable.length} DCs inaccesibles para verificación de servicios`,
+      severity: 'critical',
+      description: `No se pudieron consultar los servicios de ${unreachable.length} DCs. Estos DCs podrían estar caídos, desconectados de la red, o tener el firewall bloqueando WMI/RPC.`,
+      recommendation: `Verificar conectividad: Test-Connection [DC]. Verificar servicios manualmente o revisar consola de virtualización.`,
+      evidence: { affected_objects: unreachable.map(dc => dc.DCName).slice(0, 10), count: unreachable.length },
+      affected_count: unreachable.length,
+      timeline: 'Inmediato'
+    });
+  }
+
+  return findings;
+}
+
+function analyzeDCDiskSpaceDeterministic(data) {
+  if (!Array.isArray(data) || data.length === 0) return [];
+  const findings = [];
+
+  const critical = data.filter(dc => dc.LowestFreePercent < 10);
+  const low = data.filter(dc => dc.LowestFreePercent >= 10 && dc.LowestFreePercent < 20);
+  const warning = data.filter(dc => dc.LowestFreePercent >= 20 && dc.LowestFreePercent < 30);
+
+  if (critical.length > 0) {
+    const details = critical.map(dc => {
+      const worstDrive = dc.Drives?.find(d => d.FreePercent < 10);
+      return `${dc.DCName}: ${worstDrive?.Drive || 'C:'} al ${dc.LowestFreePercent}% libre (${worstDrive?.FreeGB || '?'} GB)`;
+    }).join('; ');
+    findings.push({
+      type_id: 'DC_DISK_CRITICAL',
+      title: `${critical.length} DCs con espacio en disco crítico (<10% libre)`,
+      severity: 'critical',
+      description: `${critical.length} DCs tienen menos del 10% de espacio libre. Esto puede causar: SYSVOL deja de replicar, la base de datos NTDS no puede crecer, los logs de eventos se pierden, y el DC puede dejar de funcionar. Detalle: ${details}`,
+      recommendation: `1. Limpiar archivos temporales: cleanmgr /d C:. 2. Revisar logs antiguos: wevtutil cl System. 3. Verificar NTDS defrag: ntdsutil "activate instance NTDS" "files" "compact to C:\\temp". 4. Expandir disco si es VM.`,
+      evidence: { affected_objects: critical.map(dc => dc.DCName).slice(0, 10), count: critical.length },
+      affected_count: critical.length,
+      timeline: 'Inmediato (< 4 horas)'
+    });
+  }
+
+  if (low.length > 0) {
+    findings.push({
+      type_id: 'DC_DISK_LOW',
+      title: `${low.length} DCs con espacio en disco bajo (<20% libre)`,
+      severity: 'high',
+      description: `${low.length} DCs tienen entre 10-20% de espacio libre. Requieren atención de capacidad antes de que se vuelva crítico.`,
+      recommendation: `Planificar expansión de disco o limpieza. Monitorear con: Get-WmiObject Win32_LogicalDisk -ComputerName [DC] | Select DeviceID, @{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}}`,
+      evidence: { affected_objects: low.map(dc => dc.DCName).slice(0, 10), count: low.length },
+      affected_count: low.length,
+      timeline: '7 días'
+    });
+  }
+
+  if (warning.length > 0) {
+    findings.push({
+      type_id: 'DC_DISK_WARNING',
+      title: `${warning.length} DCs con advertencia de espacio (<30% libre)`,
+      severity: 'medium',
+      description: `${warning.length} DCs tienen entre 20-30% de espacio libre. No es urgente pero debe planificarse mantenimiento.`,
+      recommendation: `Incluir en plan de capacidad trimestral. Revisar tamaño de NTDS.dit y SYSVOL.`,
+      evidence: { affected_objects: warning.map(dc => dc.DCName).slice(0, 10), count: warning.length },
+      affected_count: warning.length,
+      timeline: '30 días'
+    });
+  }
+
+  return findings;
+}
+
+function analyzeGPOComplexityDeterministic(data) {
+  if (!Array.isArray(data) || data.length === 0) return [];
+  const findings = [];
+
+  const monolithic = data.filter(g => g.SettingsCount > 50);
+  const empty = data.filter(g => g.IsEmpty === true);
+  const unlinked = data.filter(g => g.IsUnlinked === true);
+  const mismatch = data.filter(g => g.HasVersionMismatch === true);
+
+  if (mismatch.length > 0) {
+    findings.push({
+      type_id: 'GPO_VERSION_MISMATCH',
+      title: `${mismatch.length} GPOs con desincronización DS/Sysvol`,
+      severity: 'critical',
+      description: `${mismatch.length} GPOs tienen la versión en Active Directory diferente a la versión en el filesystem SYSVOL. Esto significa que la GPO editada puede no aplicarse correctamente en algunos DCs. GPOs afectadas: ${mismatch.slice(0, 5).map(g => g.Name).join(', ')}`,
+      recommendation: `Forzar replicación: repadmin /syncall /AdeP. Verificar DFSR: dfsrdiag pollad. Si persiste, re-editar la GPO para forzar incremento de versión.`,
+      evidence: { affected_objects: mismatch.map(g => g.Name).slice(0, 10), count: mismatch.length },
+      affected_count: mismatch.length,
+      timeline: 'Urgente (< 24 horas)'
+    });
+  }
+
+  if (monolithic.length > 0) {
+    const details = monolithic.slice(0, 5).map(g => `${g.Name} (${g.SettingsCount} settings)`).join(', ');
+    findings.push({
+      type_id: 'GPO_MONOLITHIC',
+      title: `${monolithic.length} GPOs monolíticas con >50 configuraciones`,
+      severity: 'high',
+      description: `${monolithic.length} GPOs contienen más de 50 settings cada una. Las GPOs monolíticas causan logon lento, son difíciles de mantener y cualquier cambio es riesgoso porque afecta demasiadas configuraciones. Detalle: ${details}`,
+      recommendation: `Dividir GPOs grandes en GPOs más pequeñas por función (ej: una para seguridad, otra para software, otra para configuración). Usar GPO Modeling para validar antes de aplicar.`,
+      evidence: { affected_objects: monolithic.map(g => g.Name).slice(0, 10), count: monolithic.length },
+      affected_count: monolithic.length,
+      timeline: '30 días'
+    });
+  }
+
+  if (empty.length > 0) {
+    findings.push({
+      type_id: 'GPO_EMPTY',
+      title: `${empty.length} GPOs vacías (sin configuración)`,
+      severity: 'medium',
+      description: `${empty.length} GPOs nunca fueron configuradas (versión DS y Computer en 0). Representan basura administrativa que ocupa espacio en SYSVOL y complica la administración.`,
+      recommendation: `Revisar y eliminar: Get-GPO -All | Where { $_.User.DSVersion -eq 0 -and $_.Computer.DSVersion -eq 0 } | Remove-GPO -Confirm`,
+      evidence: { affected_objects: empty.map(g => g.Name).slice(0, 10), count: empty.length },
+      affected_count: empty.length,
+      timeline: '30 días'
+    });
+  }
+
+  if (unlinked.length > 0) {
+    findings.push({
+      type_id: 'GPO_UNLINKED',
+      title: `${unlinked.length} GPOs sin enlace a ninguna OU/dominio`,
+      severity: 'medium',
+      description: `${unlinked.length} GPOs no están enlazadas a ninguna OU, dominio o sitio. No se aplican a nadie pero ocupan espacio en SYSVOL y se replican entre todos los DCs.`,
+      recommendation: `Verificar si son necesarias. Si no, eliminar: Get-GPO [nombre] | Remove-GPO. Si sí, enlazar a la OU correspondiente.`,
+      evidence: { affected_objects: unlinked.map(g => g.Name).slice(0, 10), count: unlinked.length },
+      affected_count: unlinked.length,
+      timeline: '30 días'
+    });
+  }
+
+  return findings;
+}
+
+function analyzeDuplicateSPNsDeterministic(data) {
+  // data can be the raw object or filtered duplicates array
+  const duplicates = Array.isArray(data) ? data : (data?.Duplicates || []);
+  if (duplicates.length === 0) return [];
+  const findings = [];
+
+  findings.push({
+    type_id: 'SPN_DUPLICATE_CRITICAL',
+    title: `${duplicates.length} SPNs duplicados detectados — autenticación Kerberos afectada`,
+    severity: 'critical',
+    description: `Se encontraron ${duplicates.length} Service Principal Names registrados en múltiples cuentas. Cuando un SPN existe en 2+ cuentas, Kerberos no puede determinar cuál usar y la autenticación falla silenciosamente. Esto causa errores intermitentes muy difíciles de diagnosticar. SPNs afectados: ${duplicates.slice(0, 5).map(d => d.SPN).join(', ')}`,
+    recommendation: `Para cada SPN duplicado: 1. Identificar la cuenta correcta. 2. Eliminar de la incorrecta: setspn -D [spn] [cuenta_incorrecta]. 3. Verificar: setspn -X (detecta duplicados en todo el forest).`,
+    evidence: { affected_objects: duplicates.map(d => d.SPN).slice(0, 10), count: duplicates.length },
+    affected_count: duplicates.length,
+    cis_control: '4.6 - Use Unique Identifiers',
+    timeline: 'Urgente (< 24 horas)'
+  });
+
+  if (duplicates.length > 5) {
+    findings.push({
+      type_id: 'SPN_DUPLICATE_WIDESPREAD',
+      title: `Problema sistemático: ${duplicates.length} SPNs duplicados indican falta de gestión de SPNs`,
+      severity: 'high',
+      description: `Más de 5 SPNs duplicados indica un problema sistemático de gestión. No hay proceso de alta/baja de servicios que verifique SPNs. Cada servicio nuevo puede crear conflictos.`,
+      recommendation: `1. Auditoría completa: setspn -X. 2. Establecer proceso obligatorio de verificación de SPNs antes de desplegar servicios. 3. Documentar SPNs de cada aplicación.`,
+      evidence: { affected_objects: duplicates.map(d => d.SPN).slice(0, 10), count: duplicates.length },
+      affected_count: duplicates.length,
+      timeline: '7 días'
+    });
+  }
+
+  return findings;
+}
+
+// ------------------------------------------------------------------
 // AI ORCHESTRATOR & ANALYZER
 // ------------------------------------------------------------------
 
@@ -734,12 +1025,32 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
     if (category === 'Users') {
       console.log(`[${timestamp()}] [DETERMINISTIC] Running Phase 3 Engine for ${category}...`);
       await addLog(assessmentId, 'info', `Ejecutando análisis determinístico (Fase 3) para ${category}`, category);
-
-      // Execute Deterministic Logic
       allFindings = analyzeUsersDeterministic(data);
-
       console.log(`[${timestamp()}] [DETERMINISTIC] Found ${allFindings.length} mathematically verified findings.`);
       await addLog(assessmentId, 'info', `Análisis determinístico completado: ${allFindings.length} hallazgos encontrados`, category);
+
+    } else if (DETERMINISTIC_CATEGORIES.has(category)) {
+      // v3.0.0: Deterministic analysis for rule-based categories (no LLM needed)
+      console.log(`[${timestamp()}] [DETERMINISTIC] Running rule-based analysis for ${category}...`);
+      await addLog(assessmentId, 'info', `Análisis determinístico (sin LLM) para ${category}`, category);
+
+      switch (category) {
+        case 'DCServicesHealth':
+          allFindings = analyzeDCServicesHealthDeterministic(data);
+          break;
+        case 'DCDiskSpace':
+          allFindings = analyzeDCDiskSpaceDeterministic(data);
+          break;
+        case 'GPOComplexity':
+          allFindings = analyzeGPOComplexityDeterministic(data);
+          break;
+        case 'DuplicateSPNs':
+          allFindings = analyzeDuplicateSPNsDeterministic(data);
+          break;
+      }
+
+      console.log(`[${timestamp()}] [DETERMINISTIC] ${category}: ${allFindings.length} findings (zero hallucination risk)`);
+      await addLog(assessmentId, 'info', `Análisis determinístico completado: ${allFindings.length} hallazgos verificados matemáticamente`, category);
 
     } else {
       // -----------------------------------------------------------------
@@ -754,17 +1065,26 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
         return [];
       }
 
-      const MAX_CHUNK_SIZE = 40; // Reduced to improve AI focus
-      if (data.length > MAX_CHUNK_SIZE) {
-        console.log(`[${timestamp()}] [AI] ${category}: Large dataset (${data.length} items), chunking...`);
-        const chunks = chunkArray(data, MAX_CHUNK_SIZE);
+      // v3.0.0: Token-aware dynamic chunk sizing
+      // Calculate optimal chunk size based on average item size and model context
+      const dataLimit = MODEL_DATA_LIMITS[provider] || MODEL_DATA_LIMITS['default'];
+      const sampleSize = Math.min(5, data.length);
+      const sampleChars = JSON.stringify(data.slice(0, sampleSize), null, 2).length;
+      const avgItemChars = Math.ceil(sampleChars / sampleSize);
+      // Use 70% of data limit per chunk to leave room for prompt instructions
+      const charsPerChunk = Math.floor(dataLimit * 0.7);
+      const dynamicChunkSize = Math.max(10, Math.min(100, Math.floor(charsPerChunk / avgItemChars)));
+
+      if (data.length > dynamicChunkSize) {
+        console.log(`[${timestamp()}] [AI] ${category}: Large dataset (${data.length} items, ~${avgItemChars} chars/item), chunking at ${dynamicChunkSize} items/chunk (data limit: ${dataLimit})`);
+        const chunks = chunkArray(data, dynamicChunkSize);
         const mergedFindingsMap = new Map();
 
         // v1.7.0: Process chunks with per-chunk validation
         const processChunk = async (chunk, index) => {
           await addLog(assessmentId, 'info', `Analizando bloque ${index + 1}/${chunks.length} (${chunk.length.toLocaleString()} items)`, category);
-          const prompt = buildPrompt(category, chunk);
-          console.log(`[${timestamp()}] [AI] Chunk ${index + 1} prompt: ${prompt.length} chars`);
+          const prompt = buildPrompt(category, chunk, provider);
+          console.log(`[${timestamp()}] [AI] Chunk ${index + 1} prompt: ${prompt.length} chars (data limit: ${MODEL_DATA_LIMITS[provider] || MODEL_DATA_LIMITS['default']})`);
           try {
             // Rate limit protection
             await new Promise(r => setTimeout(r, 1000 * Math.random()));
@@ -787,11 +1107,9 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
           }
         };
 
-        // Sequential Chunk Processing to be safe with limits
-        for (let i = 0; i < chunks.length; i++) {
-          const chunkFindings = await processChunk(chunks[i], i);
+        // v3.0.0: Parallel chunk processing with concurrency limit
+        const mergeChunkFindings = (chunkFindings) => {
           chunkFindings.forEach(f => {
-            // Merge Logic - only validated findings reach here
             let key = f.type_id;
             if (!key && f.cis_control) key = f.cis_control.split(' ')[0];
             if (!key) key = (f.title || '').replace(/^\d+\s+/, '');
@@ -809,19 +1127,33 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
 
               const existingObjects = existing.evidence?.affected_objects || [];
               const newObjects = f.evidence?.affected_objects || [];
-              // Use Set to deduplicate and preserve order
               existing.evidence.affected_objects = [...new Set([...existingObjects, ...newObjects])];
 
-              // Update title with new count
               if (/^\d+/.test(existing.title)) {
                 existing.title = existing.title.replace(/^\d+/, totalCount.toString());
               }
             }
           });
+        };
 
-          // Progress log
-          if (i % 2 === 0) {
-            await addLog(assessmentId, 'info', `Progreso: ${i + 1}/${chunks.length} bloques procesados`, category);
+        // Process in batches of MAX_PARALLEL_CHUNKS
+        for (let batchStart = 0; batchStart < chunks.length; batchStart += MAX_PARALLEL_CHUNKS) {
+          const batchEnd = Math.min(batchStart + MAX_PARALLEL_CHUNKS, chunks.length);
+          const batch = chunks.slice(batchStart, batchEnd);
+
+          console.log(`[${timestamp()}] [AI] ${category}: Processing batch ${Math.floor(batchStart / MAX_PARALLEL_CHUNKS) + 1} (chunks ${batchStart + 1}-${batchEnd} of ${chunks.length})`);
+
+          const batchResults = await Promise.all(
+            batch.map((chunk, idx) => processChunk(chunk, batchStart + idx))
+          );
+
+          batchResults.forEach(chunkFindings => mergeChunkFindings(chunkFindings));
+
+          await addLog(assessmentId, 'info', `Progreso: ${batchEnd}/${chunks.length} bloques procesados (paralelo x${batch.length})`, category);
+
+          // Small delay between batches to respect rate limits
+          if (batchEnd < chunks.length) {
+            await new Promise(r => setTimeout(r, 2000));
           }
         }
 
@@ -831,7 +1163,7 @@ async function analyzeCategory(assessmentId, category, data, options = {}) {
       } else {
         // Small dataset
         console.log(`[${timestamp()}] [AI] ${category}: Small dataset (${data.length} items), processing in single chunk`);
-        const prompt = buildPrompt(category, data);
+        const prompt = buildPrompt(category, data, provider);
         allFindings = await callAI(prompt, provider, model, apiKey);
       }
 
@@ -2894,8 +3226,9 @@ function validateFindings(findings, data, category) {
   return validatedFindings;
 }
 
-function buildPrompt(cat, d) {
-  const str = (v, max) => JSON.stringify(v || [], null, 2).substring(0, max);
+function buildPrompt(cat, d, provider) {
+  const dataLimit = MODEL_DATA_LIMITS[provider] || MODEL_DATA_LIMITS['default'];
+  const str = (v, max) => JSON.stringify(v || [], null, 2).substring(0, max || dataLimit);
 
   const categoryInstructions = {
     Users: `Analiza estos usuarios de Active Directory para identificar vulnerabilidades de seguridad.
@@ -6115,7 +6448,7 @@ Array con objetos de varios Type:
   return `${instruction}
 
 <assessment_data>
-${str(d, 4000)}
+${str(d)}
 </assessment_data>
 
 **INSTRUCCIONES CRÍTICAS PARA TU RESPUESTA:**
