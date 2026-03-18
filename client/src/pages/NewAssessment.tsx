@@ -368,12 +368,50 @@ function Get-ADSiteTopology {
         if ($subnetsWithoutSite.Count -gt 0) { Write-Host "[!] $($subnetsWithoutSite.Count) Subnets are NOT associated with a Site" -ForegroundColor Red }
         if ($emptySites.Count -gt 0) { Write-Host "[!] $($emptySites.Count) Sites have NO Domain Controllers" -ForegroundColor Yellow }
 
+        # Site Links for topology SPOF analysis (TOPO-001)
+        $siteLinks = @()
+        try {
+            $siteLinks = @(Get-ADReplicationSiteLink -Filter * | ForEach-Object {
+                @{
+                    Name = $_.Name
+                    Cost = $_.Cost
+                    ReplicationFrequencyInMinutes = $_.ReplicationFrequencyInMinutes
+                    SitesIncluded = @($_.SitesIncluded | ForEach-Object { ($_ -split ',')[0] -replace 'CN=','' })
+                }
+            })
+            Write-Host "[+] Collected $($siteLinks.Count) Site Links" -ForegroundColor Green
+        } catch {
+            Write-Host "[!] Could not collect Site Links: $_" -ForegroundColor Yellow
+        }
+
+        # Identify Single Points of Failure (articulation points in site graph)
+        $singlePointsOfFailure = @()
+        foreach ($site in $sites) {
+            $linksForSite = @($siteLinks | Where-Object { $_.SitesIncluded -contains $site.Name })
+            if ($linksForSite.Count -eq 1) {
+                $singlePointsOfFailure += $site.Name
+            }
+        }
+
+        # Identify hub sites (connected to 3+ other sites)
+        $hubSites = @()
+        foreach ($site in $sites) {
+            $linksForSite = @($siteLinks | Where-Object { $_.SitesIncluded -contains $site.Name })
+            if ($linksForSite.Count -ge 3) {
+                $connectedSites = @($linksForSite | ForEach-Object { $_.SitesIncluded | Where-Object { $_ -ne $site.Name } })
+                $hubSites += @{ Name = $site.Name; ConnectedTo = $connectedSites; LinkCount = $linksForSite.Count }
+            }
+        }
+
         return @{
             Sites = $sites
             Subnets = $subnets
+            SiteLinks = $siteLinks
             SitesWithoutSubnets = $sitesWithoutSubnets
             SubnetsWithoutSite = $subnetsWithoutSite
             EmptySites = $emptySites
+            SinglePointsOfFailure = $singlePointsOfFailure
+            HubSites = $hubSites
         }
     } catch {
         Write-Host "[!] Error collecting site topology: $_" -ForegroundColor Red
@@ -2907,6 +2945,33 @@ function Get-FSMORolesHealth {
             $fsmoHealth.RIDPoolStatus = @{ Error = "Could not query RID pool" }
         }
 
+        # RID Pool per DC - critical for isolated sites (FSMO-002)
+        try {
+            $ridPerDC = [System.Collections.Generic.List[object]]::new()
+            foreach ($dcItem in (Get-ADDomainController -Filter *)) {
+                try {
+                    $ridSet = Get-ADObject "CN=RID Set,CN=$($dcItem.Name),OU=Domain Controllers,$($domain.DistinguishedName)" -Server $dcItem.HostName -Properties rIDAllocationPool, rIDNextRID -ErrorAction Stop
+                    $pStart = [int64]($ridSet.rIDAllocationPool) -band 0xFFFFFFFF
+                    $pEnd = [int64]($ridSet.rIDAllocationPool) -shr 32
+                    $nRID = $ridSet.rIDNextRID
+                    $ridPerDC.Add(@{
+                        DC = $dcItem.Name
+                        Site = $dcItem.Site
+                        PoolStart = $pStart
+                        PoolEnd = $pEnd
+                        NextRID = $nRID
+                        Remaining = $pEnd - $nRID
+                        PercentUsed = if ($pEnd -gt $pStart) { [math]::Round(($nRID - $pStart) / ($pEnd - $pStart) * 100, 1) } else { 0 }
+                    })
+                } catch {
+                    $ridPerDC.Add(@{ DC = $dcItem.Name; Site = $dcItem.Site; Error = $_.Exception.Message })
+                }
+            }
+            $fsmoHealth.RIDPoolPerDC = @($ridPerDC)
+        } catch {
+            $fsmoHealth.RIDPoolPerDC = @()
+        }
+
         Write-Host "[+] FSMO Health Check completed. Overall: $($fsmoHealth.OverallHealth)" -ForegroundColor $(if ($fsmoHealth.OverallHealth -eq "Healthy") { "Green" } else { "Red" })
         return $fsmoHealth
 
@@ -3239,6 +3304,1199 @@ function Get-LingeringObjectsRisk {
         $lingeringInfo.Indicators = @($indicatorsList)
         $lingeringInfo.Error = $_.Exception.Message
         return $lingeringInfo
+    }
+}
+
+# =============================================================================
+# INCIDENT-BASED CHECKS (from production certus.edu.pe findings)
+# =============================================================================
+
+function Get-KerberosAuthFailures {
+    <#
+    .SYNOPSIS
+        Recolecta eventos Kerberos 4771 (pre-auth failures) para detectar
+        brute force, secure channel roto, y RODC cache desactualizado.
+    .NOTES
+        KERB-001: Based on real incident - 112+ events in 24h affecting machine accounts
+    #>
+    Write-Host "\`n[*] Collecting Kerberos Pre-Auth Failure Events (4771)..." -ForegroundColor Green
+
+    $kerbFailures = @{
+        Events = @()
+        Summary = @{
+            TotalEvents = 0
+            MachineAccountFailures = 0
+            UserAccountFailures = 0
+            TopAccounts = @()
+            TopSourceIPs = @()
+            FailureCodeDistribution = @()
+        }
+    }
+
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{
+            LogName = 'Security'
+            Id = 4771
+            StartTime = (Get-Date).AddHours(-24)
+        } -MaxEvents 500 -ErrorAction SilentlyContinue | ForEach-Object {
+            @{
+                TimeCreated = $_.TimeCreated.ToString('o')
+                Account = $_.Properties[0].Value
+                Service = $_.Properties[1].Value
+                FailureCode = '0x{0:X}' -f [int]$_.Properties[4].Value
+                ClientIP = $_.Properties[6].Value
+                IsMachineAccount = $_.Properties[0].Value -like '*$'
+                IsRODCAccount = $_.Properties[0].Value -like 'krbtgt_*'
+            }
+        })
+
+        if ($events.Count -gt 0) {
+            $kerbFailures.Events = @($events | Select-Object -First 100)
+            $kerbFailures.Summary.TotalEvents = $events.Count
+            $kerbFailures.Summary.MachineAccountFailures = @($events | Where-Object { $_.IsMachineAccount -and -not $_.IsRODCAccount }).Count
+            $kerbFailures.Summary.UserAccountFailures = @($events | Where-Object { -not $_.IsMachineAccount -and -not $_.IsRODCAccount }).Count
+
+            $kerbFailures.Summary.TopAccounts = @($events | Group-Object Account | Sort-Object Count -Descending | Select-Object -First 10 | ForEach-Object {
+                @{ Account = $_.Name; Count = $_.Count; IsMachine = $_.Name -like '*$'; IsRODC = $_.Name -like 'krbtgt_*' }
+            })
+
+            $kerbFailures.Summary.TopSourceIPs = @($events | Where-Object { $_.ClientIP } | Group-Object ClientIP | Sort-Object Count -Descending | Select-Object -First 10 | ForEach-Object {
+                @{ IP = $_.Name; Count = $_.Count }
+            })
+
+            $kerbFailures.Summary.FailureCodeDistribution = @($events | Group-Object FailureCode | Sort-Object Count -Descending | ForEach-Object {
+                $codeDesc = switch ($_.Name) {
+                    '0x18' { 'Wrong password / Secure channel mismatch' }
+                    '0x12' { 'Account disabled or expired' }
+                    '0x17' { 'Password expired' }
+                    '0x6'  { 'Account not found' }
+                    '0x25' { 'Clock skew too great' }
+                    default { 'Other' }
+                }
+                @{ Code = $_.Name; Count = $_.Count; Description = $codeDesc }
+            })
+        }
+
+        Write-Host "[+] Collected $($kerbFailures.Summary.TotalEvents) Kerberos 4771 events" -ForegroundColor $(if ($kerbFailures.Summary.TotalEvents -gt 50) { "Yellow" } else { "Green" })
+        return $kerbFailures
+    } catch {
+        Write-Host "[!] Error collecting Kerberos events: $_" -ForegroundColor Yellow
+        return $kerbFailures
+    }
+}
+
+function Get-SecureChannelHealth {
+    <#
+    .SYNOPSIS
+        Detecta cuentas de máquina con secure channel potencialmente roto.
+    .DESCRIPTION
+        Si PasswordLastSet > 45 días y la máquina está activa (LastLogon reciente),
+        el secure channel puede estar desincronizado — especialmente si el DC local
+        estuvo aislado por problemas de replicación.
+    .NOTES
+        KERB-002: Based on real incident - machines in SJL site with 110-day isolated DC
+    #>
+    Write-Host "\`n[*] Analyzing Machine Account Secure Channel Health..." -ForegroundColor Green
+
+    $secureChannelHealth = @{
+        StaleAccounts = @()
+        Summary = @{
+            TotalActiveComputers = 0
+            StaleCount = 0
+            CriticalCount = 0
+            HighCount = 0
+        }
+    }
+
+    try {
+        $threshold45 = (Get-Date).AddDays(-45)
+        $activeThreshold = (Get-Date).AddDays(-7)
+
+        $staleComputers = @(Get-ADComputer -Filter {PasswordLastSet -lt $threshold45 -and Enabled -eq $true} -Properties PasswordLastSet, LastLogonDate, OperatingSystem, DistinguishedName -ErrorAction Stop |
+            Where-Object { $_.LastLogonDate -and $_.LastLogonDate -gt $activeThreshold } |
+            ForEach-Object {
+                $daysSincePwd = [math]::Round(((Get-Date) - $_.PasswordLastSet).TotalDays)
+                # Extract site from OU path heuristic
+                $ouPath = ($_.DistinguishedName -split ',',2)[1]
+                @{
+                    Name = $_.Name
+                    PasswordLastSet = $_.PasswordLastSet.ToString('o')
+                    LastLogonDate = $_.LastLogonDate.ToString('o')
+                    DaysSincePasswordChange = $daysSincePwd
+                    OperatingSystem = $_.OperatingSystem
+                    OU = $ouPath
+                    Severity = if ($daysSincePwd -gt 90) { "CRITICAL" } elseif ($daysSincePwd -gt 60) { "HIGH" } else { "MEDIUM" }
+                }
+            })
+
+        $secureChannelHealth.StaleAccounts = @($staleComputers | Sort-Object DaysSincePasswordChange -Descending | Select-Object -First 50)
+        $secureChannelHealth.Summary.StaleCount = $staleComputers.Count
+        $secureChannelHealth.Summary.CriticalCount = @($staleComputers | Where-Object { $_.Severity -eq "CRITICAL" }).Count
+        $secureChannelHealth.Summary.HighCount = @($staleComputers | Where-Object { $_.Severity -eq "HIGH" }).Count
+
+        try {
+            $secureChannelHealth.Summary.TotalActiveComputers = @(Get-ADComputer -Filter {Enabled -eq $true} -ResultSetSize 5000).Count
+        } catch { $secureChannelHealth.Summary.TotalActiveComputers = -1 }
+
+        Write-Host "[+] Found $($secureChannelHealth.Summary.StaleCount) machines with potentially stale secure channels" -ForegroundColor $(if ($secureChannelHealth.Summary.StaleCount -gt 0) { "Yellow" } else { "Green" })
+        return $secureChannelHealth
+    } catch {
+        Write-Host "[!] Error analyzing secure channels: $_" -ForegroundColor Yellow
+        return $secureChannelHealth
+    }
+}
+
+function Get-DCDiagHealth {
+    <#
+    .SYNOPSIS
+        Ejecuta DCDiag contra todos los DCs y parsea resultados.
+    .DESCRIPTION
+        Identifica tests pasados/fallidos por DC para un health check integral.
+    .NOTES
+        HEALTH-001: DCDiag Comprehensive Health Check
+    #>
+    Write-Host "\`n[*] Running DCDiag Health Checks..." -ForegroundColor Green
+
+    $dcDiagHealth = @{
+        DCs = @()
+        Summary = @{
+            TotalDCs = 0
+            AllPassed = 0
+            WithFailures = 0
+            CriticalTests = @('Replications', 'Services', 'Advertising', 'NetLogons')
+            HighTests = @('FrsEvent', 'DFSREvent', 'RidManager')
+        }
+    }
+
+    try {
+        $allDCs = @(Get-ADDomainController -Filter * -ErrorAction Stop)
+        $dcDiagHealth.Summary.TotalDCs = $allDCs.Count
+
+        foreach ($dc in $allDCs) {
+            Write-Host "[*] DCDiag for $($dc.Name)..." -ForegroundColor Cyan
+            $dcResult = @{
+                DCName = $dc.Name
+                Site = $dc.Site
+                Tests = @()
+                PassedCount = 0
+                FailedCount = 0
+                FailedTests = @()
+            }
+
+            try {
+                $output = dcdiag /s:$($dc.HostName) /c 2>&1 | Out-String
+                # Parse each test result
+                $testPattern = '\.\.\.\.\.\.\.\.\.\.\.\.\.\.\. ([^\s]+) (passed|failed) test (\S+)'
+                $matches = [regex]::Matches($output, $testPattern)
+
+                foreach ($m in $matches) {
+                    $testResult = @{
+                        Server = $m.Groups[1].Value
+                        Status = $m.Groups[2].Value
+                        TestName = $m.Groups[3].Value
+                    }
+                    $dcResult.Tests += $testResult
+                    if ($testResult.Status -eq 'passed') {
+                        $dcResult.PassedCount++
+                    } else {
+                        $dcResult.FailedCount++
+                        $dcResult.FailedTests += $testResult.TestName
+                    }
+                }
+
+                if ($dcResult.FailedCount -eq 0) {
+                    $dcDiagHealth.Summary.AllPassed++
+                } else {
+                    $dcDiagHealth.Summary.WithFailures++
+                }
+            } catch {
+                $dcResult.Tests += @{ Server = $dc.Name; Status = 'error'; TestName = 'CONNECTION'; Error = $_.ToString() }
+                $dcResult.FailedCount++
+                $dcResult.FailedTests += 'CONNECTION'
+                $dcDiagHealth.Summary.WithFailures++
+            }
+
+            $dcDiagHealth.DCs += $dcResult
+        }
+
+        Write-Host "[+] DCDiag completed: $($dcDiagHealth.Summary.AllPassed)/$($dcDiagHealth.Summary.TotalDCs) DCs passed all tests" -ForegroundColor $(if ($dcDiagHealth.Summary.WithFailures -gt 0) { "Yellow" } else { "Green" })
+        return $dcDiagHealth
+    } catch {
+        Write-Host "[!] Error running DCDiag: $_" -ForegroundColor Yellow
+        return $dcDiagHealth
+    }
+}
+
+function Get-RODCHealth {
+    <#
+    .SYNOPSIS
+        Analiza la salud de RODCs, su Password Replication Policy y estado de caché.
+    .DESCRIPTION
+        Identifica RODCs, verifica su replicación, PRP y cuentas cacheadas.
+    .NOTES
+        RODC-001: RODC Password Replication Policy and Cache Health
+    #>
+    Write-Host "\`n[*] Analyzing RODC Health..." -ForegroundColor Green
+
+    $rodcHealth = @{
+        RODCs = @()
+        Summary = @{
+            TotalRODCs = 0
+            HealthyRODCs = 0
+            StaleRODCs = 0
+            EmptyPRP = 0
+        }
+    }
+
+    try {
+        $rodcs = @(Get-ADDomainController -Filter {IsReadOnly -eq $true} -ErrorAction Stop)
+        $rodcHealth.Summary.TotalRODCs = $rodcs.Count
+
+        if ($rodcs.Count -eq 0) {
+            Write-Host "[+] No RODCs found in domain" -ForegroundColor Green
+            return $rodcHealth
+        }
+
+        foreach ($rodc in $rodcs) {
+            Write-Host "[*] Checking RODC: $($rodc.Name)..." -ForegroundColor Cyan
+            $rodcInfo = @{
+                Name = $rodc.Name
+                Site = $rodc.Site
+                HostName = $rodc.HostName
+                OperatingSystem = $rodc.OperatingSystem
+                IsGlobalCatalog = $rodc.IsGlobalCatalog
+                AllowedPRP = @()
+                DeniedPRP = @()
+                CachedAccountsCount = 0
+                ReplicationStatus = "Unknown"
+                LastReplication = $null
+            }
+
+            try {
+                # Password Replication Policy - Allowed
+                $allowedPRP = @(Get-ADDomainControllerPasswordReplicationPolicy -Identity $rodc.Name -Allowed -ErrorAction SilentlyContinue | Select-Object Name, ObjectClass, DistinguishedName)
+                $rodcInfo.AllowedPRP = @($allowedPRP | ForEach-Object { @{ Name = $_.Name; Type = $_.ObjectClass } })
+
+                # Password Replication Policy - Denied
+                $deniedPRP = @(Get-ADDomainControllerPasswordReplicationPolicy -Identity $rodc.Name -Denied -ErrorAction SilentlyContinue | Select-Object Name, ObjectClass)
+                $rodcInfo.DeniedPRP = @($deniedPRP | ForEach-Object { @{ Name = $_.Name; Type = $_.ObjectClass } })
+
+                if ($rodcInfo.AllowedPRP.Count -eq 0) {
+                    $rodcHealth.Summary.EmptyPRP++
+                }
+
+                # Cached accounts count
+                try {
+                    $cached = @(Get-ADDomainControllerPasswordReplicationPolicyUsage -Identity $rodc.Name -RevealedAccounts -ErrorAction SilentlyContinue)
+                    $rodcInfo.CachedAccountsCount = $cached.Count
+                } catch { $rodcInfo.CachedAccountsCount = -1 }
+
+                # Check replication status
+                try {
+                    $replResult = repadmin /showrepl $rodc.HostName 2>&1 | Out-String
+                    if ($replResult -match 'Last attempt.*was successful') {
+                        $rodcInfo.ReplicationStatus = "OK"
+                        $rodcHealth.Summary.HealthyRODCs++
+                    } elseif ($replResult -match 'Last attempt.*failed') {
+                        $rodcInfo.ReplicationStatus = "FAILED"
+                        $rodcHealth.Summary.StaleRODCs++
+                    }
+                    # Extract last replication time
+                    if ($replResult -match 'Last success @ (.+)') {
+                        $rodcInfo.LastReplication = $Matches[1].Trim()
+                    }
+                } catch {
+                    $rodcInfo.ReplicationStatus = "UNREACHABLE"
+                    $rodcHealth.Summary.StaleRODCs++
+                }
+            } catch {
+                $rodcInfo.ReplicationStatus = "ERROR"
+                $rodcHealth.Summary.StaleRODCs++
+            }
+
+            $rodcHealth.RODCs += $rodcInfo
+        }
+
+        Write-Host "[+] RODC analysis: $($rodcHealth.Summary.TotalRODCs) RODCs, $($rodcHealth.Summary.HealthyRODCs) healthy, $($rodcHealth.Summary.StaleRODCs) stale" -ForegroundColor $(if ($rodcHealth.Summary.StaleRODCs -gt 0) { "Yellow" } else { "Green" })
+        return $rodcHealth
+    } catch {
+        Write-Host "[!] Error analyzing RODCs: $_" -ForegroundColor Yellow
+        return $rodcHealth
+    }
+}
+
+function Get-DCConnectivityMatrix {
+    <#
+    .SYNOPSIS
+        Verifica conectividad de puertos críticos entre DCs.
+    .DESCRIPTION
+        Prueba puertos RPC(135), LDAP(389), SMB(445), Kerberos(88), LDAPS(636), GC(3268)
+        desde el DC de recolección hacia todos los demás DCs.
+    .NOTES
+        TOPO-002: DC Connectivity Matrix
+    #>
+    Write-Host "\`n[*] Testing DC Connectivity Matrix..." -ForegroundColor Green
+
+    $matrix = @{
+        SourceDC = $env:COMPUTERNAME
+        Targets = @()
+        Summary = @{
+            TotalDCs = 0
+            FullyReachable = 0
+            PartiallyReachable = 0
+            Unreachable = 0
+        }
+        CriticalPorts = @(
+            @{ Port = 135;  Service = "RPC Endpoint Mapper" },
+            @{ Port = 389;  Service = "LDAP" },
+            @{ Port = 445;  Service = "SMB" },
+            @{ Port = 88;   Service = "Kerberos" },
+            @{ Port = 636;  Service = "LDAPS" },
+            @{ Port = 3268; Service = "Global Catalog" }
+        )
+    }
+
+    try {
+        $allDCs = @(Get-ADDomainController -Filter * -ErrorAction Stop)
+        $matrix.Summary.TotalDCs = $allDCs.Count
+        $ports = @(135, 389, 445, 88, 636, 3268)
+
+        foreach ($dc in $allDCs) {
+            Write-Host "[*] Testing connectivity to $($dc.Name)..." -ForegroundColor Cyan
+            $target = @{
+                DCName = $dc.Name
+                HostName = $dc.HostName
+                Site = $dc.Site
+                IPv4Address = $dc.IPv4Address
+                PortResults = @()
+                OpenPorts = 0
+                ClosedPorts = 0
+                Status = "Unknown"
+            }
+
+            foreach ($port in $ports) {
+                try {
+                    $tcp = New-Object System.Net.Sockets.TcpClient
+                    $connect = $tcp.BeginConnect($dc.HostName, $port, $null, $null)
+                    $wait = $connect.AsyncWaitHandle.WaitOne(2000, $false)
+                    if ($wait -and $tcp.Connected) {
+                        $target.PortResults += @{ Port = $port; Status = "Open" }
+                        $target.OpenPorts++
+                    } else {
+                        $target.PortResults += @{ Port = $port; Status = "Closed" }
+                        $target.ClosedPorts++
+                    }
+                    $tcp.Close()
+                } catch {
+                    $target.PortResults += @{ Port = $port; Status = "Error"; Error = $_.ToString() }
+                    $target.ClosedPorts++
+                }
+            }
+
+            if ($target.ClosedPorts -eq 0) {
+                $target.Status = "FullyReachable"
+                $matrix.Summary.FullyReachable++
+            } elseif ($target.OpenPorts -gt 0) {
+                $target.Status = "PartiallyReachable"
+                $matrix.Summary.PartiallyReachable++
+            } else {
+                $target.Status = "Unreachable"
+                $matrix.Summary.Unreachable++
+            }
+
+            $matrix.Targets += $target
+        }
+
+        Write-Host "[+] Connectivity: $($matrix.Summary.FullyReachable) full, $($matrix.Summary.PartiallyReachable) partial, $($matrix.Summary.Unreachable) unreachable" -ForegroundColor $(if ($matrix.Summary.Unreachable -gt 0) { "Red" } elseif ($matrix.Summary.PartiallyReachable -gt 0) { "Yellow" } else { "Green" })
+        return $matrix
+    } catch {
+        Write-Host "[!] Error testing connectivity: $_" -ForegroundColor Yellow
+        return $matrix
+    }
+}
+
+function Get-OrphanedDCs {
+    <#
+    .SYNOPSIS
+        Detecta DCs huérfanos/inaccesibles que generan errores 58/1722 en replicación.
+    .NOTES
+        Based on grupotls.edu incident: SVR-ADTLS (error 58) causing forest-wide replication delays.
+    #>
+    Write-Host "\`n[*] Detecting Orphaned/Unreachable DCs..." -ForegroundColor Green
+    $results = @()
+    try {
+        $allDCs = @(Get-ADDomainController -Filter * -ErrorAction Stop)
+        foreach ($dc in $allDCs) {
+            try {
+                $isReachable = Test-Connection -ComputerName $dc.HostName -Count 1 -Quiet -ErrorAction SilentlyContinue
+                $ldapReachable = $false
+                $rpcReachable = $false
+
+                if ($isReachable) {
+                    try {
+                        $tcp = New-Object System.Net.Sockets.TcpClient
+                        $connect = $tcp.BeginConnect($dc.IPv4Address, 389, $null, $null)
+                        $wait = $connect.AsyncWaitHandle.WaitOne(2000, $false)
+                        $ldapReachable = ($wait -and $tcp.Connected)
+                        $tcp.Close()
+                    } catch { $ldapReachable = $false }
+
+                    try {
+                        $tcp = New-Object System.Net.Sockets.TcpClient
+                        $connect = $tcp.BeginConnect($dc.IPv4Address, 135, $null, $null)
+                        $wait = $connect.AsyncWaitHandle.WaitOne(2000, $false)
+                        $rpcReachable = ($wait -and $tcp.Connected)
+                        $tcp.Close()
+                    } catch { $rpcReachable = $false }
+                }
+
+                $replStatus = "Unknown"
+                $replError = ""
+                try {
+                    $repl = repadmin /showrepl $dc.HostName 2>&1 | Out-String
+                    if ($repl -match "failed|error|no inbound") {
+                        $replStatus = "Errors"
+                        $replError = ($repl | Select-String "failed|error" | Select-Object -First 3) -join "; "
+                    } else { $replStatus = "OK" }
+                } catch {
+                    $replStatus = "Unreachable"
+                    $replError = $_.Exception.Message
+                }
+
+                $results += @{
+                    Name = $dc.Name
+                    HostName = $dc.HostName
+                    Domain = $dc.Domain
+                    Site = $dc.Site
+                    IPv4Address = $dc.IPv4Address
+                    IsGlobalCatalog = $dc.IsGlobalCatalog
+                    OperatingSystem = $dc.OperatingSystem
+                    PingReachable = $isReachable
+                    LDAPReachable = $ldapReachable
+                    RPCReachable = $rpcReachable
+                    ReplicationStatus = $replStatus
+                    ReplicationError = $replError
+                    IsProblematic = (-not $isReachable -or -not $ldapReachable -or -not $rpcReachable -or $replStatus -ne "OK")
+                }
+            } catch {
+                Write-Host "[!] Error checking DC $($dc.Name): $_" -ForegroundColor Yellow
+            }
+        }
+        $problematic = @($results | Where-Object { $_.IsProblematic }).Count
+        Write-Host "[+] Orphaned DC check: $problematic/$($results.Count) DCs with issues" -ForegroundColor $(if ($problematic -gt 0) { "Red" } else { "Green" })
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-ReplicationLatencyAnalysis {
+    <#
+    .SYNOPSIS
+        Parsea repadmin /replsummary para obtener deltas de latencia y errores por DC.
+    .NOTES
+        Based on grupotls.edu: 35-60min average deltas reduced to 8min after hub-spoke optimization.
+    #>
+    Write-Host "\`n[*] Analyzing Replication Latency (replsummary)..." -ForegroundColor Green
+    $results = @()
+    try {
+        $replSummary = repadmin /replsummary /bysrc /bydest 2>&1
+
+        $inSource = $false
+        $inDest = $false
+        foreach ($line in $replSummary) {
+            $lineStr = $line.ToString()
+            if ($lineStr -match "^Source DSA") { $inSource = $true; $inDest = $false; continue }
+            if ($lineStr -match "^Destination DSA") { $inSource = $false; $inDest = $true; continue }
+            if ($lineStr -match "Experienced the following") { break }
+
+            if (($inSource -or $inDest) -and $lineStr -match '^\s+(\S+)\s+') {
+                $dcName = $Matches[1]
+                $deltaMinutes = 0
+
+                if ($lineStr -match ">60 days") { $deltaMinutes = 86400 }
+                elseif ($lineStr -match '(\d+)h:(\d+)m:(\d+)s') { $deltaMinutes = [int]$Matches[1] * 60 + [int]$Matches[2] }
+                elseif ($lineStr -match '(\d+)m:(\d+)s') { $deltaMinutes = [int]$Matches[1] }
+                elseif ($lineStr -match ':(\d+)s') { $deltaMinutes = 0 }
+
+                $fails = 0; $total = 0; $failPct = 0
+                if ($lineStr -match '(\d+)\s*/\s*(\d+)\s+(\d+)') {
+                    $fails = [int]$Matches[1]; $total = [int]$Matches[2]; $failPct = [int]$Matches[3]
+                }
+
+                $severity = "OK"
+                if ($deltaMinutes -gt 1440) { $severity = "CRITICAL" }
+                elseif ($deltaMinutes -gt 60) { $severity = "HIGH" }
+                elseif ($deltaMinutes -gt 30) { $severity = "MEDIUM" }
+                elseif ($deltaMinutes -gt 15) { $severity = "LOW" }
+                if ($failPct -gt 0) { $severity = "CRITICAL" }
+
+                $results += @{
+                    DCName = $dcName
+                    Direction = if ($inSource) { "Source" } else { "Destination" }
+                    DeltaMinutes = $deltaMinutes
+                    Fails = $fails
+                    Total = $total
+                    FailPercent = $failPct
+                    Severity = $severity
+                    IsProblematic = ($severity -ne "OK" -and $severity -ne "LOW")
+                }
+            }
+        }
+
+        # Capture operational errors (error 58, etc.)
+        $opErrors = $replSummary | ForEach-Object {
+            if ($_.ToString() -match '^\s+(\d+)\s+-\s+(.+)$') {
+                @{
+                    DCName = $Matches[2].Trim()
+                    Direction = "OperationalError"
+                    DeltaMinutes = -1
+                    Fails = -1; Total = -1; FailPercent = 100
+                    Severity = "CRITICAL"
+                    ErrorCode = [int]$Matches[1]
+                    IsProblematic = $true
+                }
+            }
+        }
+        if ($opErrors) { $results += @($opErrors | Where-Object { $_ }) }
+
+        Write-Host "[+] Replication latency: $($results.Count) entries parsed" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-SiteTopologyIssues {
+    <#
+    .SYNOPSIS
+        Detecta Site Links multi-sitio, sitios vacíos, sitios sin subnets, y exceso de conexiones.
+    .NOTES
+        Based on grupotls.edu: 112 connections reduced to 49 after fixing multi-site links to hub-spoke.
+    #>
+    Write-Host "\`n[*] Analyzing Site Topology Issues..." -ForegroundColor Green
+    $results = @()
+    try {
+        $configDN = (Get-ADRootDSE).configurationNamingContext
+
+        # 1. Site Links with too many sites
+        $siteLinks = @(Get-ADReplicationSiteLink -Filter * -Properties * -ErrorAction Stop)
+        foreach ($sl in $siteLinks) {
+            $sites = @($sl.SitesIncluded | ForEach-Object { ($_ -split ',')[0] -replace 'CN=','' })
+            $results += @{
+                Type = "SiteLink"
+                Name = $sl.Name
+                SiteCount = $sites.Count
+                Sites = ($sites -join ", ")
+                Cost = $sl.Cost
+                ReplicationInterval = $sl.ReplicationFrequencyInMinutes
+                IsMultiSite = ($sites.Count -gt 2)
+                IsProblematic = ($sites.Count -gt 2)
+                Issue = if ($sites.Count -gt 2) { "Site Link has $($sites.Count) sites. Best practice: max 2 (hub-spoke)" } else { "" }
+            }
+        }
+
+        # 2. Empty sites (no DCs)
+        $allSites = @(Get-ADReplicationSite -Filter * -ErrorAction Stop)
+        foreach ($site in $allSites) {
+            $serversInSite = @(Get-ADObject -Filter 'objectClass -eq "server"' -SearchBase "CN=Servers,CN=$($site.Name),CN=Sites,$configDN" -ErrorAction SilentlyContinue)
+            if ($serversInSite.Count -eq 0) {
+                $results += @{
+                    Type = "EmptySite"; Name = $site.Name; SiteCount = 0; Sites = ""
+                    Cost = 0; ReplicationInterval = 0; IsMultiSite = $false
+                    IsProblematic = $true; Issue = "Site without any Domain Controllers"
+                }
+            }
+        }
+
+        # 3. Connection summary (auto vs manual, total)
+        $connections = @(Get-ADObject -Filter 'objectClass -eq "nTDSConnection"' -SearchBase "CN=Sites,$configDN" -Properties fromServer, options -ErrorAction Stop)
+        $autoCount = @($connections | Where-Object { $_.options -band 1 }).Count
+        $manualCount = $connections.Count - $autoCount
+        $results += @{
+            Type = "ConnectionSummary"; Name = "ReplicationConnections"
+            SiteCount = $allSites.Count; Sites = ""
+            Cost = 0; ReplicationInterval = 0; IsMultiSite = $false
+            TotalConnections = $connections.Count
+            AutoConnections = $autoCount; ManualConnections = $manualCount
+            IsProblematic = ($connections.Count -gt ($allSites.Count * 5))
+            Issue = if ($connections.Count -gt ($allSites.Count * 5)) { "Excess connections: $($connections.Count) for $($allSites.Count) sites" } else { "" }
+        }
+
+        # 4. Preferred Bridgehead Servers
+        foreach ($site in $allSites) {
+            $siteServers = @(Get-ADObject -Filter 'objectClass -eq "server"' -SearchBase "CN=Servers,CN=$($site.Name),CN=Sites,$configDN" -Properties bridgeheadTransportList -ErrorAction SilentlyContinue)
+            $preferredBH = @($siteServers | Where-Object { $_.bridgeheadTransportList })
+            foreach ($bh in $preferredBH) {
+                $results += @{
+                    Type = "PreferredBridgehead"; Name = $bh.Name; Sites = $site.Name
+                    SiteCount = 0; Cost = 0; ReplicationInterval = 0; IsMultiSite = $false
+                    IsProblematic = $false; Issue = "Preferred Bridgehead Server in site $($site.Name)"
+                }
+            }
+        }
+
+        Write-Host "[+] Site topology: $(@($results | Where-Object { $_.IsProblematic }).Count) issues found" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-DCDNSResolutionIssues {
+    <#
+    .SYNOPSIS
+        Detecta DCs con problemas de resolución DNS (loopback, mismatch, fallo).
+    .NOTES
+        Based on grupotls.edu: adgrupotls02 resolving to ::1 (IPv6 loopback).
+    #>
+    Write-Host "\`n[*] Checking DC DNS Resolution..." -ForegroundColor Green
+    $results = @()
+    try {
+        $allDCs = @(Get-ADDomainController -Filter * -ErrorAction Stop)
+        foreach ($dc in $allDCs) {
+            $resolvedIP = ""
+            $hasIPv4 = $false
+            $isLoopback = $false
+
+            try {
+                $dns = Resolve-DnsName -Name $dc.HostName -Type A -ErrorAction Stop
+                $resolvedIP = ($dns | Where-Object { $_.QueryType -eq "A" } | Select-Object -First 1).IPAddress
+                $hasIPv4 = ($resolvedIP -and $resolvedIP -ne "")
+            } catch { $resolvedIP = "DNS_RESOLUTION_FAILED" }
+
+            $registeredIP = $dc.IPv4Address
+            $isLoopback = ($registeredIP -match "^::1$|^127\.|^0\.0\.0\.0$")
+            $isMismatch = ($hasIPv4 -and $resolvedIP -ne $registeredIP -and -not $isLoopback)
+
+            $results += @{
+                Name = $dc.Name; HostName = $dc.HostName; Domain = $dc.Domain; Site = $dc.Site
+                RegisteredIP = $registeredIP; ResolvedIP = $resolvedIP
+                IsLoopback = $isLoopback; IsDNSMismatch = $isMismatch
+                HasFSMORoles = ($dc.OperationMasterRoles.Count -gt 0)
+                FSMORoles = ($dc.OperationMasterRoles -join ", ")
+                IsProblematic = ($isLoopback -or $isMismatch -or $resolvedIP -eq "DNS_RESOLUTION_FAILED")
+            }
+        }
+        Write-Host "[+] DNS resolution: $(@($results | Where-Object { $_.IsProblematic }).Count) DCs with issues" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-TrustHealthDetailed {
+    <#
+    .SYNOPSIS
+        Análisis detallado de trusts con verificación DNS y nltest.
+    .NOTES
+        Based on grupotls.edu: campustls.local trust to BTECHCLOUD.PE broken (ERROR_NO_SUCH_DOMAIN 1355).
+    #>
+    Write-Host "\`n[*] Analyzing Trust Health (Detailed)..." -ForegroundColor Green
+    $results = @()
+    try {
+        $forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()
+        foreach ($domain in $forest.Domains) {
+            try {
+                $trusts = $domain.GetAllTrustRelationships()
+                foreach ($trust in $trusts) {
+                    $dnsResolvable = $false
+                    $targetReachable = $false
+                    $nltestError = ""
+
+                    try {
+                        $dns = Resolve-DnsName -Name "_ldap._tcp.dc._msdcs.$($trust.TargetName)" -Type SRV -ErrorAction Stop
+                        $dnsResolvable = $true
+                    } catch { $dnsResolvable = $false }
+
+                    try {
+                        $nltest = nltest /dsgetdc:$($trust.TargetName) 2>&1 | Out-String
+                        $targetReachable = -not ($nltest -match "ERROR|failed")
+                        if ($nltest -match "(ERROR_\S+)") { $nltestError = $Matches[1] }
+                    } catch { $targetReachable = $false }
+
+                    $isIntraForest = ($trust.TrustType.ToString() -match "TreeRoot|ParentChild")
+
+                    $results += @{
+                        SourceDomain = $trust.SourceName
+                        TargetDomain = $trust.TargetName
+                        TrustType = $trust.TrustType.ToString()
+                        TrustDirection = $trust.TrustDirection.ToString()
+                        DNSResolvable = $dnsResolvable
+                        TargetReachable = $targetReachable
+                        NltestError = $nltestError
+                        IsIntraForest = $isIntraForest
+                        IsProblematic = (-not $dnsResolvable -or -not $targetReachable)
+                    }
+                }
+            } catch {
+                Write-Host "[!] Error processing trusts for $($domain.Name): $_" -ForegroundColor Yellow
+            }
+        }
+        Write-Host "[+] Trust health: $(@($results | Where-Object { $_.IsProblematic }).Count) broken trusts" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-DomainHealthSummary {
+    <#
+    .SYNOPSIS
+        Analiza la salud de cada dominio del forest: DCs, usuarios, test accounts, GPOs.
+    .NOTES
+        Based on grupotls.edu: ucaladmin.local and ucalad.local were empty/obsolete domains decommissioned.
+    #>
+    Write-Host "\`n[*] Analyzing Domain Health Summary..." -ForegroundColor Green
+    $results = @()
+    try {
+        $forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()
+        foreach ($domain in $forest.Domains) {
+            try {
+                $dcs = @($domain.DomainControllers)
+                $userCount = 0; $testUserCount = 0; $computerCount = 0; $gpoCount = 0
+                $dcIssues = @()
+
+                try { $users = @(Get-ADUser -Filter * -Server $domain.Name -ErrorAction Stop); $userCount = $users.Count
+                    $testUserCount = @($users | Where-Object { $_.Name -match "test|prueba|aaaaa|temp|demo" }).Count
+                } catch {}
+                try { $computerCount = @(Get-ADComputer -Filter * -Server $domain.Name -ErrorAction Stop | Where-Object { $_.DistinguishedName -notmatch "OU=Domain Controllers" }).Count } catch {}
+                try { $gpoCount = @(Get-GPO -All -Domain $domain.Name -ErrorAction Stop).Count } catch {}
+
+                foreach ($dc in $dcs) {
+                    $reachable = Test-Connection -ComputerName $dc.Name -Count 1 -Quiet -ErrorAction SilentlyContinue
+                    if (-not $reachable) { $dcIssues += "$($dc.Name) (unreachable)" }
+                }
+
+                $results += @{
+                    DomainName = $domain.Name
+                    DCCount = $dcs.Count
+                    UserCount = $userCount; TestUserCount = $testUserCount
+                    ComputerCount = $computerCount; GPOCount = $gpoCount
+                    HasSingleDC = ($dcs.Count -eq 1)
+                    HasDeadDCs = ($dcIssues.Count -gt 0)
+                    DCIssues = ($dcIssues -join "; ")
+                    HasOnlyTestUsers = ($userCount -gt 0 -and $testUserCount -gt ($userCount * 0.5))
+                    IsForestRoot = ($domain.Name -eq $forest.Name)
+                    IsProblematic = ($dcs.Count -eq 1 -or $dcIssues.Count -gt 0 -or ($userCount -gt 0 -and $testUserCount -gt ($userCount * 0.5)))
+                }
+            } catch {
+                Write-Host "[!] Error processing domain $($domain.Name): $_" -ForegroundColor Yellow
+            }
+        }
+        Write-Host "[+] Domain health: $($results.Count) domains analyzed" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-DCServicesHealth {
+    <#
+    .SYNOPSIS
+        Verifica que los servicios críticos de AD estén corriendo en todos los DCs.
+    .NOTES
+        Higiene: servicios detenidos = DC funcionalmente inactivo sin que nadie lo note.
+    #>
+    Write-Host "\`n[*] Checking DC Services Health..." -ForegroundColor Green
+    try {
+        $results = @()
+        $criticalServices = @('NTDS', 'DNS', 'Netlogon', 'DFSR', 'KDC', 'W32Time', 'IsmServ', 'SamSs')
+        $dcs = Get-ADDomainController -Filter *
+        foreach ($dc in $dcs) {
+            $dcResult = @{
+                DCName = $dc.HostName
+                Site = $dc.Site
+                Services = @()
+                StoppedCount = 0
+                IsProblematic = $false
+            }
+            try {
+                $services = Get-Service -ComputerName $dc.HostName -Name $criticalServices -ErrorAction SilentlyContinue
+                foreach ($svc in $services) {
+                    $svcInfo = @{
+                        Name = $svc.Name
+                        DisplayName = $svc.DisplayName
+                        Status = $svc.Status.ToString()
+                        StartType = $svc.StartType.ToString()
+                        IsRunning = ($svc.Status -eq 'Running')
+                    }
+                    $dcResult.Services += $svcInfo
+                    if ($svc.Status -ne 'Running') {
+                        $dcResult.StoppedCount++
+                        $dcResult.IsProblematic = $true
+                    }
+                }
+                # Check for missing services (unreachable or not installed)
+                $foundNames = $services | ForEach-Object { $_.Name }
+                foreach ($expected in $criticalServices) {
+                    if ($expected -notin $foundNames) {
+                        $dcResult.Services += @{
+                            Name = $expected
+                            DisplayName = $expected
+                            Status = 'NotFound'
+                            StartType = 'Unknown'
+                            IsRunning = $false
+                        }
+                        $dcResult.StoppedCount++
+                        $dcResult.IsProblematic = $true
+                    }
+                }
+            } catch {
+                $dcResult.IsProblematic = $true
+                $dcResult.Services += @{
+                    Name = 'ALL'
+                    DisplayName = 'Unreachable'
+                    Status = 'Error'
+                    StartType = 'Unknown'
+                    IsRunning = $false
+                    Error = $_.Exception.Message
+                }
+                $dcResult.StoppedCount = $criticalServices.Count
+            }
+            $results += $dcResult
+        }
+        Write-Host "[+] DC Services: $($results.Count) DCs checked, $(($results | Where-Object { $_.IsProblematic }).Count) with issues" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-DCDiskSpace {
+    <#
+    .SYNOPSIS
+        Verifica espacio en disco de todos los DCs (C:, SYSVOL, NTDS paths).
+    .NOTES
+        Higiene: sin espacio = SYSVOL no replica, NTDS no crece, logs se pierden.
+    #>
+    Write-Host "\`n[*] Checking DC Disk Space..." -ForegroundColor Green
+    try {
+        $results = @()
+        $dcs = Get-ADDomainController -Filter *
+        foreach ($dc in $dcs) {
+            $dcResult = @{
+                DCName = $dc.HostName
+                Site = $dc.Site
+                Drives = @()
+                IsProblematic = $false
+                LowestFreePercent = 100
+            }
+            try {
+                $disks = Get-WmiObject -Class Win32_LogicalDisk -ComputerName $dc.HostName -Filter "DriveType=3" -ErrorAction Stop
+                foreach ($disk in $disks) {
+                    $freePercent = [math]::Round(($disk.FreeSpace / $disk.Size) * 100, 1)
+                    $driveInfo = @{
+                        Drive = $disk.DeviceID
+                        TotalGB = [math]::Round($disk.Size / 1GB, 1)
+                        FreeGB = [math]::Round($disk.FreeSpace / 1GB, 1)
+                        FreePercent = $freePercent
+                        IsCritical = ($freePercent -lt 10)
+                        IsWarning = ($freePercent -lt 20)
+                    }
+                    $dcResult.Drives += $driveInfo
+                    if ($freePercent -lt $dcResult.LowestFreePercent) {
+                        $dcResult.LowestFreePercent = $freePercent
+                    }
+                    if ($freePercent -lt 20) {
+                        $dcResult.IsProblematic = $true
+                    }
+                }
+                # Get NTDS and SYSVOL paths
+                try {
+                    $ntdsPath = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters" -Name "DSA Working Directory" -ErrorAction SilentlyContinue)."DSA Working Directory"
+                    $dcResult.NTDSPath = $ntdsPath
+                } catch { }
+            } catch {
+                $dcResult.IsProblematic = $true
+                $dcResult.Error = $_.Exception.Message
+                $dcResult.LowestFreePercent = 0
+            }
+            $results += $dcResult
+        }
+        Write-Host "[+] Disk Space: $($results.Count) DCs checked, $(($results | Where-Object { $_.IsProblematic }).Count) with low space" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-SYSVOLReplicationState {
+    <#
+    .SYNOPSIS
+        Detecta estado de replicación SYSVOL: DFSR vs FRS (deprecado) y estado de sync.
+    .NOTES
+        Higiene: FRS es deuda técnica (deprecado desde 2008 R2). SYSVOL desincronizado = GPOs inconsistentes.
+    #>
+    Write-Host "\`n[*] Checking SYSVOL Replication State..." -ForegroundColor Green
+    try {
+        $results = @{
+            ReplicationMechanism = 'Unknown'
+            IsFRS = $false
+            DCs = @()
+            IsProblematic = $false
+        }
+        # Determine FRS vs DFSR
+        try {
+            $dfsrMembers = Get-ADObject -Filter {objectClass -eq 'msDFSR-Member'} -SearchBase "CN=DFSR-GlobalSettings,CN=System,$((Get-ADDomain).DistinguishedName)" -ErrorAction Stop
+            if ($dfsrMembers) {
+                $results.ReplicationMechanism = 'DFSR'
+                $results.IsFRS = $false
+            }
+        } catch {
+            # If DFSR objects not found, check for FRS
+            try {
+                $frsMembers = Get-ADObject -Filter {objectClass -eq 'nTFRSMember'} -SearchBase "CN=File Replication Service,CN=System,$((Get-ADDomain).DistinguishedName)" -ErrorAction SilentlyContinue
+                if ($frsMembers) {
+                    $results.ReplicationMechanism = 'FRS'
+                    $results.IsFRS = $true
+                    $results.IsProblematic = $true
+                }
+            } catch { }
+        }
+        # Check SYSVOL state per DC
+        $dcs = Get-ADDomainController -Filter *
+        foreach ($dc in $dcs) {
+            $dcState = @{
+                DCName = $dc.HostName
+                Site = $dc.Site
+                SYSVOLReady = $false
+                SYSVOLPath = ''
+                SYSVOLSizeGB = 0
+                IsProblematic = $false
+            }
+            try {
+                $sysvolPath = "\\\\$($dc.HostName)\\SYSVOL"
+                $testPath = Test-Path $sysvolPath -ErrorAction Stop
+                $dcState.SYSVOLReady = $testPath
+                $dcState.SYSVOLPath = $sysvolPath
+                if (-not $testPath) {
+                    $dcState.IsProblematic = $true
+                    $results.IsProblematic = $true
+                }
+                # Get SYSVOL size
+                try {
+                    $sysvolLocal = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
+                        $path = (Get-SmbShare -Name SYSVOL -ErrorAction SilentlyContinue).Path
+                        if ($path -and (Test-Path $path)) {
+                            $size = (Get-ChildItem $path -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+                            [math]::Round($size / 1GB, 2)
+                        } else { 0 }
+                    } -ErrorAction SilentlyContinue
+                    $dcState.SYSVOLSizeGB = $sysvolLocal
+                } catch { }
+            } catch {
+                $dcState.IsProblematic = $true
+                $dcState.Error = $_.Exception.Message
+                $results.IsProblematic = $true
+            }
+            $results.DCs += $dcState
+        }
+        Write-Host "[+] SYSVOL: Mechanism=$($results.ReplicationMechanism), $($results.DCs.Count) DCs checked" -ForegroundColor Green
+        return $results
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @{}
+    }
+}
+
+function Get-GPOComplexityAnalysis {
+    <#
+    .SYNOPSIS
+        Analiza complejidad de GPOs: tamaño, settings count, GPOs vacías, mismatch versiones.
+    .NOTES
+        Higiene: GPOs monolíticas = logon lento, difícil mantenimiento, cambios riesgosos.
+    #>
+    Write-Host "\`n[*] Analyzing GPO Complexity..." -ForegroundColor Green
+    try {
+        $results = @()
+        $gpos = Get-GPO -All -ErrorAction Stop
+        foreach ($gpo in $gpos) {
+            $gpoInfo = @{
+                Name = $gpo.DisplayName
+                Id = $gpo.Id.ToString()
+                Status = $gpo.GpoStatus.ToString()
+                CreationTime = $gpo.CreationTime.ToString('o')
+                ModificationTime = $gpo.ModificationTime.ToString('o')
+                UserVersionDS = $gpo.User.DSVersion
+                UserVersionSysvol = $gpo.User.SysvolVersion
+                ComputerVersionDS = $gpo.Computer.DSVersion
+                ComputerVersionSysvol = $gpo.Computer.SysvolVersion
+                HasVersionMismatch = $false
+                IsEmpty = $false
+                IsUnlinked = $false
+                SettingsCount = 0
+                IsProblematic = $false
+            }
+            # Detect DS vs Sysvol version mismatch
+            if ($gpo.User.DSVersion -ne $gpo.User.SysvolVersion -or $gpo.Computer.DSVersion -ne $gpo.Computer.SysvolVersion) {
+                $gpoInfo.HasVersionMismatch = $true
+                $gpoInfo.IsProblematic = $true
+            }
+            # Detect empty GPOs (both user and computer versions at 0)
+            if ($gpo.User.DSVersion -eq 0 -and $gpo.Computer.DSVersion -eq 0) {
+                $gpoInfo.IsEmpty = $true
+                $gpoInfo.IsProblematic = $true
+            }
+            # Check for links
+            try {
+                [xml]$report = Get-GPOReport -Guid $gpo.Id -ReportType Xml -ErrorAction Stop
+                $links = $report.GPO.LinksTo
+                if (-not $links -or $links.Count -eq 0) {
+                    $gpoInfo.IsUnlinked = $true
+                    $gpoInfo.IsProblematic = $true
+                }
+                # Count settings (approximate via XML nodes)
+                $userSettings = $report.GPO.User.ExtensionData.Extension.ChildNodes.Count
+                $computerSettings = $report.GPO.Computer.ExtensionData.Extension.ChildNodes.Count
+                $gpoInfo.SettingsCount = ($userSettings + $computerSettings)
+                # Flag monolithic GPOs (>50 settings)
+                if ($gpoInfo.SettingsCount -gt 50) {
+                    $gpoInfo.IsProblematic = $true
+                }
+            } catch {
+                $gpoInfo.SettingsCount = -1
+            }
+            $results += $gpoInfo
+        }
+        Write-Host "[+] GPO Complexity: $($results.Count) GPOs analyzed, $(($results | Where-Object { $_.IsProblematic }).Count) with issues" -ForegroundColor Green
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-DuplicateSPNs {
+    <#
+    .SYNOPSIS
+        Detecta Service Principal Names duplicados en el dominio.
+    .NOTES
+        Higiene: SPNs duplicados = autenticación Kerberos falla silenciosamente para esos servicios.
+    #>
+    Write-Host "\`n[*] Checking for Duplicate SPNs..." -ForegroundColor Green
+    try {
+        $results = @{
+            TotalSPNs = 0
+            DuplicateCount = 0
+            Duplicates = @()
+            IsProblematic = $false
+        }
+        # Collect all SPNs with their owners
+        $spnMap = @{}
+        $accounts = Get-ADObject -Filter {ServicePrincipalName -like "*"} -Properties ServicePrincipalName, SamAccountName, ObjectClass
+        foreach ($account in $accounts) {
+            foreach ($spn in $account.ServicePrincipalName) {
+                $results.TotalSPNs++
+                if (-not $spnMap.ContainsKey($spn)) {
+                    $spnMap[$spn] = @()
+                }
+                $spnMap[$spn] += @{
+                    Account = $account.SamAccountName
+                    DN = $account.DistinguishedName
+                    ObjectClass = $account.ObjectClass
+                }
+            }
+        }
+        # Find duplicates
+        foreach ($spn in $spnMap.Keys) {
+            if ($spnMap[$spn].Count -gt 1) {
+                $results.DuplicateCount++
+                $results.IsProblematic = $true
+                $owners = $spnMap[$spn] | ForEach-Object { $_.Account }
+                $results.Duplicates += @{
+                    SPN = $spn
+                    OwnerCount = $spnMap[$spn].Count
+                    Owners = ($owners -join ', ')
+                    ObjectClasses = (($spnMap[$spn] | ForEach-Object { $_.ObjectClass }) -join ', ')
+                    IsProblematic = $true
+                }
+            }
+        }
+        Write-Host "[+] SPNs: $($results.TotalSPNs) total, $($results.DuplicateCount) duplicates found" -ForegroundColor Green
+        return $results
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @{}
+    }
+}
+
+function Get-OrphanedMetadata {
+    <#
+    .SYNOPSIS
+        Detecta metadata residual de dominios/DCs descomisionados.
+    .NOTES
+        Based on grupotls.edu: after decommissioning ucaladmin.local, found orphaned servers,
+        crossRefs, trust objects, and 8 orphaned _msdcs DNS records.
+    #>
+    Write-Host "\`n[*] Detecting Orphaned Metadata..." -ForegroundColor Green
+    $results = @()
+    try {
+        $configDN = (Get-ADRootDSE).configurationNamingContext
+        $forest = [System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest()
+        $activeDomains = @($forest.Domains | ForEach-Object { $_.Name })
+
+        # 1. Orphaned servers in Sites & Services
+        $allServers = @(Get-ADObject -Filter 'objectClass -eq "server"' -SearchBase "CN=Sites,$configDN" -Properties dNSHostName -ErrorAction Stop)
+        foreach ($server in $allServers) {
+            if ($server.dNSHostName) {
+                $serverDomain = ($server.dNSHostName -split '\.', 2)[1]
+                if ($serverDomain -and -not ($activeDomains | Where-Object { $serverDomain -match [regex]::Escape($_) })) {
+                    $results += @{
+                        Type = "OrphanedServer"; Name = $server.Name; Domain = $serverDomain
+                        DN = $server.DistinguishedName; IsProblematic = $true
+                        Issue = "Server in Sites & Services belongs to non-existent domain: $serverDomain"
+                    }
+                }
+            }
+        }
+
+        # 2. Orphaned crossRef partitions
+        $crossRefs = @(Get-ADObject -Filter 'objectClass -eq "crossRef"' -SearchBase "CN=Partitions,$configDN" -Properties dnsRoot, nCName -ErrorAction Stop)
+        foreach ($cr in $crossRefs) {
+            if ($cr.dnsRoot) {
+                $isActive = $activeDomains | Where-Object { $cr.dnsRoot -match [regex]::Escape($_) }
+                if (-not $isActive -and $cr.dnsRoot -notmatch "ForestDnsZones|DomainDnsZones|SchemaPartition") {
+                    $results += @{
+                        Type = "OrphanedCrossRef"; Name = $cr.Name; Domain = $cr.dnsRoot
+                        DN = $cr.DistinguishedName; IsProblematic = $true
+                        Issue = "CrossRef partition for non-existent domain: $($cr.dnsRoot)"
+                    }
+                }
+            }
+        }
+
+        # 3. Orphaned _msdcs DNS records
+        try {
+            $msdcsRecords = @(Get-DnsServerResourceRecord -ZoneName "_msdcs.$($forest.Name)" -ErrorAction Stop)
+            foreach ($record in $msdcsRecords) {
+                $targetFQDN = $record.RecordData.DomainName
+                if ($targetFQDN) {
+                    $targetDomain = ($targetFQDN -split '\.', 2)[1]
+                    if ($targetDomain -and -not ($activeDomains | Where-Object { $targetDomain -match [regex]::Escape($_) })) {
+                        $results += @{
+                            Type = "OrphanedDNSRecord"; Name = $record.HostName; Domain = $targetDomain
+                            DN = "_msdcs.$($forest.Name)"; IsProblematic = $true
+                            Issue = "DNS _msdcs record points to non-existent domain: $targetDomain"
+                        }
+                    }
+                }
+            }
+        } catch {}
+
+        Write-Host "[+] Orphaned metadata: $($results.Count) items found" -ForegroundColor $(if ($results.Count -gt 0) { "Yellow" } else { "Green" })
+        return @($results)
+    } catch {
+        Write-Host "[!] Error: $_" -ForegroundColor Red
+        return @()
     }
 }
 
@@ -4228,6 +5486,27 @@ $collectedData.DNSConflicts = Find-DNSRecordConflicts
 $collectedData.DNSScavengingDetailed = Get-DNSScavengingDetailedAnalysis
 $collectedData.DHCPRogueServers = Find-RogueDHCPServers
 $collectedData.DHCPOptionsAudit = Get-DHCPOptionsAudit
+
+# --- INCIDENT-BASED CHECKS (production findings) ---
+$collectedData.KerberosAuthFailures = Get-KerberosAuthFailures
+$collectedData.SecureChannelHealth = Get-SecureChannelHealth
+$collectedData.DCDiagHealth = Get-DCDiagHealth
+$collectedData.RODCHealth = Get-RODCHealth
+$collectedData.DCConnectivityMatrix = Get-DCConnectivityMatrix
+
+# --- FOREST-LEVEL CHECKS (grupotls.edu findings) ---
+$collectedData.OrphanedDCs = Get-OrphanedDCs
+$collectedData.ReplicationLatency = Get-ReplicationLatencyAnalysis
+$collectedData.SiteTopologyIssues = Get-SiteTopologyIssues
+$collectedData.DCDNSResolution = Get-DCDNSResolutionIssues
+$collectedData.TrustHealthDetailed = Get-TrustHealthDetailed
+$collectedData.DomainHealthSummary = Get-DomainHealthSummary
+$collectedData.OrphanedMetadata = Get-OrphanedMetadata
+$collectedData.DCServicesHealth = Get-DCServicesHealth
+$collectedData.DCDiskSpace = Get-DCDiskSpace
+$collectedData.SYSVOLReplicationState = Get-SYSVOLReplicationState
+$collectedData.GPOComplexity = Get-GPOComplexityAnalysis
+$collectedData.DuplicateSPNs = Get-DuplicateSPNs
 ` : ''}
 
         ${selectedModules.includes('GPO') ? `

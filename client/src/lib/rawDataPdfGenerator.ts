@@ -894,6 +894,25 @@ export async function generateRawDataPdf(options: RawDataPdfOptions): Promise<Bl
     { key: 'AdminCountObjects', label: 'Objetos AdminCount' },
     { key: 'LingeringObjectsRisk', label: 'Objetos Lingering (Huérfanos)' },
     { key: 'FSMORolesHealth', label: 'Salud de Roles FSMO' },
+    // Incident-based checks (certus.edu.pe)
+    { key: 'KerberosAuthFailures', label: 'Fallos de Autenticación Kerberos (4771)' },
+    { key: 'SecureChannelHealth', label: 'Salud de Secure Channel — Cuentas de Máquina' },
+    { key: 'DCDiagHealth', label: 'DCDiag — Salud Integral de DCs' },
+    { key: 'RODCHealth', label: 'Salud de RODCs' },
+    { key: 'DCConnectivityMatrix', label: 'Matriz de Conectividad entre DCs' },
+    // Forest-level checks (grupotls.edu)
+    { key: 'OrphanedDCs', label: 'DCs Huérfanos / Inaccesibles' },
+    { key: 'ReplicationLatency', label: 'Latencia de Replicación (replsummary)' },
+    { key: 'SiteTopologyIssues', label: 'Problemas de Topología de Sitios' },
+    { key: 'DCDNSResolution', label: 'Resolución DNS de DCs' },
+    { key: 'TrustHealthDetailed', label: 'Salud de Trusts (Detallado)' },
+    { key: 'DomainHealthSummary', label: 'Salud de Dominios del Forest' },
+    { key: 'OrphanedMetadata', label: 'Metadata Residual (Post-Decommission)' },
+    { key: 'DCServicesHealth', label: 'Salud de Servicios Críticos en DCs' },
+    { key: 'DCDiskSpace', label: 'Espacio en Disco de DCs' },
+    { key: 'SYSVOLReplicationState', label: 'Estado de Replicación SYSVOL (DFSR/FRS)' },
+    { key: 'GPOComplexity', label: 'Análisis de Complejidad de GPOs' },
+    { key: 'DuplicateSPNs', label: 'SPNs Duplicados' },
   ];
 
   additionalSections.forEach((sec) => {

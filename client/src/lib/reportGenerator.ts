@@ -72,6 +72,8 @@ const TABLE_WIDTHS = {
   twoCol: [4680, 4680],
   threeCol: [3120, 3120, 3120],
   fourCol: [2340, 2340, 2340, 2340],
+  fiveCol: [1872, 1872, 1872, 1872, 1872],
+  sixCol: [1560, 1560, 1560, 1560, 1560, 1560],
   asymmetric: [3120, 6240], // 1/3 + 2/3
 };
 
@@ -1730,6 +1732,36 @@ export async function generateReport(data: ReportData): Promise<Blob> {
             createTableRow(["% Utilizado", `${rawData?.FSMORolesHealth?.RIDPoolStatus?.PercentUsed || 0}%`]),
           ],
         }),
+        // RID Pool por DC (FSMO-002)
+        ...(() => {
+          const ridPoolPerDC = rawData?.FSMORolesHealth?.RIDPoolPerDC || [];
+          if (!Array.isArray(ridPoolPerDC) || ridPoolPerDC.length === 0) return [];
+          return [
+            new Paragraph({
+              text: "Pool RID por Controlador de Dominio",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Table({
+              columnWidths: TABLE_WIDTHS.sixCol,
+              rows: [
+                createTableRow(["DC", "Site", "Pool Inicio", "Pool Fin", "Siguiente RID", "Restantes"], true, undefined, TABLE_WIDTHS.sixCol),
+                ...ridPoolPerDC.map((dc: any) => {
+                  const remaining = dc.Remaining ?? (dc.PoolEnd && dc.NextRID ? dc.PoolEnd - dc.NextRID : 0);
+                  const statusColor = remaining < 100 ? "critical" : remaining < 500 ? "high" : remaining < 1000 ? "medium" : "low";
+                  return createTableRow([
+                    dc.DC || "N/A",
+                    dc.Site || "N/A",
+                    dc.PoolStart?.toString() || "N/A",
+                    dc.PoolEnd?.toString() || "N/A",
+                    dc.NextRID?.toString() || "N/A",
+                    remaining.toString()
+                  ], false, statusColor, TABLE_WIDTHS.sixCol);
+                }),
+              ],
+            }),
+          ];
+        })(),
 
         // SALUD DE REPLICACIÓN
         // Soporta múltiples formatos de datos de replicación
@@ -2021,6 +2053,808 @@ export async function generateReport(data: ReportData): Promise<Blob> {
           }
 
           return sections;
+        })(),
+
+        // FALLOS DE AUTENTICACIÓN KERBEROS (KERB-001)
+        ...(() => {
+          const kerbData = rawData?.KerberosAuthFailures;
+          if (!kerbData || (!kerbData.TotalEvents && !kerbData.ByAccount?.length)) return [];
+
+          const sections: any[] = [
+            new Paragraph({
+              text: "Análisis de Fallos de Autenticación Kerberos",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: "Total de eventos 4771: ", bold: true, size: 22 }),
+                new TextRun({ text: `${kerbData.TotalEvents || 0}`, size: 22 }),
+                new TextRun({ text: "  |  DC de recolección: ", bold: true, size: 22 }),
+                new TextRun({ text: `${kerbData.CollectedFrom || "N/A"}`, size: 22 }),
+              ],
+              spacing: { after: 200 },
+            }),
+          ];
+
+          // Distribución por código de error
+          if (kerbData.ByFailureCode && Object.keys(kerbData.ByFailureCode).length > 0) {
+            const failureCodes: Record<string, string> = {
+              '0x18': 'Contraseña incorrecta',
+              '0x12': 'Cuenta deshabilitada',
+              '0x17': 'Contraseña expirada',
+              '0x6': 'Cuenta no encontrada',
+              '0x25': 'Reloj desincronizado',
+            };
+            const codeWidths = [2340, 3900, 3120];
+            sections.push(
+              new Paragraph({
+                text: "Distribución por Código de Error",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Table({
+                columnWidths: codeWidths,
+                rows: [
+                  createTableRow(["Código", "Descripción", "Cantidad"], true, undefined, codeWidths),
+                  ...Object.entries(kerbData.ByFailureCode).map(([code, count]: [string, any]) =>
+                    createTableRow([
+                      code,
+                      failureCodes[code] || "Otro",
+                      count.toString()
+                    ], false, code === '0x18' ? "high" : "medium", codeWidths)
+                  ),
+                ],
+              })
+            );
+          }
+
+          // Top cuentas con más fallos
+          const byAccount = kerbData.ByAccount || [];
+          if (byAccount.length > 0) {
+            sections.push(
+              new Paragraph({
+                text: "Top Cuentas con Más Fallos",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Table({
+                columnWidths: TABLE_WIDTHS.fiveCol,
+                rows: [
+                  createTableRow(["Cuenta", "Cantidad", "Tipo", "Código Error", "Severidad"], true, undefined, TABLE_WIDTHS.fiveCol),
+                  ...byAccount.slice(0, 15).map((acct: any) => {
+                    const isMachine = acct.IsMachineAccount || acct.Account?.endsWith('$');
+                    const severity = isMachine && acct.Count > 10 ? "high" :
+                                    !isMachine && acct.Count > 20 ? "critical" :
+                                    acct.Count > 5 ? "medium" : "low";
+                    return createTableRow([
+                      acct.Account || "N/A",
+                      (acct.Count || 0).toString(),
+                      isMachine ? "Máquina ($)" : "Usuario",
+                      (acct.FailureCodes || [acct.FailureCode]).join(", ") || "N/A",
+                      severity.toUpperCase()
+                    ], false, severity, TABLE_WIDTHS.fiveCol);
+                  }),
+                ],
+              })
+            );
+          }
+
+          // Cuentas de máquina — indicador de secure channel roto
+          const machineFailures = kerbData.MachineAccountFailures || byAccount.filter((a: any) => a.IsMachineAccount || a.Account?.endsWith('$'));
+          if (machineFailures.length > 0) {
+            sections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: "Cuentas de Máquina con Fallos (Secure Channel Potencialmente Roto)", bold: true, size: 24, color: COLORS.high }),
+                ],
+                spacing: { before: 300, after: 100 },
+              }),
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: "Las cuentas de máquina ($) con error 0x18 indican probable secure channel roto por aislamiento del DC local. Remediación: Invoke-Command -ComputerName [EQUIPO] -ScriptBlock { Reset-ComputerMachinePassword -Server '[DC_LOCAL]' }",
+                    size: 20, italics: true,
+                  }),
+                ],
+                spacing: { after: 200 },
+                shading: { fill: COLORS.highBg, type: ShadingType.CLEAR },
+              })
+            );
+          }
+
+          // Top IPs origen
+          const byIP = kerbData.BySourceIP || [];
+          if (byIP.length > 0) {
+            const ipWidths = [3120, 3120, 3120];
+            sections.push(
+              new Paragraph({
+                text: "Top IPs Origen con Más Fallos",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Table({
+                columnWidths: ipWidths,
+                rows: [
+                  createTableRow(["IP Origen", "Cantidad", "Cuentas Afectadas"], true, undefined, ipWidths),
+                  ...byIP.slice(0, 10).map((ip: any) =>
+                    createTableRow([
+                      ip.IP || "N/A",
+                      (ip.Count || 0).toString(),
+                      (ip.Accounts || []).slice(0, 3).join(", ") || "N/A"
+                    ], false, ip.Count > 50 ? "critical" : ip.Count > 20 ? "high" : "medium", ipWidths)
+                  ),
+                ],
+              })
+            );
+          }
+
+          return sections;
+        })(),
+
+        // SALUD DE SECURE CHANNEL — CUENTAS DE MÁQUINA (KERB-002)
+        ...(() => {
+          const scData = rawData?.SecureChannelHealth;
+          if (!scData || (!scData.TotalStaleAccounts && !scData.StaleAccounts?.length)) return [];
+
+          const staleAccounts = scData.StaleAccounts || [];
+          const critical = staleAccounts.filter((a: any) => a.DaysSincePasswordChange > 90).length;
+          const high = staleAccounts.filter((a: any) => a.DaysSincePasswordChange > 60 && a.DaysSincePasswordChange <= 90).length;
+          const medium = staleAccounts.filter((a: any) => a.DaysSincePasswordChange <= 60).length;
+
+          const formatDate = (d: any) => {
+            if (!d) return "N/A";
+            try { const dt = new Date(d); return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString('es-ES'); } catch { return String(d); }
+          };
+
+          const sections: any[] = [
+            new Paragraph({
+              text: "Salud de Secure Channel — Cuentas de Máquina",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: `Se detectaron ${scData.TotalStaleAccounts || staleAccounts.length} equipos con contraseña de máquina sin rotar por más de ${scData.Threshold || 45} días (activos en los últimos 7 días).`,
+                  size: 22,
+                }),
+              ],
+              spacing: { after: 100 },
+            }),
+          ];
+
+          // Resumen por severidad
+          const summaryWidths = [3120, 2080, 2080, 2080];
+          sections.push(
+            new Paragraph({
+              text: "Resumen por Severidad",
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 300, after: 100 },
+            }),
+            new Table({
+              columnWidths: summaryWidths,
+              rows: [
+                createTableRow(["Severidad", "Criterio", "Cantidad", "Acción"], true, undefined, summaryWidths),
+                createTableRow(["CRITICAL", "> 90 días", critical.toString(), "Reset inmediato"], false, critical > 0 ? "critical" : undefined, summaryWidths),
+                createTableRow(["HIGH", "60-90 días", high.toString(), "Planificar reset"], false, high > 0 ? "high" : undefined, summaryWidths),
+                createTableRow(["MEDIUM", "45-60 días", medium.toString(), "Monitorear"], false, medium > 0 ? "medium" : undefined, summaryWidths),
+              ],
+            })
+          );
+
+          // Detalle de equipos afectados
+          if (staleAccounts.length > 0) {
+            sections.push(
+              new Paragraph({
+                text: "Equipos Afectados",
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 300, after: 100 },
+              }),
+              new Table({
+                columnWidths: TABLE_WIDTHS.sixCol,
+                rows: [
+                  createTableRow(["Equipo", "Password Last Set", "Días", "Último Logon", "SO", "Severidad"], true, undefined, TABLE_WIDTHS.sixCol),
+                  ...staleAccounts.slice(0, 25).map((acct: any) => {
+                    const days = acct.DaysSincePasswordChange || 0;
+                    const severity = days > 90 ? "critical" : days > 60 ? "high" : "medium";
+                    return createTableRow([
+                      acct.Name || "N/A",
+                      formatDate(acct.PasswordLastSet),
+                      days.toString(),
+                      formatDate(acct.LastLogon),
+                      acct.OperatingSystem || "N/A",
+                      severity.toUpperCase()
+                    ], false, severity, TABLE_WIDTHS.sixCol);
+                  }),
+                ],
+              })
+            );
+          }
+
+          // Nota de remediación
+          sections.push(
+            new Paragraph({
+              children: [
+                new TextRun({ text: "Comando de Remediación: ", bold: true, size: 22, color: COLORS.primary }),
+              ],
+              spacing: { before: 300, after: 50 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: 'Invoke-Command -ComputerName [EQUIPO] -ScriptBlock { Reset-ComputerMachinePassword -Server "[DC_LOCAL]" }',
+                  size: 20, font: "Courier New",
+                }),
+              ],
+              shading: { fill: COLORS.lightBg, type: ShadingType.CLEAR },
+              spacing: { after: 50 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: "ADVERTENCIA: NO ejecutar Reset-ComputerMachinePassword directamente en un DC — resetea la contraseña del DC mismo, no la de la workstation.",
+                  size: 20, bold: true, color: COLORS.critical,
+                }),
+              ],
+              spacing: { after: 200 },
+            })
+          );
+
+          return sections;
+        })(),
+
+        // DCDIAG HEALTH (HEALTH-001)
+        ...(() => {
+          const diagData = rawData?.DCDiagHealth;
+          if (!diagData || !diagData.DCs?.length) return [];
+
+          const sections: any[] = [
+            new Paragraph({
+              text: "DCDiag — Salud Integral de Controladores de Dominio",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: `${diagData.Summary?.AllPassed || 0} de ${diagData.Summary?.TotalDCs || 0} DCs pasaron todos los tests.`, size: 22 }),
+                ...(diagData.Summary?.WithFailures > 0 ? [
+                  new TextRun({ text: `  ${diagData.Summary.WithFailures} DCs con fallos detectados.`, size: 22, bold: true, color: COLORS.critical }),
+                ] : []),
+              ],
+              spacing: { after: 200 },
+            }),
+          ];
+
+          // Matriz DC × resultado
+          const fiveColWidths = [2340, 1170, 1170, 2340, 2340];
+          sections.push(
+            new Table({
+              columnWidths: fiveColWidths,
+              rows: [
+                createTableRow(["DC", "Site", "Pasados", "Fallidos", "Tests Fallidos"], true, undefined, fiveColWidths),
+                ...diagData.DCs.map((dc: any) => {
+                  const severity = dc.FailedCount > 0 ?
+                    (dc.FailedTests?.some((t: string) => ['Replications', 'Services', 'Advertising', 'NetLogons'].includes(t)) ? "critical" : "high") :
+                    "low";
+                  return createTableRow([
+                    dc.DCName || "N/A",
+                    dc.Site || "N/A",
+                    (dc.PassedCount || 0).toString(),
+                    (dc.FailedCount || 0).toString(),
+                    (dc.FailedTests || []).join(", ") || "Ninguno"
+                  ], false, severity, fiveColWidths);
+                }),
+              ],
+            })
+          );
+
+          return sections;
+        })(),
+
+        // RODC HEALTH (RODC-001)
+        ...(() => {
+          const rodcData = rawData?.RODCHealth;
+          if (!rodcData || rodcData.Summary?.TotalRODCs === 0) return [];
+
+          const sections: any[] = [
+            new Paragraph({
+              text: "Salud de RODCs (Read-Only Domain Controllers)",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: `RODCs detectados: ${rodcData.Summary?.TotalRODCs || 0}`, size: 22 }),
+                new TextRun({ text: `  |  Saludables: ${rodcData.Summary?.HealthyRODCs || 0}`, size: 22 }),
+                new TextRun({ text: `  |  Con problemas: ${rodcData.Summary?.StaleRODCs || 0}`, size: 22, color: rodcData.Summary?.StaleRODCs > 0 ? COLORS.critical : undefined }),
+                new TextRun({ text: `  |  PRP vacía: ${rodcData.Summary?.EmptyPRP || 0}`, size: 22, color: rodcData.Summary?.EmptyPRP > 0 ? COLORS.high : undefined }),
+              ],
+              spacing: { after: 200 },
+            }),
+          ];
+
+          const rodcWidths = [1560, 1248, 1248, 1560, 1872, 1872];
+          sections.push(
+            new Table({
+              columnWidths: rodcWidths,
+              rows: [
+                createTableRow(["RODC", "Site", "Replicación", "Cuentas Caché", "Allowed PRP", "Último Repl."], true, undefined, rodcWidths),
+                ...(rodcData.RODCs || []).map((rodc: any) => {
+                  const severity = rodc.ReplicationStatus === "OK" ? "low" :
+                    rodc.ReplicationStatus === "FAILED" || rodc.ReplicationStatus === "UNREACHABLE" ? "critical" : "high";
+                  return createTableRow([
+                    rodc.Name || "N/A",
+                    rodc.Site || "N/A",
+                    rodc.ReplicationStatus || "Unknown",
+                    (rodc.CachedAccountsCount ?? "N/A").toString(),
+                    (rodc.AllowedPRP?.length || 0).toString() + " entries",
+                    rodc.LastReplication || "N/A"
+                  ], false, severity, rodcWidths);
+                }),
+              ],
+            })
+          );
+
+          return sections;
+        })(),
+
+        // DC CONNECTIVITY MATRIX (TOPO-002)
+        ...(() => {
+          const connData = rawData?.DCConnectivityMatrix;
+          if (!connData || !connData.Targets?.length) return [];
+
+          const sections: any[] = [
+            new Paragraph({
+              text: "Matriz de Conectividad entre Domain Controllers",
+              heading: HeadingLevel.HEADING_1,
+              spacing: { before: 400, after: 200 },
+            }),
+            new Paragraph({
+              children: [
+                new TextRun({ text: `Pruebas ejecutadas desde: ${connData.SourceDC || "N/A"}`, size: 22 }),
+                new TextRun({ text: `  |  Accesibles: ${connData.Summary?.FullyReachable || 0}`, size: 22 }),
+                new TextRun({ text: `  |  Parciales: ${connData.Summary?.PartiallyReachable || 0}`, size: 22, color: connData.Summary?.PartiallyReachable > 0 ? COLORS.high : undefined }),
+                new TextRun({ text: `  |  Inalcanzables: ${connData.Summary?.Unreachable || 0}`, size: 22, color: connData.Summary?.Unreachable > 0 ? COLORS.critical : undefined }),
+              ],
+              spacing: { after: 200 },
+            }),
+          ];
+
+          // Tabla de resumen por DC
+          const connWidths = [1560, 1248, 1248, 1248, 1248, 1248, 1560];
+          const portLabels = ["DC", "RPC 135", "LDAP 389", "SMB 445", "Kerb 88", "LDAPS 636", "GC 3268"];
+          sections.push(
+            new Table({
+              columnWidths: connWidths,
+              rows: [
+                createTableRow(portLabels, true, undefined, connWidths),
+                ...connData.Targets.map((target: any) => {
+                  const getPortStatus = (port: number) => {
+                    const result = target.PortResults?.find((p: any) => p.Port === port);
+                    return result?.Status === "Open" ? "✓" : "✗";
+                  };
+                  const severity = target.Status === "FullyReachable" ? "low" :
+                    target.Status === "Unreachable" ? "critical" : "high";
+                  return createTableRow([
+                    target.DCName || "N/A",
+                    getPortStatus(135),
+                    getPortStatus(389),
+                    getPortStatus(445),
+                    getPortStatus(88),
+                    getPortStatus(636),
+                    getPortStatus(3268)
+                  ], false, severity, connWidths);
+                }),
+              ],
+            })
+          );
+
+          return sections;
+        })(),
+
+        // DCS HUÉRFANOS / INACCESIBLES
+        ...(() => {
+          const orphanedDCs = rawData?.OrphanedDCs;
+          if (!Array.isArray(orphanedDCs) || orphanedDCs.length === 0) return [];
+          const problematic = orphanedDCs.filter((dc: any) => dc.IsProblematic);
+          if (problematic.length === 0) return [];
+
+          const colWidths = [1560, 1248, 936, 936, 936, 1560, 2184];
+          return [
+            new Paragraph({ text: "DCs Huérfanos / Inaccesibles", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Paragraph({ children: [new TextRun({ text: `${problematic.length} de ${orphanedDCs.length} DCs con problemas de accesibilidad o replicación.`, size: 22 })], spacing: { after: 200 } }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["DC", "Site", "Ping", "LDAP", "RPC", "Replicación", "Error"], true, undefined, colWidths),
+                ...problematic.slice(0, 20).map((dc: any) => {
+                  const sev = !dc.PingReachable ? "critical" : dc.ReplicationStatus !== "OK" ? "high" : "medium";
+                  return createTableRow([
+                    dc.Name || "N/A", dc.Site || "N/A",
+                    dc.PingReachable ? "OK" : "FAIL",
+                    dc.LDAPReachable ? "OK" : "FAIL",
+                    dc.RPCReachable ? "OK" : "FAIL",
+                    dc.ReplicationStatus || "N/A",
+                    (dc.ReplicationError || "").substring(0, 40)
+                  ], false, sev, colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // LATENCIA DE REPLICACIÓN (replsummary)
+        ...(() => {
+          const latencyData = rawData?.ReplicationLatency;
+          if (!Array.isArray(latencyData) || latencyData.length === 0) return [];
+          const problematic = latencyData.filter((d: any) => d.IsProblematic);
+
+          const colWidths = [2340, 1560, 1560, 1560, 1170, 1170];
+          return [
+            new Paragraph({ text: "Latencia de Replicación (replsummary)", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["DC", "Dirección", "Delta (min)", "Fallos", "% Error", "Severidad"], true, undefined, colWidths),
+                ...latencyData.filter((d: any) => d.DeltaMinutes >= 0).slice(0, 25).map((d: any) => {
+                  const sev = d.Severity?.toLowerCase() || "medium";
+                  const delta = d.DeltaMinutes === 86400 ? ">60 días" : `${d.DeltaMinutes} min`;
+                  return createTableRow([
+                    d.DCName || "N/A", d.Direction || "N/A", delta,
+                    `${d.Fails}/${d.Total}`, `${d.FailPercent}%`, d.Severity || "N/A"
+                  ], false, sev, colWidths);
+                }),
+              ],
+            }),
+            // Operational errors
+            ...latencyData.filter((d: any) => d.Direction === "OperationalError").map((d: any) =>
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `Error operacional ${d.ErrorCode || ""}: `, bold: true, size: 22, color: COLORS.critical }),
+                  new TextRun({ text: d.DCName || "N/A", size: 22 }),
+                ],
+                spacing: { before: 100, after: 50 },
+                shading: { fill: COLORS.criticalBg, type: ShadingType.CLEAR },
+              })
+            ),
+          ];
+        })(),
+
+        // PROBLEMAS DE TOPOLOGÍA DE SITIOS
+        ...(() => {
+          const topoIssues = rawData?.SiteTopologyIssues;
+          if (!Array.isArray(topoIssues) || topoIssues.length === 0) return [];
+
+          const sections: any[] = [
+            new Paragraph({ text: "Problemas de Topología de Sitios", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+          ];
+
+          // Multi-site links
+          const multiSite = topoIssues.filter((t: any) => t.Type === "SiteLink" && t.IsMultiSite);
+          if (multiSite.length > 0) {
+            const colWidths = [2340, 936, 2340, 1872, 1872];
+            sections.push(
+              new Paragraph({ text: "Site Links con Múltiples Sitios (Mesh Subóptimo)", heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 100 } }),
+              new Table({
+                columnWidths: colWidths,
+                rows: [
+                  createTableRow(["Site Link", "# Sites", "Sites Incluidos", "Costo", "Intervalo"], true, undefined, colWidths),
+                  ...multiSite.map((sl: any) =>
+                    createTableRow([sl.Name, sl.SiteCount?.toString(), sl.Sites || "", sl.Cost?.toString(), `${sl.ReplicationInterval} min`], false, "high", colWidths)
+                  ),
+                ],
+              })
+            );
+          }
+
+          // Connection summary
+          const connSummary = topoIssues.find((t: any) => t.Type === "ConnectionSummary");
+          if (connSummary) {
+            sections.push(
+              new Paragraph({
+                children: [
+                  new TextRun({ text: `Total conexiones de replicación: ${connSummary.TotalConnections}`, bold: true, size: 22 }),
+                  new TextRun({ text: ` (Auto: ${connSummary.AutoConnections}, Manual: ${connSummary.ManualConnections}) para ${connSummary.SiteCount} sitios`, size: 22 }),
+                ],
+                spacing: { before: 200, after: 200 },
+                shading: connSummary.IsProblematic ? { fill: COLORS.highBg, type: ShadingType.CLEAR } : undefined,
+              })
+            );
+          }
+
+          return sections;
+        })(),
+
+        // RESOLUCIÓN DNS DE DCS
+        ...(() => {
+          const dnsData = rawData?.DCDNSResolution;
+          if (!Array.isArray(dnsData) || dnsData.length === 0) return [];
+          const problematic = dnsData.filter((d: any) => d.IsProblematic);
+          if (problematic.length === 0) return [];
+
+          const colWidths = [1560, 1560, 1560, 1560, 1560, 1560];
+          return [
+            new Paragraph({ text: "Resolución DNS de Domain Controllers", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["DC", "Site", "IP Registrada", "IP Resuelta", "Problema", "Roles FSMO"], true, undefined, colWidths),
+                ...problematic.slice(0, 20).map((d: any) => {
+                  const issue = d.IsLoopback ? "Loopback" : d.IsDNSMismatch ? "Mismatch" : "DNS Fail";
+                  const sev = d.HasFSMORoles ? "critical" : "high";
+                  return createTableRow([
+                    d.Name, d.Site || "N/A", d.RegisteredIP || "N/A", d.ResolvedIP || "N/A", issue, d.FSMORoles || "Ninguno"
+                  ], false, sev, colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // SALUD DE TRUSTS (Detallado)
+        ...(() => {
+          const trustData = rawData?.TrustHealthDetailed;
+          if (!Array.isArray(trustData) || trustData.length === 0) return [];
+
+          const colWidths = [2340, 2340, 1560, 1560, 1560];
+          return [
+            new Paragraph({ text: "Salud de Relaciones de Confianza (Trusts)", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["Origen", "Destino", "Tipo", "DNS", "nltest"], true, undefined, colWidths),
+                ...trustData.map((t: any) => {
+                  const sev = !t.DNSResolvable && !t.TargetReachable ? "critical" : t.IsProblematic ? "high" : "low";
+                  return createTableRow([
+                    t.SourceDomain || "N/A", t.TargetDomain || "N/A",
+                    `${t.TrustType} (${t.TrustDirection})`,
+                    t.DNSResolvable ? "OK" : "FAIL",
+                    t.TargetReachable ? "OK" : t.NltestError || "FAIL"
+                  ], false, sev, colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // RESUMEN DE SALUD DE DOMINIOS DEL FOREST
+        ...(() => {
+          const domainData = rawData?.DomainHealthSummary;
+          if (!Array.isArray(domainData) || domainData.length === 0) return [];
+
+          const colWidths = [1872, 936, 936, 936, 936, 936, 2808];
+          return [
+            new Paragraph({ text: "Salud de Dominios del Forest", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["Dominio", "DCs", "Usuarios", "Test Users", "PCs", "GPOs", "Problemas"], true, undefined, colWidths),
+                ...domainData.map((d: any) => {
+                  const sev = d.HasDeadDCs ? "critical" : d.HasSingleDC ? "high" : d.HasOnlyTestUsers ? "medium" : "low";
+                  const issues = [
+                    d.HasSingleDC ? "Single DC" : "",
+                    d.HasDeadDCs ? "DCs muertos" : "",
+                    d.HasOnlyTestUsers ? ">50% test users" : "",
+                  ].filter(Boolean).join(", ") || "Ninguno";
+                  return createTableRow([
+                    d.DomainName, d.DCCount?.toString(), d.UserCount?.toString(),
+                    d.TestUserCount?.toString(), d.ComputerCount?.toString(),
+                    d.GPOCount?.toString(), issues
+                  ], false, sev, colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // METADATA HUÉRFANA (Post-Decommission)
+        ...(() => {
+          const metaData = rawData?.OrphanedMetadata;
+          if (!Array.isArray(metaData) || metaData.length === 0) return [];
+
+          const colWidths = [1872, 2340, 2340, 2808];
+          return [
+            new Paragraph({ text: "Metadata Residual (Post-Decommission)", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Paragraph({
+              children: [new TextRun({ text: `Se detectaron ${metaData.length} objetos huérfanos que requieren limpieza.`, size: 22, bold: true, color: COLORS.critical })],
+              spacing: { after: 200 },
+            }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["Tipo", "Nombre", "Dominio", "Problema"], true, undefined, colWidths),
+                ...metaData.slice(0, 30).map((m: any) => {
+                  const typeLabel = m.Type === "OrphanedServer" ? "Servidor" : m.Type === "OrphanedCrossRef" ? "CrossRef" : "DNS Record";
+                  return createTableRow([typeLabel, m.Name || "N/A", m.Domain || "N/A", m.Issue || "N/A"], false, "critical", colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // DC SERVICES HEALTH
+        ...(() => {
+          const svcData = rawData?.DCServicesHealth;
+          if (!Array.isArray(svcData) || svcData.length === 0) return [];
+          const problematic = svcData.filter((dc: any) => dc.IsProblematic);
+          if (problematic.length === 0) return [];
+
+          const colWidths = [2340, 1560, 1560, 1560, 2340];
+          return [
+            new Paragraph({ text: "Salud de Servicios Críticos en DCs", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Paragraph({
+              children: [new TextRun({ text: `${problematic.length} de ${svcData.length} DCs tienen servicios críticos detenidos o inaccesibles.`, size: 22, bold: true, color: COLORS.critical })],
+              spacing: { after: 200 },
+            }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["DC", "Servicios OK", "Detenidos", "Site", "Servicios Afectados"], true, undefined, colWidths),
+                ...problematic.slice(0, 25).map((dc: any) => {
+                  const services = dc.Services || [];
+                  const stopped = services.filter((s: any) => !s.IsRunning);
+                  const running = services.filter((s: any) => s.IsRunning);
+                  const stoppedNames = stopped.map((s: any) => s.Name).join(", ");
+                  const severity = stopped.some((s: any) => ['NTDS', 'KDC', 'Netlogon'].includes(s.Name)) ? "critical" : "high";
+                  return createTableRow([
+                    dc.DCName || "N/A",
+                    running.length.toString(),
+                    stopped.length.toString(),
+                    dc.Site || "N/A",
+                    stoppedNames || "Error de conexión"
+                  ], false, severity, colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // DC DISK SPACE
+        ...(() => {
+          const diskData = rawData?.DCDiskSpace;
+          if (!Array.isArray(diskData) || diskData.length === 0) return [];
+          const problematic = diskData.filter((dc: any) => dc.IsProblematic);
+          if (problematic.length === 0) return [];
+
+          const colWidths = TABLE_WIDTHS.fiveCol;
+          return [
+            new Paragraph({ text: "Espacio en Disco de DCs", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Paragraph({
+              children: [new TextRun({ text: `${problematic.length} de ${diskData.length} DCs tienen espacio en disco bajo (<20%).`, size: 22, bold: true, color: COLORS.high })],
+              spacing: { after: 200 },
+            }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["DC", "Unidad", "Total GB", "Libre GB", "% Libre"], true, undefined, colWidths),
+                ...problematic.slice(0, 25).flatMap((dc: any) => {
+                  const drives = (dc.Drives || []).filter((d: any) => d.FreePercent < 30);
+                  return drives.map((d: any) => {
+                    const severity = d.IsCritical ? "critical" : d.IsWarning ? "high" : "medium";
+                    return createTableRow([
+                      dc.DCName || "N/A",
+                      d.Drive || "C:",
+                      (d.TotalGB || 0).toString(),
+                      (d.FreeGB || 0).toString(),
+                      `${d.FreePercent || 0}%`
+                    ], false, severity, colWidths);
+                  });
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // SYSVOL REPLICATION STATE
+        ...(() => {
+          const sysvolData = rawData?.SYSVOLReplicationState;
+          if (!sysvolData || typeof sysvolData !== 'object') return [];
+          if (!sysvolData.IsProblematic && !sysvolData.IsFRS) return [];
+
+          const dcs = sysvolData.DCs || [];
+          const colWidths = TABLE_WIDTHS.fiveCol;
+          const elements: any[] = [
+            new Paragraph({ text: "Estado de Replicación SYSVOL", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+          ];
+
+          if (sysvolData.IsFRS) {
+            elements.push(new Paragraph({
+              children: [new TextRun({ text: `⚠ DEUDA TÉCNICA: El dominio utiliza FRS (File Replication Service) que fue deprecado por Microsoft. Se debe migrar a DFSR.`, size: 22, bold: true, color: COLORS.critical })],
+              spacing: { after: 200 },
+            }));
+          }
+
+          if (dcs.length > 0) {
+            elements.push(new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["DC", "Site", "SYSVOL Ready", "Tamaño GB", "Estado"], true, undefined, colWidths),
+                ...dcs.slice(0, 25).map((dc: any) => {
+                  const severity = !dc.SYSVOLReady ? "critical" : dc.SYSVOLSizeGB > 1 ? "high" : "low";
+                  return createTableRow([
+                    dc.DCName || "N/A",
+                    dc.Site || "N/A",
+                    dc.SYSVOLReady ? "Sí" : "NO",
+                    (dc.SYSVOLSizeGB || 0).toString(),
+                    dc.IsProblematic ? "Con problemas" : "OK"
+                  ], false, severity, colWidths);
+                }),
+              ],
+            }));
+          }
+
+          return elements;
+        })(),
+
+        // GPO COMPLEXITY
+        ...(() => {
+          const gpoData = rawData?.GPOComplexity;
+          if (!Array.isArray(gpoData) || gpoData.length === 0) return [];
+          const problematic = gpoData.filter((g: any) => g.IsProblematic);
+          if (problematic.length === 0) return [];
+
+          const colWidths = TABLE_WIDTHS.sixCol;
+          return [
+            new Paragraph({ text: "Análisis de Complejidad de GPOs", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Paragraph({
+              children: [new TextRun({ text: `${problematic.length} de ${gpoData.length} GPOs presentan problemas de higiene (monolíticas, vacías, sin enlace o desincronizadas).`, size: 22, bold: true, color: COLORS.high })],
+              spacing: { after: 200 },
+            }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["GPO", "Settings", "Vacía", "Sin Enlace", "Mismatch", "Problema"], true, undefined, colWidths),
+                ...problematic.slice(0, 30).map((g: any) => {
+                  const issue = g.HasVersionMismatch ? "DS/Sysvol Mismatch" : g.IsEmpty ? "Vacía" : g.IsUnlinked ? "Sin enlace" : g.SettingsCount > 50 ? "Monolítica" : "Otro";
+                  const severity = g.HasVersionMismatch ? "critical" : g.SettingsCount > 50 ? "high" : "medium";
+                  return createTableRow([
+                    (g.Name || "N/A").substring(0, 35),
+                    (g.SettingsCount >= 0 ? g.SettingsCount : "?").toString(),
+                    g.IsEmpty ? "Sí" : "No",
+                    g.IsUnlinked ? "Sí" : "No",
+                    g.HasVersionMismatch ? "SÍ" : "No",
+                    issue
+                  ], false, severity, colWidths);
+                }),
+              ],
+            }),
+          ];
+        })(),
+
+        // DUPLICATE SPNs
+        ...(() => {
+          const spnData = rawData?.DuplicateSPNs;
+          if (!spnData || typeof spnData !== 'object') return [];
+          const duplicates = spnData.Duplicates || [];
+          if (duplicates.length === 0) return [];
+
+          const colWidths = [3120, 1560, 2340, 2340];
+          return [
+            new Paragraph({ text: "SPNs Duplicados", heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } }),
+            new Paragraph({
+              children: [new TextRun({ text: `Se encontraron ${duplicates.length} SPNs duplicados de ${spnData.TotalSPNs || 0} totales. Los SPNs duplicados causan fallos silenciosos de autenticación Kerberos.`, size: 22, bold: true, color: COLORS.critical })],
+              spacing: { after: 200 },
+            }),
+            new Table({
+              columnWidths: colWidths,
+              rows: [
+                createTableRow(["SPN", "# Dueños", "Cuentas Propietarias", "Tipos"], true, undefined, colWidths),
+                ...duplicates.slice(0, 30).map((d: any) => {
+                  return createTableRow([
+                    (d.SPN || "N/A").substring(0, 50),
+                    (d.OwnerCount || 0).toString(),
+                    (d.Owners || "N/A").substring(0, 40),
+                    d.ObjectClasses || "N/A"
+                  ], false, "critical", colWidths);
+                }),
+              ],
+            }),
+            new Paragraph({
+              children: [new TextRun({ text: "Remediación: ", size: 22, bold: true }), new TextRun({ text: "setspn -D [spn_duplicado] [cuenta_incorrecta]", size: 22, font: "Courier New" })],
+              spacing: { before: 200, after: 200 },
+            }),
+          ];
         })(),
 
         // ANÁLISIS DE OBJETOS DE DIRECTIVA DE GRUPO

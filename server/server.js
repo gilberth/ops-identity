@@ -59,7 +59,12 @@ const CATEGORIES = [
   'Containers', 'ACLs', 'CertServices', 'Meta', 'DCHealth', 'DNS', 'DHCP', 'Security', 'Kerberos', 'Sites',
   'FSMORolesHealth', 'ReplicationStatus', 'ReplicationHealthAllDCs', 'LingeringObjectsRisk', 'TrustHealth', 'OrphanedTrusts',
   'DNSRootHints', 'DNSConflicts', 'DNSScavengingDetailed', 'DHCPRogueServers', 'DHCPOptionsAudit',
-  'PasswordPolicies'
+  'PasswordPolicies',
+  'KerberosAuthFailures', 'SecureChannelHealth',
+  'DCDiagHealth', 'RODCHealth', 'DCConnectivityMatrix',
+  'OrphanedDCs', 'ReplicationLatency', 'SiteTopologyIssues',
+  'DCDNSResolution', 'TrustHealthDetailed', 'DomainHealthSummary', 'OrphanedMetadata',
+  'DCServicesHealth', 'DCDiskSpace', 'SYSVOLReplicationState', 'GPOComplexity', 'DuplicateSPNs'
 ];
 
 const MAX_PROMPT = 8000;
@@ -78,12 +83,20 @@ const ANTHROPIC_MODELS = {
 // Categories that require deeper analysis → Use Opus 4.5
 // These involve complex security implications, privilege escalation paths, or critical infrastructure
 const OPUS_CATEGORIES = new Set([
-  'Kerberos',       // Golden Ticket, delegation, encryption analysis
-  'Security',       // NTLM, SMB, LDAP signing, critical configs
-  'ACLs',           // Complex permission analysis, privilege escalation paths
-  'TrustHealth',    // Inter-domain trust relationships, SID filtering
-  'CertServices',   // PKI vulnerabilities (ESC1-ESC8), template analysis
-  'FSMORolesHealth' // Critical FSMO roles, domain operation health
+  'Kerberos',              // Golden Ticket, delegation, encryption analysis
+  'Security',              // NTLM, SMB, LDAP signing, critical configs
+  'ACLs',                  // Complex permission analysis, privilege escalation paths
+  'TrustHealth',           // Inter-domain trust relationships, SID filtering
+  'CertServices',          // PKI vulnerabilities (ESC1-ESC8), template analysis
+  'FSMORolesHealth',       // Critical FSMO roles, domain operation health
+  'KerberosAuthFailures',  // Event 4771 analysis, brute force, secure channel correlation
+  'SecureChannelHealth',   // Machine account staleness, DC isolation impact
+  'ReplicationHealthAllDCs', // Replication staleness, phantom partners, tombstone risk
+  'DCDiagHealth',            // Complex multi-test analysis per DC
+  'OrphanedDCs',             // DC reachability + replication correlation
+  'OrphanedMetadata',        // Post-decommission residual detection
+  'TrustHealthDetailed',      // Trust DNS + nltest verification
+  'DCServicesHealth'           // Critical AD services correlation across DCs
 ]);
 
 /**
@@ -1336,6 +1349,1155 @@ const ATTRIBUTE_VALIDATION_RULES = {
     validate: (obj) => {
       return obj.PasswordHistoryCount !== undefined && obj.PasswordHistoryCount < 12;
     }
+  },
+
+  // =============================================================================
+  // ACL-related findings
+  // =============================================================================
+  'DCSYNC_UNAUTHORIZED': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const rights = (obj.ActiveDirectoryRights || obj.Rights || '').toLowerCase();
+      const objectType = (obj.ObjectType || obj.ObjectAceType || '').toLowerCase();
+      return objectType.includes('1131f6a') || rights.includes('replicat');
+    }
+  },
+  'ACL_WRITEDACL_SENSITIVE': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const rights = (obj.ActiveDirectoryRights || obj.Rights || '').toLowerCase();
+      return rights.includes('writedacl') || rights.includes('writeowner');
+    }
+  },
+  'ACL_GENERICALL_PRIVILEGED_OU': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const rights = (obj.ActiveDirectoryRights || obj.Rights || '').toLowerCase();
+      return rights.includes('genericall');
+    }
+  },
+  'ACL_WRITE_ON_ADMIN': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const rights = (obj.ActiveDirectoryRights || obj.Rights || '').toLowerCase();
+      return rights.includes('genericwrite') || rights.includes('writeproperty') || rights.includes('self');
+    }
+  },
+  'ACL_DANGEROUS_EXTENDED_RIGHTS': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const rights = (obj.ActiveDirectoryRights || obj.Rights || '').toLowerCase();
+      return rights.includes('extendedright') || rights.includes('allextendedrights');
+    }
+  },
+  'ACL_BROKEN_INHERITANCE': {
+    category: 'ACLs',
+    identifierField: 'Name',
+    validate: (obj) => obj.InheritanceDisabled === true || obj.IsProtected === true
+  },
+  'ACL_ORPHANED_ADMINCOUNT': {
+    category: 'ACLs',
+    identifierField: 'SamAccountName',
+    validate: (obj) => obj.AdminCount === 1 && obj.IsOrphaned === true
+  },
+
+  // =============================================================================
+  // OU-related findings
+  // =============================================================================
+  'OU_BLOCKED_INHERITANCE': {
+    category: 'OUs',
+    identifierField: 'Name',
+    validate: (obj) => obj.gpOptions === 1 || obj.GPOInheritanceBlocked === true || obj.BlockInheritance === true
+  },
+  'OU_EMPTY': {
+    category: 'OUs',
+    identifierField: 'Name',
+    validate: (obj) => (obj.ChildCount === 0 || obj.ObjectCount === 0) && !obj.IsContainer
+  },
+  'OU_EXCESSIVE_NESTING': {
+    category: 'OUs',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (obj.Depth !== undefined) return obj.Depth > 5;
+      const dn = obj.DistinguishedName || '';
+      const ouCount = (dn.match(/OU=/gi) || []).length;
+      return ouCount > 5;
+    }
+  },
+  'OU_NO_GPO_LINKED': {
+    category: 'OUs',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const hasObjects = (obj.ChildCount > 0 || obj.ObjectCount > 0);
+      const noGPO = (!obj.LinkedGroupPolicyObjects || obj.LinkedGroupPolicyObjects.length === 0) &&
+                    (!obj.GPOLinks || obj.GPOLinks.length === 0);
+      return hasObjects && noGPO;
+    }
+  },
+  'OU_NAMING_INCONSISTENT': {
+    category: 'OUs',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const name = obj.Name || '';
+      return /[^a-zA-Z0-9\s\-_áéíóúÁÉÍÓÚñÑ()]/.test(name) || name.length > 64;
+    }
+  },
+
+  // =============================================================================
+  // Domain-level findings
+  // =============================================================================
+  'DOMAIN_FUNCTIONAL_LEVEL_LOW': {
+    category: 'Domains',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const mode = (obj.DomainMode || obj.ForestMode || '').toLowerCase();
+      return mode.includes('2008') || mode.includes('2003') || mode.includes('2000') ||
+             mode.includes('windows2008') || mode.includes('windows2003');
+    }
+  },
+  'DOMAIN_RECYCLE_BIN_DISABLED': {
+    category: 'Domains',
+    identifierField: 'Name',
+    validate: (obj) => obj.RecycleBinEnabled === false || obj.ADRecycleBin === false
+  },
+  'DOMAIN_NO_FINE_GRAINED_PWD': {
+    category: 'Domains',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return (!obj.FineGrainedPasswordPolicies || obj.FineGrainedPasswordPolicies.length === 0) &&
+             (!obj.PSOCount || obj.PSOCount === 0);
+    }
+  },
+  'DOMAIN_TOMBSTONE_LOW': {
+    category: 'Domains',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const tsl = obj.TombstoneLifetime || obj.tombstoneLifetime;
+      return tsl !== undefined && tsl < 180;
+    }
+  },
+
+  // =============================================================================
+  // Container-related findings
+  // =============================================================================
+  'CONTAINER_OBJECTS_IN_DEFAULT_USERS': {
+    category: 'Containers',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const dn = (obj.DistinguishedName || '').toLowerCase();
+      return dn.includes('cn=users,') && (obj.ObjectCount > 0 || obj.ChildCount > 0);
+    }
+  },
+  'CONTAINER_OBJECTS_IN_DEFAULT_COMPUTERS': {
+    category: 'Containers',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const dn = (obj.DistinguishedName || '').toLowerCase();
+      return dn.includes('cn=computers,') && (obj.ObjectCount > 0 || obj.ChildCount > 0);
+    }
+  },
+  'CONTAINER_STALE_OBJECTS': {
+    category: 'Containers',
+    identifierField: 'Name',
+    validate: (obj) => obj.StaleCount > 0 || obj.DisabledCount > 0
+  },
+
+  // =============================================================================
+  // Infrastructure findings
+  // =============================================================================
+  'INFRA_TIME_SYNC_CRITICAL': {
+    category: 'DCHealth',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const source = (obj.TimeSyncConfig?.Source || obj.NTPSource || '').toLowerCase();
+      return source.includes('local cmos') || source.includes('free-running') ||
+             source.includes('vm ic time');
+    }
+  },
+  'INFRA_TOMBSTONE_LOW': {
+    category: 'Domains',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const tsl = obj.TombstoneLifetime || obj.tombstoneLifetime;
+      return tsl !== undefined && tsl < 180;
+    }
+  },
+  'INFRA_DNS_SCAVENGING_BROKEN': {
+    category: 'DNS',
+    identifierField: 'ZoneName',
+    validate: (obj) => {
+      // Mismatch: server scavenging enabled but zone aging disabled or vice versa
+      return (obj.ScavengingEnabled === true && obj.AgingEnabled === false) ||
+             (obj.ScavengingEnabled === false && obj.AgingEnabled === true);
+    }
+  },
+
+  // =============================================================================
+  // SecurityHardening findings
+  // =============================================================================
+  'HARDENING_LAPS_MISSING': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (obj.LAPS) return obj.LAPS.SchemaExtended === false || obj.LAPS.ComputersWithLAPS === 0;
+      if (obj.LAPSEnabled !== undefined) return obj.LAPSEnabled === false;
+      return false;
+    }
+  },
+  'HARDENING_SMBV1_ENABLED': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (obj.SMBv1Status) return obj.SMBv1Status.Enabled === true || obj.SMBv1Status === 'Enabled';
+      if (obj.SMBv1Enabled !== undefined) return obj.SMBv1Enabled === true;
+      return false;
+    }
+  },
+  'HARDENING_NTLM_INSECURE': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const level = obj.LMCompatibilityLevel ?? obj.NTLMSettings?.LMCompatibilityLevel;
+      return level !== undefined && level < 5;
+    }
+  },
+  'HARDENING_RC4_ENABLED': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (obj.RC4EncryptionTypes) {
+        return (obj.RC4EncryptionTypes.UsersWithRC4 > 0 || obj.RC4EncryptionTypes.ComputersWithRC4 > 0);
+      }
+      return false;
+    }
+  },
+  'HARDENING_PROTECTED_USERS_EMPTY': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (obj.ProtectedUsers) return obj.ProtectedUsers.MemberCount === 0;
+      return false;
+    }
+  },
+  'HARDENING_BACKUP_STALE': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (!obj.BackupStatus?.LastBackupDate) return true; // No backup date = stale
+      const lastBackup = parseFlexibleDate(obj.BackupStatus.LastBackupDate);
+      if (!lastBackup) return true;
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      return lastBackup < thirtyDaysAgo;
+    }
+  },
+
+  // =============================================================================
+  // IdentityRisks findings
+  // =============================================================================
+  'IDENTITY_DCSYNC_PERMISSIONS': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const objectType = (obj.ObjectType || obj.ObjectAceType || '').toLowerCase();
+      // DS-Replication-Get-Changes: 1131f6aa / DS-Replication-Get-Changes-All: 1131f6ad
+      return objectType.includes('1131f6a');
+    }
+  },
+  'IDENTITY_UNCONSTRAINED_DELEGATION': {
+    category: 'Computers',
+    identifierField: 'Name',
+    validate: (obj) => {
+      // Exclude DCs (they legitimately have unconstrained delegation)
+      const isDC = obj.PrimaryGroupID === 516 || obj.IsDomainController === true ||
+                   (obj.DistinguishedName || '').toLowerCase().includes('domain controllers');
+      return obj.TrustedForDelegation === true && !isDC;
+    }
+  },
+  'IDENTITY_ADMINSDHOLDER_MODIFIED': {
+    category: 'ACLs',
+    identifierField: 'IdentityReference',
+    validate: (obj) => {
+      const dn = (obj.DistinguishedName || obj.ObjectDN || '').toLowerCase();
+      return dn.includes('adminsdholder');
+    }
+  },
+  'IDENTITY_ORPHANED_ADMINCOUNT': {
+    category: 'Users',
+    identifierField: 'SamAccountName',
+    validate: (obj) => {
+      return obj.AdminCount === 1 && obj.Enabled === true &&
+             (!obj.IsPrivileged || obj.IsPrivileged === false);
+    }
+  },
+
+  // =============================================================================
+  // ADCS (Certificate Services) findings
+  // =============================================================================
+  'ADCS_ESC1_VULNERABLE_TEMPLATE': {
+    category: 'CertServices',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return obj.EnrolleeSuppliesSubject === true &&
+             (obj.EKUs?.some(e => e.toLowerCase().includes('client auth')) ||
+              obj.pKIExtendedKeyUsage?.some(e => e.includes('1.3.6.1.5.5.7.3.2')));
+    }
+  },
+  'ADCS_ESC2_ANY_PURPOSE': {
+    category: 'CertServices',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return obj.EKUs?.some(e => e === '2.5.29.37.0' || e.toLowerCase().includes('any purpose')) ||
+             obj.pKIExtendedKeyUsage?.includes('2.5.29.37.0');
+    }
+  },
+  'ADCS_ESC4_TEMPLATE_ACLS': {
+    category: 'CertServices',
+    identifierField: 'Name',
+    validate: (obj) => {
+      if (!obj.ACLs && !obj.Permissions) return false;
+      const perms = JSON.stringify(obj.ACLs || obj.Permissions || '').toLowerCase();
+      return perms.includes('writedacl') || perms.includes('writeowner') ||
+             perms.includes('writeproperty') || perms.includes('genericall');
+    }
+  },
+  'ADCS_ESC6_EDITF_FLAG': {
+    category: 'CertServices',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return obj.EDITF_ATTRIBUTESUBJECTALTNAME2 === true ||
+             (obj.EditFlags !== undefined && (obj.EditFlags & 0x00040000) !== 0);
+    }
+  },
+  'ADCS_CA_ON_DC': {
+    category: 'CertServices',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsOnDC === true || obj.InstalledOnDC === true
+  },
+
+  // =============================================================================
+  // Protocol Security findings
+  // =============================================================================
+  'PROTOCOL_LDAP_SIGNING_DISABLED': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const integrity = obj.LDAPServerIntegrity ?? obj.ProtocolSecurity?.LDAPServerIntegrity;
+      return integrity !== undefined && integrity !== 2;
+    }
+  },
+  'PROTOCOL_LDAP_CHANNEL_BINDING_DISABLED': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      const binding = obj.LdapEnforceChannelBinding ?? obj.ProtocolSecurity?.LdapEnforceChannelBinding;
+      return binding !== undefined && binding < 2;
+    }
+  },
+  'PROTOCOL_SMB_SIGNING_DISABLED': {
+    category: 'Security',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return obj.RequireSecuritySignature === false ||
+             obj.SMBSigning === false ||
+             obj.ProtocolSecurity?.SMBSigning === false;
+    }
+  },
+
+  // =============================================================================
+  // Trust-related findings (expanded)
+  // =============================================================================
+  'TRUST_BROKEN': {
+    category: 'TrustHealth',
+    identifierField: 'TargetName',
+    validate: (obj) => {
+      const health = (obj.OverallHealth || '').toLowerCase();
+      return health === 'degraded' || health === 'broken' || health === 'failed';
+    }
+  },
+  'TRUST_SID_FILTERING_DISABLED': {
+    category: 'TrustHealth',
+    identifierField: 'TargetName',
+    validate: (obj) => {
+      const warning = JSON.stringify(obj.SecurityWarning || obj.Warnings || '').toLowerCase();
+      return warning.includes('sid filtering') || warning.includes('quarantine');
+    }
+  },
+  'TRUST_PASSWORD_STALE': {
+    category: 'TrustHealth',
+    identifierField: 'TargetName',
+    validate: (obj) => {
+      return obj.DaysSinceModified !== undefined && obj.DaysSinceModified > 60;
+    }
+  },
+  'TRUST_ORPHANED': {
+    category: 'OrphanedTrusts',
+    identifierField: 'TargetName',
+    validate: (obj) => {
+      const status = (obj.Status || '').toUpperCase();
+      return status === 'ORPHANED';
+    }
+  },
+  'TRUST_SUSPICIOUS': {
+    category: 'OrphanedTrusts',
+    identifierField: 'TargetName',
+    validate: (obj) => {
+      const status = (obj.Status || '').toUpperCase();
+      return status === 'SUSPICIOUS';
+    }
+  },
+
+  // =============================================================================
+  // DNS extended findings
+  // =============================================================================
+  'DNS_ROOT_HINTS_OUTDATED': {
+    category: 'DNSRootHints',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const health = (obj.Health || '').toLowerCase();
+      return health === 'outdated' || health === 'stale';
+    }
+  },
+  'DNS_ROOT_HINTS_UNREACHABLE': {
+    category: 'DNSRootHints',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const health = (obj.Health || '').toLowerCase();
+      return health === 'degraded';
+    }
+  },
+  'DNS_RECORD_CONFLICT': {
+    category: 'DNSConflicts',
+    identifierField: 'Name',
+    validate: (obj) => {
+      return obj.DuplicateARecords?.Count > 0 || obj.DuplicateCount > 0;
+    }
+  },
+  'DNS_ORPHANED_CNAME': {
+    category: 'DNSConflicts',
+    identifierField: 'Name',
+    validate: (obj) => obj.OrphanedCNAMEs?.Count > 0 || obj.OrphanedCount > 0
+  },
+  'DNS_STALE_RECORDS_EXCESS': {
+    category: 'DNSConflicts',
+    identifierField: 'Name',
+    validate: (obj) => obj.StaleRecords?.Count > 100 || obj.StaleCount > 100
+  },
+  'DNS_SCAVENGING_MISCONFIGURED': {
+    category: 'DNSScavengingDetailed',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (obj.Issues) return obj.Issues.some(i => i.Type === 'AgingMismatch');
+      return (obj.ScavengingEnabled === true && obj.AgingEnabled === false) ||
+             (obj.ScavengingEnabled === false && obj.AgingEnabled === true);
+    }
+  },
+  'DNS_ZONE_AGING_DISABLED': {
+    category: 'DNSScavengingDetailed',
+    identifierField: 'ZoneName',
+    validate: (obj) => obj.AgingEnabled === false && obj.IsDynamic !== false
+  },
+
+  // =============================================================================
+  // DHCP extended findings
+  // =============================================================================
+  'DHCP_ROGUE_DETECTED': {
+    category: 'DHCPRogueServers',
+    identifierField: 'IPAddress',
+    validate: (obj) => {
+      return obj.RogueServers?.length > 0 || obj.IsRogue === true;
+    }
+  },
+  'DHCP_OPTION_DNS_INVALID': {
+    category: 'DHCPOptionsAudit',
+    identifierField: 'ScopeId',
+    validate: (obj) => {
+      if (obj.Issues) return obj.Issues.some(i => i.Severity === 'HIGH' && i.Option === 6);
+      return false;
+    }
+  },
+  'DHCP_OPTION_DNS_SUFFIX_MISMATCH': {
+    category: 'DHCPOptionsAudit',
+    identifierField: 'ScopeId',
+    validate: (obj) => {
+      if (obj.Issues) return obj.Issues.some(i => i.Option === 15);
+      return false;
+    }
+  },
+  'DHCP_WINS_DEPRECATED': {
+    category: 'DHCPOptionsAudit',
+    identifierField: 'ScopeId',
+    validate: (obj) => {
+      if (obj.Issues) return obj.Issues.some(i => i.Option === 44 || i.Option === 46);
+      return false;
+    }
+  },
+
+  // =============================================================================
+  // Lingering Objects findings (expanded)
+  // =============================================================================
+  'REPLICATION_LINGERING_OBJECTS_CONFIRMED': {
+    category: 'LingeringObjectsRisk',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const risk = (obj.RiskLevel || '').toLowerCase();
+      return risk === 'critical' ||
+             (obj.Indicators && obj.Indicators.some(i =>
+               i.includes('8606') || i.includes('8614') || i.includes('ReplicationError')
+             ));
+    }
+  },
+  'REPLICATION_LINGERING_OBJECTS_HIGH_RISK': {
+    category: 'LingeringObjectsRisk',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const risk = (obj.RiskLevel || '').toLowerCase();
+      return risk === 'high' || (obj.USNGap !== undefined && obj.USNGap > 500000);
+    }
+  },
+  'REPLICATION_LINGERING_OBJECTS_RISK': {
+    category: 'LingeringObjectsRisk',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const risk = (obj.RiskLevel || '').toLowerCase();
+      return risk === 'medium' || (obj.USNGap !== undefined && obj.USNGap > 100000);
+    }
+  },
+
+  // =============================================================================
+  // FSMO Health findings
+  // =============================================================================
+  'FSMO_ROLE_FAILURE': {
+    category: 'FSMORolesHealth',
+    identifierField: 'Role',
+    validate: (obj) => obj.IsAccessible === false || obj.DNSResolution === 'FAILED' || obj.NetworkTest === 'FAILED'
+  },
+  'FSMO_HIGH_LATENCY': {
+    category: 'FSMORolesHealth',
+    identifierField: 'Role',
+    validate: (obj) => (obj.ResponseTimeMs > 200) || (obj.ADResponseTimeMs > 1000)
+  },
+  'FSMO_RID_POOL_EXHAUSTED': {
+    category: 'FSMORolesHealth',
+    identifierField: 'Role',
+    validate: (obj) => obj.PercentUsed > 90 || obj.Warning
+  },
+
+  // =============================================================================
+  // FSMO Placement & RID per DC (incident-based: FSMO-001, FSMO-002)
+  // =============================================================================
+  'FSMO_PLACEMENT_CLOUD_RISK': {
+    category: 'FSMORolesHealth',
+    identifierField: 'Role',
+    validate: (obj) => obj.Site && /cloud|gcp|azure|aws/i.test(obj.Site),
+    validateAffectedObject: (objName, parentObj) => {
+      const roles = parentObj.Roles || parentObj.roles || [];
+      return roles.some(r => r.Role?.toLowerCase().includes(objName.toLowerCase()) || r.Server?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'FSMO_SINGLE_POINT_OF_FAILURE': {
+    category: 'FSMORolesHealth',
+    identifierField: 'Server',
+    validate: (obj) => true // LLM determines if all roles on same server
+  },
+  'FSMO_RID_POOL_PER_DC_LOW': {
+    category: 'FSMORolesHealth',
+    identifierField: 'DC',
+    validate: (obj) => obj.Remaining !== undefined && obj.Remaining < 1000,
+    validateAffectedObject: (objName, parentObj) => {
+      const ridPool = parentObj.RIDPoolPerDC || [];
+      return ridPool.some(r => r.DC?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'FSMO_ROLE_DISTRIBUTION': {
+    category: 'FSMORolesHealth',
+    identifierField: 'Role',
+    validate: () => true // Informational finding
+  },
+
+  // =============================================================================
+  // Replication incident-based findings (REPL-001 through REPL-005)
+  // =============================================================================
+  'REPL_STALENESS_CRITICAL': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (!obj.InboundPartners) return false;
+      return obj.InboundPartners.some(p => {
+        if (!p.LastReplicationSuccess) return true;
+        const lastSuccess = new Date(p.LastReplicationSuccess);
+        const daysSince = (Date.now() - lastSuccess.getTime()) / (1000 * 60 * 60 * 24);
+        return daysSince > 90;
+      });
+    },
+    validateAffectedObject: (objName, parentObj) => {
+      const dcs = parentObj.DomainControllers || [];
+      return dcs.some(dc => dc.DCName?.toLowerCase().includes(objName.toLowerCase()) || dc.HostName?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'REPL_STALENESS_HIGH': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (!obj.InboundPartners) return false;
+      return obj.InboundPartners.some(p => {
+        if (!p.LastReplicationSuccess) return false;
+        const lastSuccess = new Date(p.LastReplicationSuccess);
+        const daysSince = (Date.now() - lastSuccess.getTime()) / (1000 * 60 * 60 * 24);
+        return daysSince > 30 && daysSince <= 90;
+      });
+    }
+  },
+  'REPL_PHANTOM_PARTNER': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (!obj.InboundPartners) return false;
+      return obj.InboundPartners.some(p => p.ConsecutiveFailures > 100 && (p.LastReplicationResult === 1722 || p.LastReplicationResult === '1722'));
+    },
+    validateAffectedObject: (objName, parentObj) => {
+      const dcs = parentObj.DomainControllers || [];
+      return dcs.some(dc => dc.DCName?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'REPL_ERROR_RATE_HIGH': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (!obj.InboundPartners || obj.InboundPartners.length === 0) return false;
+      const failed = obj.InboundPartners.filter(p => p.Status !== 'OK' && p.ConsecutiveFailures > 0).length;
+      return (failed / obj.InboundPartners.length) > 0.25;
+    }
+  },
+  'REPL_TOMBSTONE_RISK': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      if (!obj.InboundPartners) return false;
+      return obj.InboundPartners.some(p => {
+        if (!p.LastReplicationSuccess) return true;
+        const lastSuccess = new Date(p.LastReplicationSuccess);
+        const daysSince = (Date.now() - lastSuccess.getTime()) / (1000 * 60 * 60 * 24);
+        return daysSince > 150; // Approaching 180-day default tombstone
+      });
+    }
+  },
+  'REPL_PASSWORD_INCONSISTENCY': {
+    category: 'ReplicationHealthAllDCs',
+    identifierField: 'Account',
+    validate: (obj) => obj.PasswordConsistency && obj.PasswordConsistency.some(p => p.Status === 'NEVER_REPLICATED' || p.Inconsistent === true)
+  },
+
+  // =============================================================================
+  // Kerberos Auth Failures (incident-based: KERB-001)
+  // =============================================================================
+  'KERB_BRUTE_FORCE_SUSPECTED': {
+    category: 'KerberosAuthFailures',
+    identifierField: 'Account',
+    validate: (obj) => obj.Count > 20 && !obj.IsMachineAccount,
+    validateAffectedObject: (objName, parentObj) => {
+      const accounts = parentObj.ByAccount || parentObj.UserAccountFailures || [];
+      return accounts.some(a => a.Account?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'KERB_MACHINE_SECURE_CHANNEL_BROKEN': {
+    category: 'KerberosAuthFailures',
+    identifierField: 'Account',
+    validate: (obj) => obj.IsMachineAccount === true && (obj.FailureCode === '0x18' || obj.FailureCodes?.includes('0x18')),
+    validateAffectedObject: (objName, parentObj) => {
+      const machines = parentObj.MachineAccountFailures || parentObj.ByAccount?.filter(a => a.IsMachineAccount) || [];
+      return machines.some(m => m.Account?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'KERB_RODC_CACHE_STALE': {
+    category: 'KerberosAuthFailures',
+    identifierField: 'Account',
+    validate: (obj) => obj.Account && /^krbtgt_\d+/i.test(obj.Account)
+  },
+  'KERB_ACCOUNT_MANAGEMENT_ISSUE': {
+    category: 'KerberosAuthFailures',
+    identifierField: 'Account',
+    validate: (obj) => obj.FailureCode === '0x12' || obj.FailureCode === '0x17' || obj.FailureCodes?.some(c => c === '0x12' || c === '0x17')
+  },
+  'KERB_AUTH_SUMMARY': {
+    category: 'KerberosAuthFailures',
+    identifierField: 'CollectedFrom',
+    validate: () => true // Informational summary
+  },
+
+  // =============================================================================
+  // Secure Channel Health (incident-based: KERB-002)
+  // =============================================================================
+  'SECURE_CHANNEL_CRITICAL': {
+    category: 'SecureChannelHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.DaysSincePasswordChange > 90,
+    validateAffectedObject: (objName, parentObj) => {
+      const accounts = parentObj.StaleAccounts || [];
+      return accounts.some(a => a.Name?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'SECURE_CHANNEL_HIGH': {
+    category: 'SecureChannelHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.DaysSincePasswordChange > 60 && obj.DaysSincePasswordChange <= 90
+  },
+  'SECURE_CHANNEL_MEDIUM': {
+    category: 'SecureChannelHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.DaysSincePasswordChange > 45 && obj.DaysSincePasswordChange <= 60
+  },
+  'SECURE_CHANNEL_SUMMARY': {
+    category: 'SecureChannelHealth',
+    identifierField: 'Name',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Site Topology incident-based findings (TOPO-001, TOPO-002)
+  // =============================================================================
+  'TOPO_SITE_LINK_SPOF': {
+    category: 'Sites',
+    identifierField: 'Name',
+    validate: (obj) => obj.SinglePointsOfFailure && obj.SinglePointsOfFailure.length > 0,
+    validateAffectedObject: (objName, parentObj) => {
+      const spofs = parentObj.SinglePointsOfFailure || [];
+      return spofs.some(s => typeof s === 'string' ? s.toLowerCase().includes(objName.toLowerCase()) : s.Name?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'TOPO_HUB_OVERLOADED': {
+    category: 'Sites',
+    identifierField: 'Name',
+    validate: (obj) => obj.HubSites && obj.HubSites.some(h => h.ConnectionCount > 5)
+  },
+  'TOPO_PHANTOM_CONNECTION_OBJECTS': {
+    category: 'Sites',
+    identifierField: 'Name',
+    validate: (obj) => true // LLM cross-references connection objects with site links
+  },
+  'TOPO_CONNECTIVITY_MATRIX': {
+    category: 'Sites',
+    identifierField: 'DCName',
+    validate: () => true // Informational
+  },
+
+  // =============================================================================
+  // DCDiag Health (HEALTH-001)
+  // =============================================================================
+  'DCDIAG_CRITICAL_FAILURE': {
+    category: 'DCDiagHealth',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const criticalTests = ['Replications', 'Services', 'Advertising', 'NetLogons'];
+      return obj.FailedTests?.some((t) => criticalTests.includes(t));
+    },
+    validateAffectedObject: (objName, parentObj) => {
+      const dcs = parentObj.DCs || [];
+      return dcs.some(dc => dc.DCName?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'DCDIAG_HIGH_FAILURE': {
+    category: 'DCDiagHealth',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const highTests = ['FrsEvent', 'DFSREvent', 'RidManager'];
+      return obj.FailedTests?.some((t) => highTests.includes(t));
+    }
+  },
+  'DCDIAG_MEDIUM_FAILURE': {
+    category: 'DCDiagHealth',
+    identifierField: 'DCName',
+    validate: (obj) => {
+      const mediumTests = ['KccEvent', 'Connectivity', 'MachineAccount'];
+      return obj.FailedTests?.some((t) => mediumTests.includes(t));
+    }
+  },
+  'DCDIAG_MINOR_FAILURE': {
+    category: 'DCDiagHealth',
+    identifierField: 'DCName',
+    validate: (obj) => obj.FailedCount > 0
+  },
+  'DCDIAG_HEALTH_SUMMARY': {
+    category: 'DCDiagHealth',
+    identifierField: 'DCName',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // RODC Health (RODC-001)
+  // =============================================================================
+  'RODC_REPLICATION_FAILED': {
+    category: 'RODCHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.ReplicationStatus === 'FAILED' || obj.ReplicationStatus === 'UNREACHABLE',
+    validateAffectedObject: (objName, parentObj) => {
+      const rodcs = parentObj.RODCs || [];
+      return rodcs.some(r => r.Name?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'RODC_EMPTY_PRP': {
+    category: 'RODCHealth',
+    identifierField: 'Name',
+    validate: (obj) => Array.isArray(obj.AllowedPRP) && obj.AllowedPRP.length === 0
+  },
+  'RODC_LOW_CACHE': {
+    category: 'RODCHealth',
+    identifierField: 'Name',
+    validate: (obj) => obj.CachedAccountsCount !== undefined && obj.CachedAccountsCount >= 0 && obj.CachedAccountsCount < 10
+  },
+  'RODC_NONE_FOUND': {
+    category: 'RODCHealth',
+    identifierField: 'Name',
+    validate: () => true
+  },
+  'RODC_HEALTH_SUMMARY': {
+    category: 'RODCHealth',
+    identifierField: 'Name',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // DC Connectivity Matrix (TOPO-002)
+  // =============================================================================
+  'DC_CONNECTIVITY_UNREACHABLE': {
+    category: 'DCConnectivityMatrix',
+    identifierField: 'DCName',
+    validate: (obj) => obj.Status === 'Unreachable',
+    validateAffectedObject: (objName, parentObj) => {
+      const targets = parentObj.Targets || [];
+      return targets.some(t => t.DCName?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'DC_CONNECTIVITY_RPC_BLOCKED': {
+    category: 'DCConnectivityMatrix',
+    identifierField: 'DCName',
+    validate: (obj) => obj.PortResults?.some(p => p.Port === 135 && p.Status !== 'Open')
+  },
+  'DC_CONNECTIVITY_KERBEROS_BLOCKED': {
+    category: 'DCConnectivityMatrix',
+    identifierField: 'DCName',
+    validate: (obj) => obj.PortResults?.some(p => p.Port === 88 && p.Status !== 'Open')
+  },
+  'DC_CONNECTIVITY_LDAP_BLOCKED': {
+    category: 'DCConnectivityMatrix',
+    identifierField: 'DCName',
+    validate: (obj) => obj.PortResults?.some(p => (p.Port === 389 || p.Port === 636) && p.Status !== 'Open')
+  },
+  'DC_CONNECTIVITY_PARTIAL': {
+    category: 'DCConnectivityMatrix',
+    identifierField: 'DCName',
+    validate: (obj) => obj.Status === 'PartiallyReachable'
+  },
+  'DC_CONNECTIVITY_SUMMARY': {
+    category: 'DCConnectivityMatrix',
+    identifierField: 'DCName',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Orphaned DCs (grupotls.edu: SVR-ADTLS error 58)
+  // =============================================================================
+  'ORPHANED_DC_UNREACHABLE': {
+    category: 'OrphanedDCs',
+    identifierField: 'Name',
+    validate: (obj) => obj.PingReachable === false,
+    validateAffectedObject: (objName, parentObj) => {
+      const items = Array.isArray(parentObj) ? parentObj : [];
+      return items.some(i => i.Name?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'ORPHANED_DC_REPLICATION_FAILED': {
+    category: 'OrphanedDCs',
+    identifierField: 'Name',
+    validate: (obj) => obj.PingReachable === true && (obj.ReplicationStatus === 'Errors' || obj.ReplicationStatus === 'Unreachable')
+  },
+  'ORPHANED_DC_RPC_BLOCKED': {
+    category: 'OrphanedDCs',
+    identifierField: 'Name',
+    validate: (obj) => obj.PingReachable === true && obj.LDAPReachable === true && obj.RPCReachable === false
+  },
+  'ORPHANED_DC_SUMMARY': {
+    category: 'OrphanedDCs',
+    identifierField: 'Name',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Replication Latency (grupotls.edu: 35-60min deltas)
+  // =============================================================================
+  'REPL_LATENCY_DEAD_DC': {
+    category: 'ReplicationLatency',
+    identifierField: 'DCName',
+    validate: (obj) => obj.DeltaMinutes === 86400 || obj.DeltaMinutes > 86000
+  },
+  'REPL_LATENCY_OPERATIONAL_ERROR': {
+    category: 'ReplicationLatency',
+    identifierField: 'DCName',
+    validate: (obj) => obj.Direction === 'OperationalError' || obj.ErrorCode
+  },
+  'REPL_LATENCY_HIGH': {
+    category: 'ReplicationLatency',
+    identifierField: 'DCName',
+    validate: (obj) => obj.DeltaMinutes > 60 && obj.DeltaMinutes < 86000
+  },
+  'REPL_LATENCY_MEDIUM': {
+    category: 'ReplicationLatency',
+    identifierField: 'DCName',
+    validate: (obj) => obj.DeltaMinutes > 30 && obj.DeltaMinutes <= 60
+  },
+  'REPL_LATENCY_SUMMARY': {
+    category: 'ReplicationLatency',
+    identifierField: 'DCName',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Site Topology Issues (grupotls.edu: 112 connections from multi-site links)
+  // =============================================================================
+  'SITE_LINK_MULTI_SITE': {
+    category: 'SiteTopologyIssues',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'SiteLink' && obj.IsMultiSite === true
+  },
+  'SITE_EMPTY_NO_DCS': {
+    category: 'SiteTopologyIssues',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'EmptySite'
+  },
+  'SITE_EXCESS_CONNECTIONS': {
+    category: 'SiteTopologyIssues',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'ConnectionSummary' && obj.IsProblematic === true
+  },
+  'SITE_BRIDGEHEAD_CONFIGURED': {
+    category: 'SiteTopologyIssues',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'PreferredBridgehead'
+  },
+
+  // =============================================================================
+  // DC DNS Resolution (grupotls.edu: adgrupotls02 resolving to ::1)
+  // =============================================================================
+  'DC_DNS_LOOPBACK': {
+    category: 'DCDNSResolution',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsLoopback === true
+  },
+  'DC_DNS_MISMATCH': {
+    category: 'DCDNSResolution',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsDNSMismatch === true
+  },
+  'DC_DNS_RESOLUTION_FAILED': {
+    category: 'DCDNSResolution',
+    identifierField: 'Name',
+    validate: (obj) => obj.ResolvedIP === 'DNS_RESOLUTION_FAILED'
+  },
+  'DC_DNS_SUMMARY': {
+    category: 'DCDNSResolution',
+    identifierField: 'Name',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Trust Health Detailed (grupotls.edu: BTECHCLOUD.PE broken trust)
+  // =============================================================================
+  'TRUST_BROKEN_UNREACHABLE': {
+    category: 'TrustHealthDetailed',
+    identifierField: 'TargetDomain',
+    validate: (obj) => obj.DNSResolvable === false && obj.TargetReachable === false
+  },
+  'TRUST_INTRAFOREST_BROKEN': {
+    category: 'TrustHealthDetailed',
+    identifierField: 'TargetDomain',
+    validate: (obj) => obj.IsIntraForest === true && obj.IsProblematic === true
+  },
+  'TRUST_DNS_OK_NLTEST_FAIL': {
+    category: 'TrustHealthDetailed',
+    identifierField: 'TargetDomain',
+    validate: (obj) => obj.DNSResolvable === true && obj.TargetReachable === false
+  },
+  'TRUST_HEALTH_DETAILED_SUMMARY': {
+    category: 'TrustHealthDetailed',
+    identifierField: 'TargetDomain',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Domain Health Summary (grupotls.edu: ucaladmin.local/ucalad.local decommissioned)
+  // =============================================================================
+  'DOMAIN_DEAD_DCS': {
+    category: 'DomainHealthSummary',
+    identifierField: 'DomainName',
+    validate: (obj) => obj.HasDeadDCs === true
+  },
+  'DOMAIN_SINGLE_DC': {
+    category: 'DomainHealthSummary',
+    identifierField: 'DomainName',
+    validate: (obj) => obj.HasSingleDC === true
+  },
+  'DOMAIN_DECOMMISSION_CANDIDATE': {
+    category: 'DomainHealthSummary',
+    identifierField: 'DomainName',
+    validate: (obj) => obj.HasOnlyTestUsers === true || (obj.UserCount < 10 && obj.ComputerCount < 5 && !obj.IsForestRoot)
+  },
+  'DOMAIN_FOREST_SUMMARY': {
+    category: 'DomainHealthSummary',
+    identifierField: 'DomainName',
+    validate: () => true
+  },
+
+  // =============================================================================
+  // Orphaned Metadata (grupotls.edu: post-decommission residual)
+  // =============================================================================
+  'METADATA_ORPHANED_SERVER': {
+    category: 'OrphanedMetadata',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'OrphanedServer'
+  },
+  'METADATA_ORPHANED_CROSSREF': {
+    category: 'OrphanedMetadata',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'OrphanedCrossRef'
+  },
+  'METADATA_ORPHANED_DNS': {
+    category: 'OrphanedMetadata',
+    identifierField: 'Name',
+    validate: (obj) => obj.Type === 'OrphanedDNSRecord'
+  },
+  'METADATA_CLEANUP_SUMMARY': {
+    category: 'OrphanedMetadata',
+    identifierField: 'Name',
+    validate: () => true
+  },
+  // === DC Services Health ===
+  'DC_SERVICE_CRITICAL_STOPPED': {
+    category: 'DCServicesHealth',
+    identifierField: 'DCName',
+    validate: (obj) => obj.IsProblematic === true && obj.Services?.some(s => !s.IsRunning && ['NTDS', 'KDC', 'Netlogon'].includes(s.Name))
+  },
+  'DC_SERVICE_HIGH_STOPPED': {
+    category: 'DCServicesHealth',
+    identifierField: 'DCName',
+    validate: (obj) => obj.IsProblematic === true && obj.Services?.some(s => !s.IsRunning && ['DNS', 'DFSR', 'W32Time'].includes(s.Name))
+  },
+  'DC_SERVICE_MEDIUM_STOPPED': {
+    category: 'DCServicesHealth',
+    identifierField: 'DCName',
+    validate: (obj) => obj.IsProblematic === true && obj.Services?.some(s => !s.IsRunning && ['IsmServ', 'SamSs'].includes(s.Name))
+  },
+  'DC_SERVICE_UNREACHABLE': {
+    category: 'DCServicesHealth',
+    identifierField: 'DCName',
+    validate: (obj) => obj.Services?.some(s => s.Status === 'Error')
+  },
+  'DC_SERVICE_HEALTH_SUMMARY': {
+    category: 'DCServicesHealth',
+    identifierField: 'DCName',
+    validate: () => true
+  },
+  // === DC Disk Space ===
+  'DC_DISK_CRITICAL': {
+    category: 'DCDiskSpace',
+    identifierField: 'DCName',
+    validate: (obj) => obj.LowestFreePercent < 10
+  },
+  'DC_DISK_LOW': {
+    category: 'DCDiskSpace',
+    identifierField: 'DCName',
+    validate: (obj) => obj.LowestFreePercent < 20
+  },
+  'DC_DISK_WARNING': {
+    category: 'DCDiskSpace',
+    identifierField: 'DCName',
+    validate: (obj) => obj.LowestFreePercent < 30
+  },
+  'DC_DISK_SUMMARY': {
+    category: 'DCDiskSpace',
+    identifierField: 'DCName',
+    validate: () => true
+  },
+  // === SYSVOL Replication State ===
+  'SYSVOL_FRS_DEPRECATED': {
+    category: 'SYSVOLReplicationState',
+    identifierField: 'ReplicationMechanism',
+    validate: (obj) => obj.IsFRS === true
+  },
+  'SYSVOL_NOT_READY': {
+    category: 'SYSVOLReplicationState',
+    identifierField: 'DCName',
+    validate: (obj) => obj.SYSVOLReady === false,
+    validateAffectedObject: (objName, parentObj) => {
+      return parentObj.DCs?.some(dc => dc.DCName?.toLowerCase().includes(objName.toLowerCase()) && dc.SYSVOLReady === false);
+    }
+  },
+  'SYSVOL_SIZE_EXCESSIVE': {
+    category: 'SYSVOLReplicationState',
+    identifierField: 'DCName',
+    validate: (obj) => obj.SYSVOLSizeGB > 1,
+    validateAffectedObject: (objName, parentObj) => {
+      return parentObj.DCs?.some(dc => dc.DCName?.toLowerCase().includes(objName.toLowerCase()) && dc.SYSVOLSizeGB > 1);
+    }
+  },
+  'SYSVOL_SIZE_MISMATCH': {
+    category: 'SYSVOLReplicationState',
+    identifierField: 'DCName',
+    validate: () => true
+  },
+  'SYSVOL_REPLICATION_SUMMARY': {
+    category: 'SYSVOLReplicationState',
+    identifierField: 'ReplicationMechanism',
+    validate: () => true
+  },
+  // === GPO Complexity ===
+  'GPO_MONOLITHIC': {
+    category: 'GPOComplexity',
+    identifierField: 'Name',
+    validate: (obj) => obj.SettingsCount > 50
+  },
+  'GPO_EMPTY': {
+    category: 'GPOComplexity',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsEmpty === true
+  },
+  'GPO_UNLINKED': {
+    category: 'GPOComplexity',
+    identifierField: 'Name',
+    validate: (obj) => obj.IsUnlinked === true
+  },
+  'GPO_VERSION_MISMATCH': {
+    category: 'GPOComplexity',
+    identifierField: 'Name',
+    validate: (obj) => obj.HasVersionMismatch === true
+  },
+  'GPO_COMPLEXITY_SUMMARY': {
+    category: 'GPOComplexity',
+    identifierField: 'Name',
+    validate: () => true
+  },
+  // === Duplicate SPNs ===
+  'SPN_DUPLICATE_CRITICAL': {
+    category: 'DuplicateSPNs',
+    identifierField: 'SPN',
+    validate: (obj) => obj.OwnerCount > 1,
+    validateAffectedObject: (objName, parentObj) => {
+      return parentObj.Duplicates?.some(d => d.SPN?.toLowerCase().includes(objName.toLowerCase()) || d.Owners?.toLowerCase().includes(objName.toLowerCase()));
+    }
+  },
+  'SPN_DUPLICATE_WIDESPREAD': {
+    category: 'DuplicateSPNs',
+    identifierField: 'SPN',
+    validate: (obj) => obj.DuplicateCount > 5
+  },
+  'SPN_DUPLICATE_SUMMARY': {
+    category: 'DuplicateSPNs',
+    identifierField: 'SPN',
+    validate: () => true
   }
 };
 
@@ -2418,33 +3580,67 @@ DHCP asigna configuración de red crítica (IP, gateway, DNS servers). Un DHCP c
 
     FSMORolesHealth: `Analiza la salud de los roles FSMO del dominio.
 
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta datos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de DCs, sitios, roles ni métricas.
+
 **⚠️ CONTEXTO:**
 Los roles FSMO son críticos para la operación de AD. Si un rol no es accesible, puede causar fallos en la creación de objetos, autenticación o actualizaciones de esquema.
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **🔴 CRITICAL: Roles Inaccesibles**
-   - Si IsAccessible = false
-   - Si DNSResolution = "FAILED"
-   - Si NetworkTest = "FAILED"
-   - Riesgo: Fallo operativo mayor (ej. no se pueden crear usuarios si RID Master falla).
+**📊 ESTRUCTURA DE DATOS:**
+El objeto FSMORolesHealth puede contener:
+- Roles[]: Array con {Role, Server, Site, IsAccessible, DNSResolution, NetworkTest, ResponseTimeMs, ADResponseTimeMs, IsGC}
+- RIDPoolPerDC[]: Array con {DC, Site, PoolStart, PoolEnd, NextRID, Remaining} — pool de RIDs por DC
+- PercentUsed, Warning: Indicadores globales de RID pool
 
-2. **⚠️ HIGH: Latencia Excesiva**
-   - ResponseTimeMs > 200ms (en LAN) o > 500ms (WAN).
-   - ADResponseTimeMs > 1000ms (DC sobrecargado).
+**📋 ANÁLISIS REQUERIDO - GENERA FINDINGS PARA:**
 
-3. **⚠️ MEDIUM: RID Pool bajo**
-   - Si PercentUsed > 90% o Warning existe.
-   - Acción: Monitorear o solicitar nuevo pool.
+### 1. 🔴 CRITICAL: Roles Inaccesibles
+- Si IsAccessible = false, DNSResolution = "FAILED" o NetworkTest = "FAILED"
+- type_id: FSMO_ROLE_FAILURE
+- Riesgo: Fallo operativo mayor (ej. no se pueden crear usuarios si RID Master falla)
 
-4. **ℹ️ INFO: Distribución de Roles**
-   - Reportar qué DC tiene qué roles.
-   - Best practice: Schema/Naming en un DC, PDC/RID/Infra en otro (para dominios grandes).
+### 2. 🔴 CRITICAL: Roles Operacionales en DC Cloud/Remoto sin Ruta Directa [FSMO-001]
+- Si PDC Emulator, RID Master o Infrastructure Master están en un Site tipo "CLOUD" o que NO es el hub principal
+- Evalúa la topología: si sedes remotas no tienen Site Link directo al Site del FSMO holder → CRITICAL
+- Patrón de incidente real: FSMO roles en cloud (GCP/Azure/AWS) donde sedes remotas solo llegan vía hub intermedio
+- Si el hub intermedio cae, TODAS las sedes pierden acceso a PDC Emulator y RID Master
+- type_id: FSMO_PLACEMENT_CLOUD_RISK
+- Recomendación: "Mover PDC Emulator, RID Master e Infrastructure Master al DC hub on-premise con mejor conectividad"
+- Schema Master y Domain Naming Master en cloud es aceptable (se usan raramente)
 
-**FORMATO REPORTE:**
-- **type_id**: FSMO_ROLE_FAILURE, FSMO_HIGH_LATENCY, FSMO_RID_POOL_EXHAUSTED.
-- **Título**: "Rol FSMO [ROL] inaccesible en [SERVER]".
-- **Descripción**: Impacto operativo específico del rol fallido.
-- **Evidencia**: Tiempos de respuesta, errores de DNS.`,
+### 3. ⚠️ HIGH: Todos los Roles en un Solo DC
+- Si todos los roles FSMO apuntan al mismo Server → single point of failure
+- type_id: FSMO_SINGLE_POINT_OF_FAILURE
+- Recomendación: Distribuir roles entre al menos 2 DCs
+
+### 4. ⚠️ HIGH: Latencia Excesiva
+- ResponseTimeMs > 200ms (LAN) o > 500ms (WAN)
+- ADResponseTimeMs > 1000ms (DC sobrecargado)
+- type_id: FSMO_HIGH_LATENCY
+
+### 5. ⚠️ HIGH: RID Pool Bajo por DC [FSMO-002]
+- Si existe RIDPoolPerDC[], analizar CADA DC individualmente:
+  - Remaining < 100: CRITICAL — "DC [X] en site [Y] tiene solo [N] RIDs, no puede crear objetos"
+  - Remaining < 500: HIGH — "DC [X] necesita solicitar nuevo pool al RID Master"
+  - Remaining < 1000: MEDIUM — "Monitorear consumo de RIDs en DC [X]"
+- CRUZAR con accesibilidad al RID Master: si un DC remoto tiene pocos RIDs Y no puede contactar al RID Master → CRITICAL
+- type_id: FSMO_RID_POOL_PER_DC_LOW
+- Recomendación: "dcdiag /test:ridmanager /v /s:[DC]" para solicitar nuevo pool
+
+### 6. ⚠️ MEDIUM: RID Pool Global Bajo
+- Si PercentUsed > 90% o Warning existe
+- type_id: FSMO_RID_POOL_EXHAUSTED
+
+### 7. ℹ️ INFO: Distribución de Roles
+- type_id: FSMO_ROLE_DISTRIBUTION
+- Reportar qué DC tiene qué roles
+- Best practice: Schema/Naming en un DC, PDC/RID/Infra en otro
+- Infrastructure Master NO debe estar en un GC en forest multi-dominio
+
+**📤 FORMATO DE REPORTE:**
+- **type_id**: FSMO_ROLE_FAILURE, FSMO_PLACEMENT_CLOUD_RISK, FSMO_SINGLE_POINT_OF_FAILURE, FSMO_HIGH_LATENCY, FSMO_RID_POOL_PER_DC_LOW, FSMO_RID_POOL_EXHAUSTED, FSMO_ROLE_DISTRIBUTION
+- **Título**: "Rol FSMO [ROL] inaccesible en [SERVER]" o "Roles operacionales FSMO ubicados en Site cloud sin conectividad directa"
+- **Descripción**: Impacto operativo específico del rol fallido
+- **Evidencia**: Tiempos de respuesta, errores de DNS, Sites afectados, RIDs restantes por DC`,
 
     ReplicationHealthAllDCs: `Analiza la salud completa de replicación de Active Directory para un reporte ejecutivo.
 
@@ -2554,163 +3750,484 @@ Para el finding de ESTADO GENERAL, incluir SIEMPRE:
 }
 \`\`\`
 
+### 6. ANTIGÜEDAD DE REPLICACIÓN — STALENESS [REPL-001]
+Calcula cuánto tiempo lleva cada DC sin replicar exitosamente:
+- Usa LastReplicationSuccess de cada InboundPartner
+- Si TODAS las particiones de un DC fallan → DC completamente aislado (más grave)
+- Si solo algunas fallan → replicación parcial
+
+Escalas de severidad:
+- > 180 días: CRITICAL — "Excede tombstone lifetime, DC debe ser descomisionado (dcpromo /forceremoval)"
+- > 90 días: HIGH — "Riesgo de tombstone, verificar conectividad y forzar replicación manual"
+- > 30 días: MEDIUM — "Investigar causa raíz: firewall, servicios AD, conectividad VPN"
+- > 7 días: LOW — "Requiere investigación"
+- > 24 horas: INFO — "Monitorear"
+- type_id: REPL_STALENESS_CRITICAL o REPL_STALENESS_HIGH
+
+### 7. PARTNERS DE REPLICACIÓN FANTASMA/RESIDUALES [REPL-002]
+Identifica partners de replicación que NO deberían existir:
+- ConsecutiveFailures > 100 con LastReplicationResult = 1722 (RPC Unavailable)
+- Partners entre DCs en Sites SIN Site Link directo entre ellos
+- Patrón de incidente real: partners residuales hacia un DC (ej. AD-AQP) que no tiene conectividad con las sedes, generando miles de intentos fallidos
+- type_id: REPL_PHANTOM_PARTNER
+- severity: MEDIUM (generan ruido y confunden monitoreo)
+- Recomendación: "Eliminar con: repadmin /delete [partición] [DC_destino] [DC_source] /localonly"
+- GENERAR los comandos exactos para cada par identificado
+
+### 8. PORCENTAJE DE ERRORES POR DC [REPL-003]
+Si hay FailedReplications o datos de replsummary:
+- Calcular ratio fails/total para cada DC como Source y como Destination
+- > 50% errores: CRITICAL
+- > 25%: HIGH
+- > 10%: MEDIUM
+- Si un DC tiene alto % como Destination pero bajo como Source → problema en el DC destino (servicios, firewall)
+- Si TODOS los DCs muestran errores hacia un mismo DC → problema centralizado
+- type_id: REPL_ERROR_RATE_HIGH
+- Recomendación según patrón detectado
+
+### 9. RIESGO DE TOMBSTONE [REPL-004]
+Comparar antigüedad de última replicación con Tombstone Lifetime (180 días default WS2003 SP2+):
+- Si (tombstoneLifetime - díasSinReplicar) < 30 días: HIGH — "DC [X] a [N] días de exceder tombstone"
+- Si < 7 días: CRITICAL — "DC [X] a punto de ser irrecuperable"
+- Si excedido: CRITICAL — "DC [X] excedió tombstone lifetime, requiere descomisionamiento y reinstalación"
+- type_id: REPL_TOMBSTONE_RISK
+- Generar tabla: DC | Días sin replicar | Tombstone Lifetime | Días restantes | Estado
+
+### 10. CONSISTENCIA DE REPLICACIÓN DE CONTRASEÑAS [REPL-005]
+Si hay datos de PasswordConsistency o indicadores de pwdLastSet inconsistente:
+- pwdLastSet = 0 (fecha 01/01/1601) en algún DC → "NUNCA se replicó a ese DC"
+- 2+ valores distintos de pwdLastSet entre DCs → replicación parcial
+- Inconsistencia en cuentas de servicio: CRITICAL
+- Inconsistencia en cuentas de máquina: HIGH
+- type_id: REPL_PASSWORD_INCONSISTENCY
+
 **🚫 NO HACER:**
 - NO inventar nombres de DCs
 - NO estimar latencias
 - NO omitir DCs con Health="Unreachable" - son CRÍTICOS
 - NO ignorar el campo Error cuando existe
+- NO asumir que partners con muchos fallos son fantasma sin verificar Site Links
 
 **✅ EJEMPLO DE ANÁLISIS CORRECTO:**
 Si Summary muestra: HealthyDCs=4, TotalDCs=5, y un DC tiene Health="Unreachable":
 → Generar finding CRITICAL por DC inalcanzable
 → Generar finding con estado general DEGRADADO
 → Calcular latencias de los InboundPartners
+→ Verificar antigüedad de última replicación (REPL-001)
+→ Buscar partners con >100 fallos consecutivos y error 1722 (REPL-002)
+→ Calcular ratio de errores por DC (REPL-003)
+→ Comparar días sin replicar vs tombstone lifetime (REPL-004)
 → Listar todos los DCs y sus estados`,
 
     LingeringObjectsRisk: `Analiza el riesgo de Lingering Objects (Objetos Fantasma).
 
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs y datos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de servidores, USN values ni indicadores.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del JSON
+- CUENTA exactamente cuántos DCs tienen cada nivel de riesgo
+- NO reportes indicadores que no existan en los datos
+
 **⚠️ CONTEXTO:**
-Los objetos fantasma ocurren cuando un DC no replica por más tiempo que el Tombstone Lifetime (180 días típica). Si se reconecta, puede reintroducir objetos borrados.
+Los objetos fantasma (lingering objects) ocurren cuando un DC no replica por más tiempo que el Tombstone Lifetime (180 días típica). Si se reconecta, puede reintroducir objetos borrados — corrompiendo el directorio y causando inconsistencias en autenticación, permisos y membresía de grupos.
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **🔴 CRITICAL: Evidencia Confirmada**
-   - RiskLevel = "Critical" o Indicators contiene "ReplicationError" (8606, 8614).
-   - Acción: Aislamiento INMEDIATO del DC afectado. NO replicar.
+**🎯 PRIORIDADES DE DETECCIÓN:**
 
-2. **⚠️ MEDIUM: Riesgo Potencial (USN Gap)**
-   - RiskLevel = "Medium" o USN Gap > 100,000.
-   - Acción: Habilitar "Strict Replication Consistency".
+1. **🔴 CRITICAL: Evidencia Confirmada de Lingering Objects**
+   - RiskLevel = "Critical" o Indicators contiene "ReplicationError" (Event IDs 8606, 8614)
+   - Riesgo: Objetos eliminados reaparecen, cuentas deshabilitadas se reactivan, permisos revocados se restauran
+   - type_id: REPLICATION_LINGERING_OBJECTS_CONFIRMED
+   - Impacto: Corrupción de directorio, incidentes de seguridad (cuentas zombi), datos inconsistentes entre DCs
+   - Comando verificar: repadmin /removelingeringobjects <DC> <DirectoryPartition> /advisory_mode
+   - Acción: Aislamiento INMEDIATO del DC afectado — NO permitir replicación hasta limpieza
+   - Procedimiento:
+     * Paso 1: repadmin /removelingeringobjects <SourceDC> <DestinationDCGuid> <DirectoryPartition> /advisory_mode
+     * Paso 2: Revisar Event ID 1942 para lista de objetos fantasma
+     * Paso 3: repadmin /removelingeringobjects <SourceDC> <DestinationDCGuid> <DirectoryPartition> (sin /advisory_mode para limpiar)
+     * Paso 4: Habilitar Strict Replication Consistency: repadmin /regkey <DC> +strict
+   - Timeline: Remediar INMEDIATAMENTE (4 horas)
 
-**FORMATO REPORTE:**
-- **type_id**: REPLICATION_LINGERING_OBJECTS_CONFIRMED, REPLICATION_LINGERING_OBJECTS_RISK.
-- **Título**: "Riesgo CRÍTICO de objetos fantasma detectado en [DC]".
-- **Descripción**: Explicar qué es un lingering object y por qué corrompe el directorio.
-- **Recomendación**: Procedimiento específico de limpieza (Strict Replication Consistency, repadmin /removelingeringobjects).`,
+2. **⚠️ HIGH: Riesgo Elevado (USN Gap grande)**
+   - RiskLevel = "High" o USN Gap > 500,000
+   - DC ha estado offline por período significativo, probable que tenga objetos fantasma
+   - type_id: REPLICATION_LINGERING_OBJECTS_HIGH_RISK
+   - Comando verificar: repadmin /showutdvec <DC> <partition> /latency
+   - Acción: Ejecutar advisory mode antes de permitir replicación completa
+   - Timeline: Verificar en 24 horas
 
-    TrustHealth: `Analiza la salud de las relaciones de confianza (Trusts).
+3. **⚠️ MEDIUM: Riesgo Potencial (USN Gap moderado)**
+   - RiskLevel = "Medium" o USN Gap > 100,000
+   - type_id: REPLICATION_LINGERING_OBJECTS_RISK
+   - Acción: Habilitar Strict Replication Consistency preventivamente
+   - Comando: repadmin /regkey * +strict
+   - Timeline: Habilitar en 7 días
 
-**BUSCA ESPECÍFICAMENTE:**
+4. **ℹ️ INFO: Sin riesgo detectado**
+   - Todos los DCs dentro de TSL, sin gaps significativos
+   - type_id: REPLICATION_LINGERING_OBJECTS_CLEAN
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: REPLICATION_LINGERING_OBJECTS_CONFIRMED, REPLICATION_LINGERING_OBJECTS_HIGH_RISK, REPLICATION_LINGERING_OBJECTS_RISK, REPLICATION_LINGERING_OBJECTS_CLEAN
+- **Título**: "Riesgo [NIVEL] de objetos fantasma detectado en [N] DCs"
+- **Descripción**: Qué son los lingering objects, por qué corrompen el directorio, DCs afectados
+- **Recomendación**: Procedimiento de limpieza paso a paso con repadmin
+- **Evidencia**: affected_objects con DCs reales, USN gaps reales, indicadores del JSON`,
+
+    TrustHealth: `Analiza la salud de las relaciones de confianza (Trusts) del dominio.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta trusts que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de dominios, estados ni resultados de tests.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del campo 'TargetName', 'TrustPartner' o 'Name' del JSON
+- CUENTA exactamente cuántos trusts tienen cada problema
+- Verifica el campo OverallHealth, ValidationTests, SecurityWarning REALES
+
+**🚫 NO HACER:**
+- NO inventar nombres de dominios o trusts
+- NO estimar conteos
+- NO asumir estados que no estén en el JSON
+
+**⚠️ CONTEXTO:**
+Las relaciones de confianza (trusts) permiten autenticación entre dominios y bosques. Un trust roto impide que usuarios de un dominio accedan a recursos del otro. Un trust mal configurado permite escalación de privilegios entre dominios.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
 1. **🔴 CRITICAL: Trust Roto o Fallido**
-   - OverallHealth = "Degraded" o "Broken".
-   - ValidationTests contains "FAILED".
-   - Riesgo: Pérdida de acceso a recursos entre dominios.
+   - OverallHealth = "Degraded", "Broken" o "Failed"
+   - ValidationTests contiene "FAILED" en cualquier test (DNS, LDAP, SecureChannel)
+   - Riesgo: Usuarios de dominios de confianza no pueden autenticarse, acceso a recursos compartidos falla
+   - type_id: TRUST_BROKEN
+   - Impacto: Interrupción de servicios cross-domain, fallos en aplicaciones que dependen del trust
+   - Comando verificar: Get-ADTrust -Filter * | Test-ADTrustRelationship
+   - Comando fix: netdom trust DOMINIO_LOCAL /domain:DOMINIO_REMOTO /reset /passwordT:NUEVA_PASSWORD
+   - Alternativa: Reset desde ADDT (Active Directory Domains and Trusts) GUI
+   - Verificación: nltest /sc_verify:DOMINIO_REMOTO
+   - Timeline: Remediar INMEDIATAMENTE (4-8 horas)
 
-2. **🔴 HIGH: Configuración Insegura (SID Filtering)**
-   - SecurityWarning present ("SID Filtering disabled").
-   - Riesgo: Elevación de privilegios desde el dominio confiado (SID History Injection).
+2. **🔴 HIGH: SID Filtering deshabilitado**
+   - SecurityWarning contiene "SID Filtering disabled" o "quarantine off"
+   - Riesgo: Un administrador del dominio confiado puede usar SID History Injection para ser Enterprise Admin
+   - MITRE ATT&CK: T1134.005 (Access Token Manipulation: SID-History Injection)
+   - type_id: TRUST_SID_FILTERING_DISABLED
+   - Impacto: Compromiso del dominio confiado = compromiso del bosque completo
+   - Comando verificar: netdom trust DOMINIO /domain:OTRO_DOMINIO /quarantine
+   - Comando fix: netdom trust DOMINIO /domain:OTRO_DOMINIO /quarantine:yes
+   - NOTA: Para trusts intra-forest esto es normal, solo es crítico en trusts inter-forest
+   - Timeline: Habilitar en 24 horas (inter-forest), evaluar para intra-forest
 
-3. **⚠️ MEDIUM: Password de Trust no rotado**
-   - DaysSinceModified > 60-90 días (automático debería ser 30).
-   - Riesgo: Si la password no rota, puede indicar fallo en el canal seguro.
+3. **⚠️ HIGH: Selective Authentication no habilitada**
+   - TrustAttributes no incluye Selective Authentication (para forest trusts)
+   - Riesgo: TODOS los usuarios del otro bosque tienen Authenticated Users en este bosque
+   - type_id: TRUST_NO_SELECTIVE_AUTH
+   - Impacto: Superficie de ataque ampliada — usuarios externos acceden a cualquier recurso
+   - Comando verificar: Get-ADTrust -Filter * -Properties TrustAttributes
+   - Timeline: Evaluar en 14 días
 
-**FORMATO REPORTE:**
-- **type_id**: TRUST_BROKEN, TRUST_INSECURE_CONFIG, TRUST_PASSWORD_STALE.
-- **Título**: "Confianza [NOMBRE] rota o degradada" o "Filtrado de SID deshabilitado en [TRUST]".
-- **Recomendación**: Reset-ComputerMachinePassword, netdom trust /verify, habilitar SID filtering (netdom trust /quarantine).`,
+4. **⚠️ MEDIUM: Password de Trust no rotada**
+   - DaysSinceModified > 60 días (rotación automática debería ser cada 30 días)
+   - Riesgo: Indica fallo en el canal seguro o trust abandonado
+   - type_id: TRUST_PASSWORD_STALE
+   - Comando verificar: Get-ADTrust -Filter * -Properties WhenChanged | Select Name,WhenChanged
+   - Comando fix: netdom trust DOMINIO /domain:OTRO_DOMINIO /reset /passwordT:NUEVA_PASSWORD
+   - Timeline: Investigar en 7 días
 
-    OrphanedTrusts: `Analiza trusts huérfanos (apuntan a dominios inexistentes).
+5. **ℹ️ INFO: Inventario de trusts saludables**
+   - Trusts con OverallHealth = "Healthy" y todos los tests OK
+   - type_id: TRUST_HEALTHY
+   - Reportar: Nombre, tipo (Forest/External/Shortcut), dirección (Bidirectional/Inbound/Outbound)
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **⚠️ HIGH: Trusts Huérfanos**
-   - Status = "ORPHANED".
-   - Riesgo: Retrasos en autenticación, "ruido" en logs, posible vector si alguien registra el dominio expirado.
+**📋 FORMATO DE REPORTE:**
+- **type_id**: TRUST_BROKEN, TRUST_SID_FILTERING_DISABLED, TRUST_NO_SELECTIVE_AUTH, TRUST_PASSWORD_STALE, TRUST_HEALTHY
+- **Título**: "Trust [NOMBRE] con [PROBLEMA]" — usar nombres REALES del JSON
+- **Descripción**: Impacto en autenticación cross-domain, vector de ataque si aplica
+- **Recomendación**: Comandos netdom/PowerShell específicos
+- **Evidencia**: affected_objects con nombres de trust reales, detalles de tests fallidos`,
+
+    OrphanedTrusts: `Analiza trusts huérfanos que apuntan a dominios inexistentes o inalcanzables.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta trusts que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de dominios ni estados.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del JSON
+- Verifica el campo Status REAL de cada trust
+
+**⚠️ CONTEXTO:**
+Los trusts huérfanos son relaciones de confianza que apuntan a dominios que ya no existen (expirados, decommissioned, o migrados). Causan retrasos en autenticación, ruido en logs, y representan un riesgo si alguien registra el dominio expirado.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 HIGH: Trusts Huérfanos Confirmados**
+   - Status = "ORPHANED" — el dominio destino no responde a DNS ni LDAP
+   - Riesgo: Retrasos en Kerberos referral (timeout esperando al dominio inexistente)
+   - Riesgo avanzado: Si el dominio expira, un atacante podría registrarlo y establecer trust malicioso
+   - type_id: TRUST_ORPHANED
+   - Impacto: 3-15 segundos de delay en cada autenticación que intenta el referral
+   - Comando verificar: nltest /sc_query:DOMINIO_HUERFANO
+   - Comando fix: Remove-ADTrust -Identity "DOMINIO_HUERFANO" -Confirm:$false
+   - Verificación post-fix: Get-ADTrust -Filter * | Select Name,TargetName
+   - Timeline: Eliminar en 7 días
 
 2. **⚠️ MEDIUM: Trusts Sospechosos**
-   - Status = "SUSPICIOUS" (Fallo DNS o LDAP).
+   - Status = "SUSPICIOUS" — fallo parcial (DNS resuelve pero LDAP/Kerberos falla)
+   - Riesgo: Trust puede estar en proceso de degradación, o el dominio está parcialmente offline
+   - type_id: TRUST_SUSPICIOUS
+   - Comando verificar: nltest /sc_verify:DOMINIO_SOSPECHOSO
+   - Acción: Investigar antes de eliminar — podría ser problema temporal de red
+   - Timeline: Investigar en 14 días
 
-**FORMATO REPORTE:**
-- **type_id**: TRUST_ORPHANED, TRUST_SUSPICIOUS.
-- **Título**: "Relación de confianza huérfana detectada: [TARGET]".
-- **Recomendación**: Eliminar trusts obsoletos (Remove-ADTrust).`,
+3. **ℹ️ INFO: Trusts verificados como activos**
+   - Status = "ACTIVE" o "HEALTHY" — trusts funcionando correctamente
+   - type_id: TRUST_ACTIVE
+   - Reportar para inventario
 
-    DNSRootHints: `Analiza los Root Hints de DNS.
+**📋 FORMATO DE REPORTE:**
+- **type_id**: TRUST_ORPHANED, TRUST_SUSPICIOUS, TRUST_ACTIVE
+- **Título**: "[N] relaciones de confianza huérfanas detectadas: [NOMBRES_REALES]"
+- **Descripción**: Impacto en performance de autenticación, riesgo de domain takeover
+- **Recomendación**: Procedimiento de eliminación con Remove-ADTrust
+- **Evidencia**: affected_objects con target domains reales del JSON`,
 
-**BUSCA ESPECÍFICAMENTE:**
+    DNSRootHints: `Analiza los Root Hints de DNS en los Domain Controllers.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs y Root Hints que aparezcan EXPLÍCITAMENTE en los datos JSON.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del JSON
+- NO inventes IPs de root servers ni nombres de DCs
+
+**⚠️ CONTEXTO:**
+Los Root Hints son la lista de servidores DNS raíz de Internet (13 root servers a-m.root-servers.net). Son necesarios para resolver dominios externos cuando los forwarders no responden. Si están desactualizados, la resolución externa puede fallar intermitentemente.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
 1. **⚠️ MEDIUM: Root Hints Obsoletos**
-   - Health = "Outdated".
-   - IPs no coinciden con las de IANA (ej. IP antigua de b.root-servers.net).
-   - Riesgo: Fallos esporádicos en resolución externa.
+   - Health = "Outdated" o "Stale"
+   - IPs no coinciden con las actuales de IANA (cambian cada ~2-5 años)
+   - Riesgo: Fallos esporádicos en resolución de dominios externos
+   - type_id: DNS_ROOT_HINTS_OUTDATED
+   - Impacto: Resolución DNS lenta o fallida para dominios de Internet
+   - Comando verificar: Get-DnsServerRootHint | Select NameServer, IPAddress
+   - Comando actualizar:
+     * dnscmd /RecordDelete . NS a.root-servers.net.
+     * Import-DnsServerRootHint -NameServer "a.root-servers.net" -IPAddress "198.41.0.4","2001:503:ba3e::2:30"
+     * O usar DNS Manager GUI > Properties > Root Hints > Copy from server
+   - Referencia: https://www.iana.org/domains/root/servers
+   - Timeline: Actualizar en 30 días
 
 2. **⚠️ MEDIUM: Root Hints Inalcanzables**
-   - Health = "Degraded" (pocos servidores alcanzables).
-   - Riesgo: Rendimiento pobre o fallo total de resolución externa si caen forwarders.
+   - Health = "Degraded" — menos de 8 de 13 root servers son alcanzables
+   - Riesgo: Si forwarders fallan, la resolución recae en root hints degradados
+   - type_id: DNS_ROOT_HINTS_UNREACHABLE
+   - Causa probable: Firewall bloqueando DNS (port 53 UDP/TCP) hacia Internet
+   - Comando test: Resolve-DnsName -Name "a.root-servers.net" -Server (hostname)
+   - Timeline: Investigar en 14 días
 
-**FORMATO REPORTE:**
-- **type_id**: DNS_ROOT_HINTS_OUTDATED, DNS_ROOT_HINTS_UNREACHABLE.
-- **Título**: "Root Hints desactualizados en [DC]".
-- **Recomendación**: Actualizar via GUI DNS o PowerShell (Import-DnsServerRootHint).`,
+3. **ℹ️ INFO: Root Hints saludables**
+   - Health = "Healthy" — todos los root servers actualizados y alcanzables
+   - type_id: DNS_ROOT_HINTS_HEALTHY
 
-    DNSConflicts: `Analiza conflictos en registros DNS.
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DNS_ROOT_HINTS_OUTDATED, DNS_ROOT_HINTS_UNREACHABLE, DNS_ROOT_HINTS_HEALTHY
+- **Título**: "Root Hints de DNS [ESTADO] en [N] Domain Controllers"
+- **Descripción**: Impacto en resolución DNS externa, root servers afectados
+- **Recomendación**: Comandos PowerShell para actualizar, referencia IANA
+- **Evidencia**: affected_objects con DCs reales, IPs obsoletas vs actuales`,
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **⚠️ MEDIUM: Duplicados de Registros A**
-   - DuplicateARecords.Count > 0.
-   - Riesgo: Round-robin no intencionado, conexión a host incorrecto.
+    DNSConflicts: `Analiza conflictos y problemas de higiene en registros DNS de Active Directory.
 
-2. **⚠️ LOW: CNAMEs Huérfanos**
-   - OrphanedCNAMEs.Count > 0.
-   - Riesgo: Resolución fallida para alias.
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta registros y conflictos que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres DNS, IPs ni conteos.
 
-3. **⚠️ LOW: Registros Obsoletos (Stale)**
-   - StaleRecords.Count > 0 (si son muchos).
-   - Riesgo: Base de datos sucia.
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del JSON
+- CUENTA exactamente cuántos registros tienen cada tipo de problema
+- Verifica los campos DuplicateARecords, OrphanedCNAMEs, StaleRecords del JSON
 
-**FORMATO REPORTE:**
-- **type_id**: DNS_RECORD_CONFLICT, DNS_ORPHANED_CNAME, DNS_STALE_RECORDS.
-- **Título**: "Conflictos de nombres DNS detectados ([COUNT])".
-- **Recomendación**: Limpieza manual o habilitar scavenging.`,
+**⚠️ CONTEXTO:**
+Los conflictos DNS causan problemas de conectividad intermitentes, difíciles de diagnosticar. Un registro duplicado puede hacer que las conexiones alternen entre un servidor activo y uno inexistente. Los CNAMEs huérfanos causan fallos de resolución.
 
-    DNSScavengingDetailed: `Analiza la configuración de limpieza (Scavenging) de DNS a fondo.
+**🎯 PRIORIDADES DE DETECCIÓN:**
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **🔴 CRITICAL: Mismatch de Configuración**
-   - Issues.Type = "AgingMismatch".
-   - Descripción: "Scavenging habilitado en server pero Aging deshabilitado en zona (o viceversa)".
-   - Resultado: NO se borrará nada. La base de datos crecerá indefinidamente.
+1. **🔴 HIGH: Registros A Duplicados (conflictos)**
+   - DuplicateARecords.Count > 0
+   - Riesgo: Round-robin no intencionado — conexiones van a servidor incorrecto/muerto 50% del tiempo
+   - type_id: DNS_RECORD_CONFLICT
+   - Impacto: Fallos intermitentes de conectividad, difíciles de diagnosticar ("funciona a veces")
+   - Comando verificar: Resolve-DnsName -Name "hostname.domain.com" -Type A | Select IPAddress
+   - Comando fix: Remove-DnsServerResourceRecord -ZoneName "domain.com" -RRType A -Name "hostname" -RecordData "IP_INCORRECTA"
+   - Timeline: Limpiar en 7 días
 
-2. **⚠️ MEDIUM: Zonas sin Aging**
-   - Recomendación: Habilitar Aging en todas las zonas dinámicas.
+2. **⚠️ MEDIUM: CNAMEs Huérfanos**
+   - OrphanedCNAMEs.Count > 0
+   - CNAME apunta a un registro A que ya no existe
+   - Riesgo: Aplicaciones que usan el alias fallan al resolver
+   - type_id: DNS_ORPHANED_CNAME
+   - Comando verificar: Resolve-DnsName -Name "alias.domain.com" -Type CNAME
+   - Timeline: Limpiar en 14 días
 
-**FORMATO REPORTE:**
-- **type_id**: DNS_SCAVENGING_MISCONFIGURED, DNS_ZONE_AGING_DISABLED.
-- **Título**: "Configuración de limpieza DNS inconsistente en [DC]".
-- **Recomendación**: Set-DnsServerZoneAging.`,
+3. **⚠️ MEDIUM: Registros Stale (obsoletos)**
+   - StaleRecords.Count > 100 (gran acumulación)
+   - Registros cuyo timestamp excede No-Refresh + Refresh interval
+   - Riesgo: Base de datos DNS sucia, resolución a IPs recicladas
+   - type_id: DNS_STALE_RECORDS_EXCESS
+   - Comando verificar: Get-DnsServerResourceRecord -ZoneName "domain.com" | Where-Object {$_.Timestamp -and $_.Timestamp -lt (Get-Date).AddDays(-30)}
+   - Recomendación: Habilitar scavenging automático
+   - Timeline: Habilitar scavenging en 14 días
 
-    DHCPRogueServers: `Analiza servidores DHCP no autorizados (Rogue).
-    
-**⚠️ PRIORIDAD MÁXIMA:** Rogue DHCP es un ataque activo o un riesgo severo de disponibilidad.
+4. **ℹ️ INFO: DNS limpio**
+   - Sin conflictos, CNAMEs huérfanos, ni exceso de stale records
+   - type_id: DNS_RECORDS_HEALTHY
 
-**BUSCA ESPECÍFICAMENTE:**
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DNS_RECORD_CONFLICT, DNS_ORPHANED_CNAME, DNS_STALE_RECORDS_EXCESS, DNS_RECORDS_HEALTHY
+- **Título**: "[N] conflictos de registros DNS detectados" con conteo REAL del JSON
+- **Descripción**: Tipo de conflicto, registros afectados, impacto en conectividad
+- **Recomendación**: Comandos PowerShell para limpieza
+- **Evidencia**: affected_objects con nombres/IPs reales del JSON`,
+
+    DNSScavengingDetailed: `Analiza la configuración de limpieza automática (Scavenging) de DNS en detalle.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta configuraciones que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de zonas, intervalos ni estados.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del JSON
+- Verifica Issues.Type, AgingEnabled, ScavengingEnabled del JSON
+
+**⚠️ CONTEXTO:**
+El scavenging de DNS es el proceso automático de limpiar registros obsoletos. Requiere que AMBOS componentes estén habilitados: Aging en la ZONA y Scavenging en el SERVER. Si solo uno está activo, NO se limpia nada — y la base de datos crece indefinidamente.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 CRITICAL: Mismatch de Configuración (Aging vs Scavenging)**
+   - Issues.Type = "AgingMismatch" o configuración inconsistente
+   - Scavenging habilitado en server PERO Aging deshabilitado en zona (o viceversa)
+   - Resultado: NO se borrará NADA — la base de datos DNS crecerá indefinidamente
+   - type_id: DNS_SCAVENGING_MISCONFIGURED
+   - Impacto: Miles de registros obsoletos, resolución DNS lenta, IPs recicladas resuelven a hosts muertos
+   - Comando verificar servidor: Get-DnsServerScavenging
+   - Comando verificar zona: Get-DnsServerZoneAging -Name "domain.com"
+   - Comando fix zona: Set-DnsServerZoneAging -Name "domain.com" -Aging $true -NoRefreshInterval "7.00:00:00" -RefreshInterval "7.00:00:00"
+   - Comando fix servidor: Set-DnsServerScavenging -ScavengingState $true -ScavengingInterval "7.00:00:00"
+   - Timeline: Corregir en 7 días
+
+2. **⚠️ HIGH: Zonas dinámicas sin Aging habilitado**
+   - AgingEnabled = false en zonas que aceptan actualizaciones dinámicas
+   - type_id: DNS_ZONE_AGING_DISABLED
+   - Riesgo: Registros nunca se marcan como stale, scavenging no puede limpiarlos
+   - Timeline: Habilitar en 14 días
+
+3. **⚠️ MEDIUM: Intervalos de scavenging excesivos**
+   - No-Refresh + Refresh interval > 21 días
+   - Riesgo: Registros persisten mucho más de lo necesario
+   - type_id: DNS_SCAVENGING_INTERVAL_HIGH
+   - Recomendación: No-Refresh = 7 días, Refresh = 7 días (total 14 días antes de limpieza)
+   - Timeline: Ajustar en 30 días
+
+4. **ℹ️ INFO: Scavenging correctamente configurado**
+   - Aging y Scavenging habilitados, intervalos adecuados
+   - type_id: DNS_SCAVENGING_HEALTHY
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DNS_SCAVENGING_MISCONFIGURED, DNS_ZONE_AGING_DISABLED, DNS_SCAVENGING_INTERVAL_HIGH, DNS_SCAVENGING_HEALTHY
+- **Título**: "Configuración de limpieza DNS [ESTADO] en [N] zonas"
+- **Descripción**: Qué está mal configurado, por qué no funciona el scavenging
+- **Recomendación**: Comandos Set-DnsServerZoneAging y Set-DnsServerScavenging
+- **Evidencia**: Zonas afectadas con configuración actual del JSON`,
+
+    DHCPRogueServers: `Analiza la presencia de servidores DHCP no autorizados (Rogue) en la red.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta servidores que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes IPs, MACs ni nombres de servidores.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Las IPs en affected_objects DEBEN ser valores REALES del JSON
+- Verifica RogueServers array del JSON
+
+**⚠️ PRIORIDAD MÁXIMA:**
+Un DHCP rogue es uno de los ataques de red más peligrosos — puede redirigir TODA la red del segmento afectado a través del atacante. También puede ser un servidor DHCP no autorizado legítimo (shadow IT) que causa conflictos de IPs.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
 1. **🔴 CRITICAL: Servidor Rogue Detectado**
-   - RogueServers.Count > 0.
-   - Descripción: IP [IP] está sirviendo DHCP pero no está autorizada en AD.
-   - Riesgo: Man-in-the-Middle, interrupción de red.
+   - RogueServers.Count > 0
+   - Un servidor está respondiendo a solicitudes DHCP sin estar autorizado en AD
+   - Riesgo: Man-in-the-Middle (redirige gateway/DNS), IP conflicts, DoS
+   - MITRE ATT&CK: T1557.001 (Man-in-the-Middle)
+   - type_id: DHCP_ROGUE_DETECTED
+   - Impacto: El atacante controla: Gateway (todo el tráfico), DNS (phishing), WPAD (credential theft)
+   - Procedimiento de respuesta:
+     * Paso 1: Identificar IP del rogue: dato del JSON
+     * Paso 2: Localizar en switch: show mac address-table | include MAC_ADDRESS
+     * Paso 3: Desactivar puerto del switch: interface X > shutdown
+     * Paso 4: Investigar si es ataque o shadow IT
+     * Paso 5: Si es server legítimo, autorizar: Add-DhcpServerInDC -DnsName "server.domain.com" -IPAddress "IP"
+   - Comando verificar autorizados: Get-DhcpServerInDC
+   - Timeline: Responder INMEDIATAMENTE (< 1 hora)
 
-**FORMATO REPORTE:**
-- **type_id**: DHCP_ROGUE_DETECTED.
-- **Título**: "Servidor DHCP no autorizado detectado: [IP]".
-- **Recomendación**: Localizar por MAC address en switch y apagar puerto. Bloquear IP.`,
+2. **ℹ️ INFO: Sin servidores rogue detectados**
+   - RogueServers.Count = 0 o array vacío
+   - type_id: DHCP_ROGUE_CLEAN
+   - Reportar como resultado positivo
 
-    DHCPOptionsAudit: `Audita opciones de ámbitos DHCP.
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DHCP_ROGUE_DETECTED, DHCP_ROGUE_CLEAN
+- **Título**: "[N] servidor(es) DHCP no autorizado(s) detectado(s): [IPs_REALES]"
+- **Descripción**: Impacto en seguridad de red, vectores de ataque
+- **Recomendación**: Procedimiento de localización y aislamiento
+- **Evidencia**: IPs reales del JSON, comparación con lista de autorizados`,
 
-**BUSCA ESPECÍFICAMENTE:**
-1. **🔴 HIGH: DNS Incorrectos en DHCP**
-   - Issues.Severity = "HIGH" y Option = 6.
-   - Descripción: Clientes reciben IPs de DNS que no son DCs o no responden.
-   - Riesgo: Clientes no pueden contactar AD, fallos de logon.
+    DHCPOptionsAudit: `Audita las opciones de ámbitos DHCP para detectar configuraciones incorrectas.
 
-2. **⚠️ MEDIUM: Dominio Incorrecto**
-   - Issues.Option = 15 (Mismatch).
-   - Clientes reciben sufijo DNS incorrecto.
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta opciones y configuraciones que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes IPs, scope names ni opciones.
 
-3. **⚠️ LOW: Opciones WINS Deprecadas**
-   - Opciones 44/46 presentes.
-   - Best practice: Eliminar WINS si no se usa.
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los valores en affected_objects DEBEN ser datos REALES del JSON
+- Verifica Issues array con Severity, Option, Description
 
-**FORMATO REPORTE:**
-- **type_id**: DHCP_OPTION_CRITICAL, DHCP_OPTION_MISMATCH, DHCP_WINS_DEPRECATED.
-- **Título**: "Configuración DNS inválida en ámbitos DHCP".
-- **Recomendación**: Corregir opciones de ámbito (Set-DhcpServerv4OptionValue).`,
+**⚠️ CONTEXTO:**
+Las opciones DHCP (Options 6, 15, 44, 46, etc.) definen la configuración de red que reciben los clientes. Si los DNS servers entregados no son DCs, los clientes no pueden unirse al dominio ni autenticarse. Si el sufijo DNS es incorrecto, Kerberos falla.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 HIGH: DNS Servers incorrectos (Option 6)**
+   - Issues.Severity = "HIGH" y Issues.Option = 6
+   - Clientes reciben IPs de DNS que no son DCs del dominio o que no responden
+   - Riesgo: Fallos de logon, GPO no se aplican, recursos de red inaccesibles
+   - type_id: DHCP_OPTION_DNS_INVALID
+   - Impacto: Usuarios no pueden autenticarse contra AD, productividad paralizada
+   - Comando verificar: Get-DhcpServerv4OptionValue -ScopeId "SCOPE_ID" -OptionId 6
+   - Comando fix: Set-DhcpServerv4OptionValue -ScopeId "SCOPE_ID" -OptionId 6 -Value "IP_DC1","IP_DC2"
+   - Timeline: Corregir INMEDIATAMENTE (4 horas)
+
+2. **⚠️ MEDIUM: Sufijo DNS incorrecto (Option 15)**
+   - Issues.Option = 15 — Domain Name mismatch
+   - Clientes reciben sufijo DNS que no coincide con el dominio AD
+   - Riesgo: Kerberos falla (SPN lookup falla), resolución de nombres AD incompleta
+   - type_id: DHCP_OPTION_DNS_SUFFIX_MISMATCH
+   - Comando fix: Set-DhcpServerv4OptionValue -ScopeId "SCOPE_ID" -OptionId 15 -Value "domain.com"
+   - Timeline: Corregir en 7 días
+
+3. **⚠️ LOW: Opciones WINS Deprecadas (Options 44/46)**
+   - Opciones 44 (WINS servers) o 46 (WINS/NBT Node Type) todavía configuradas
+   - Riesgo: WINS es protocolo legacy obsoleto, mantenerlo genera tráfico broadcast innecesario
+   - type_id: DHCP_WINS_DEPRECATED
+   - Recomendación: Eliminar opciones WINS si no hay aplicaciones legacy que lo requieran
+   - Comando fix: Remove-DhcpServerv4OptionValue -ScopeId "SCOPE_ID" -OptionId 44
+   - Timeline: Evaluar y remover en 30 días
+
+4. **⚠️ LOW: Gateway incorrecto (Option 3)**
+   - Si Issue reporta gateway que no es alcanzable desde el scope
+   - type_id: DHCP_OPTION_GATEWAY_INVALID
+   - Timeline: Corregir en 7 días
+
+5. **ℹ️ INFO: Opciones correctamente configuradas**
+   - Sin issues reportados
+   - type_id: DHCP_OPTIONS_HEALTHY
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DHCP_OPTION_DNS_INVALID, DHCP_OPTION_DNS_SUFFIX_MISMATCH, DHCP_WINS_DEPRECATED, DHCP_OPTION_GATEWAY_INVALID, DHCP_OPTIONS_HEALTHY
+- **Título**: "Configuración [OPCIÓN] inválida en [N] ámbitos DHCP"
+- **Descripción**: Impacto en autenticación AD y conectividad de red
+- **Recomendación**: Comandos Set-DhcpServerv4OptionValue con valores correctos
+- **Evidencia**: Scope IDs y opciones con valores reales del JSON`,
 
     Security: `Eres un experto en hardening de Active Directory con especialización en protocolos de autenticación legacy y configuraciones de seguridad avanzadas.
 
@@ -3118,16 +4635,558 @@ La estructura de datos es:
 - Si todos los valores cumplen con best practices, devuelve {"findings": []}
 - NO inventes valores - usa los datos exactos proporcionados`,
 
-    ADCSInventory: `Analiza la infraestructura de Certificados (ADCS) en busca de vulnerabilidades críticas.
-**BUSCA:**
-1. **ESC1 (Vulnerable Templates)**: Plantillas que permiten al solicitante especificar el Subject Name (EnrolleeSuppliesSubject) Y permiten autenticación de cliente. Esto permite a cualquiera ser Domain Admin.
-2. **CAs en Controladores de Dominio**: Mala práctica de seguridad.
-3. **Permisos de CA**: Si usuarios autenticados tienen permisos excesivos.`,
+    ACLs: `Eres un especialista en seguridad de Active Directory con experiencia en análisis de Access Control Lists (ACLs/DACLs) y paths de escalación de privilegios.
 
-    ProtocolSecurity: `Analiza la seguridad de protocolos de red.
-**BUSCA:**
-1. **LDAP Signing No Forzado**: Si 'LDAPServerIntegrity' no es 2, permite ataques de NTLM Relay a LDAP.
-2. **LDAP Channel Binding No Forzado**: Necesario para prevenir ataques de relay modernos.`,
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta objetos, permisos y principals que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de objetos, grupos ni usuarios.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del JSON
+- CUENTA exactamente cuántos objetos tienen cada problema
+- Verifica que los permisos reportados EXISTAN en los datos
+
+**🚫 NO HACER:**
+- NO inventar nombres de objetos o principals
+- NO estimar conteos
+- NO asumir permisos que no estén en el JSON
+- NO reportar paths de escalación teóricos sin evidencia en los datos
+
+**⚠️ CONTEXTO DE ANÁLISIS:**
+Las ACLs de AD son el mecanismo fundamental de control de acceso. Permisos excesivos o mal configurados son el vector #1 de escalación de privilegios en compromisos de dominio. Un atacante con WriteDACL sobre un objeto puede otorgarse cualquier permiso. Con GenericAll, controla completamente el objeto.
+
+**🎯 PRIORIDADES DE DETECCIÓN (EN ORDEN):**
+
+1. **🔴 CRITICAL: DCSync Permissions no autorizadas**
+   - Principals con DS-Replication-Get-Changes + DS-Replication-Get-Changes-All
+   - Estos permisos permiten extraer TODOS los hashes del dominio (DCSync attack)
+   - Solo deberían tenerlo: Domain Controllers, Enterprise Domain Controllers, Administradores
+   - MITRE ATT&CK: T1003.006 (OS Credential Dumping: DCSync)
+   - type_id: DCSYNC_UNAUTHORIZED
+   - Impacto: Game over - compromiso total del dominio
+   - Comando verificar: (Get-ACL "AD:\\DC=domain,DC=com").Access | Where-Object {$_.ObjectType -match "1131f6a[a-d]"}
+   - Timeline: Remediar INMEDIATAMENTE (4 horas)
+
+2. **🔴 CRITICAL: WriteDACL/WriteOwner sobre objetos sensibles**
+   - Principals no-admin con WriteDACL o WriteOwner sobre:
+     * Domain root (DC=domain,DC=com)
+     * AdminSDHolder (CN=AdminSDHolder,CN=System)
+     * Grupo Domain Admins
+     * Contenedor de DCs
+   - Riesgo: Permite auto-otorgarse permisos, luego DCSync o control total
+   - MITRE ATT&CK: T1222.001 (File and Directory Permissions Modification)
+   - type_id: ACL_WRITEDACL_SENSITIVE
+   - Comando verificar: (Get-ACL "AD:\\CN=AdminSDHolder,CN=System,DC=domain,DC=com").Access | Where-Object {$_.ActiveDirectoryRights -match "WriteDacl|WriteOwner"}
+   - Timeline: Remediar INMEDIATAMENTE (24 horas)
+
+3. **🔴 HIGH: GenericAll sobre OUs con cuentas privilegiadas**
+   - Principals con GenericAll sobre OUs que contienen cuentas admin
+   - Riesgo: Control total de todos los objetos en la OU (reset passwords, modify group membership)
+   - MITRE ATT&CK: T1484.001 (Domain Policy Modification: Group Policy Modification)
+   - type_id: ACL_GENERICALL_PRIVILEGED_OU
+   - Comando verificar: (Get-ACL "AD:\\OU=Admins,DC=domain,DC=com").Access | Where-Object {$_.ActiveDirectoryRights -match "GenericAll"}
+   - Timeline: Remediar en 48 horas
+
+4. **🔴 HIGH: Usuarios estándar con permisos de escritura sobre objetos admin**
+   - GenericWrite, WriteProperty, o Self sobre cuentas de Domain Admins
+   - Riesgo: Modificar atributos de admin (SPN para Kerberoasting, altSecurityIdentities para cert abuse)
+   - type_id: ACL_WRITE_ON_ADMIN
+   - Timeline: Remediar en 48 horas
+
+5. **⚠️ MEDIUM: Extended Rights peligrosos**
+   - User-Force-Change-Password sobre cuentas privilegiadas
+   - AllExtendedRights (incluye reset password + read LAPS password)
+   - type_id: ACL_DANGEROUS_EXTENDED_RIGHTS
+   - Timeline: Remediar en 7 días
+
+6. **⚠️ MEDIUM: Herencias rotas (InheritanceDisabled)**
+   - Objetos con protección de herencia deshabilitada que tienen ACEs explícitas peligrosas
+   - Riesgo: Permisos ocultos que no se auditan fácilmente
+   - type_id: ACL_BROKEN_INHERITANCE
+   - Timeline: Auditar en 14 días
+
+7. **⚠️ MEDIUM: AdminSDHolder abuse potencial**
+   - Objetos con AdminCount=1 que ya no son miembros de grupos protegidos
+   - ACLs de estos objetos no se restauran automáticamente — permisos heredados bloqueados
+   - type_id: ACL_ORPHANED_ADMINCOUNT
+   - Comando verificar: Get-ADUser -Filter {AdminCount -eq 1} | Where-Object {-not (Get-ADPrincipalGroupMembership $_ | Where-Object {$_.Name -match "Admin|Domain Controllers"})}
+   - Timeline: Limpiar en 30 días
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DCSYNC_UNAUTHORIZED, ACL_WRITEDACL_SENSITIVE, ACL_GENERICALL_PRIVILEGED_OU, ACL_WRITE_ON_ADMIN, ACL_DANGEROUS_EXTENDED_RIGHTS, ACL_BROKEN_INHERITANCE, ACL_ORPHANED_ADMINCOUNT
+- **Título**: "[N] objetos con permisos de [PERMISO] sobre [OBJETO_SENSIBLE]"
+- **Descripción**: 3 párrafos: estado actual con datos reales, vector de ataque específico (MITRE), impacto en negocio
+- **Recomendación**: Comandos PowerShell con Remove-ADPermission o Set-ACL, procedimiento de limpieza
+- **Evidencia**: affected_objects con principals reales, count exacto, details con permisos específicos`,
+
+    OUs: `Eres un arquitecto de Active Directory especializado en diseño de Organizational Units y aplicación de Group Policy.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta OUs que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de OUs ni rutas.
+
+**📋 VALIDACIÓN OBLIGATORIA:**
+- Los nombres en affected_objects DEBEN ser valores REALES del campo 'Name' o 'DistinguishedName' del JSON
+- CUENTA exactamente cuántas OUs tienen cada problema
+
+**🚫 NO HACER:**
+- NO inventar nombres de OUs
+- NO estimar conteos
+- NO asumir configuraciones que no estén en el JSON
+
+**⚠️ CONTEXTO DE ANÁLISIS:**
+La estructura de OUs define cómo se aplican las políticas de grupo (GPOs), cómo se delega la administración, y cómo se organiza la empresa en AD. Una estructura desordenada causa: GPOs que no se aplican donde deben, delegación administrativa confusa, y dificultad para auditar quién tiene acceso a qué.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 HIGH: Block Inheritance habilitado**
+   - OUs con GPOInheritanceBlocked = true
+   - Riesgo: Políticas de seguridad del dominio no se aplican en esa OU (password policy, audit policy, etc.)
+   - Impacto: Islas de no-compliance, usuarios sin restricciones de seguridad
+   - type_id: OU_BLOCKED_INHERITANCE
+   - Comando verificar: Get-ADOrganizationalUnit -Filter * -Properties gpOptions | Where-Object {$_.gpOptions -eq 1}
+   - Comando auditar: Get-GPInheritance -Target "OU=Marketing,DC=domain,DC=com"
+   - Timeline: Auditar en 7 días, eliminar bloqueos innecesarios
+
+2. **⚠️ MEDIUM: OUs vacías**
+   - OUs sin objetos hijos (usuarios, equipos, grupos)
+   - Riesgo: Desorden administrativo, confusión en estructura, GPOs aplicadas a nada
+   - type_id: OU_EMPTY
+   - Comando verificar: Get-ADOrganizationalUnit -Filter * | Where-Object {-not (Get-ADObject -SearchBase $_.DistinguishedName -SearchScope OneLevel -Filter *)}
+   - Timeline: Limpiar en 30 días
+
+3. **⚠️ MEDIUM: Anidamiento excesivo (> 5 niveles)**
+   - OUs con profundidad > 5 niveles desde el root
+   - Riesgo: Tiempos de logon lentos (procesamiento de GPOs), complejidad de administración
+   - type_id: OU_EXCESSIVE_NESTING
+   - Impacto: Cada nivel agrega latencia al procesamiento de GPO en logon
+   - Recomendación: Aplanar estructura a máximo 4-5 niveles
+   - Timeline: Planificar reestructuración en 60 días
+
+4. **⚠️ MEDIUM: OUs sin GPOs aplicadas**
+   - OUs con objetos pero sin ningún GPO link
+   - Riesgo: Objetos sin políticas de seguridad específicas (solo herencia del dominio)
+   - type_id: OU_NO_GPO_LINKED
+   - Timeline: Evaluar en 30 días
+
+5. **ℹ️ LOW: Nomenclatura inconsistente**
+   - OUs con nombres que mezclan idiomas, usan caracteres especiales, o no siguen un patrón
+   - Riesgo: Dificultad administrativa, errores en scripts de automatización
+   - type_id: OU_NAMING_INCONSISTENT
+   - Timeline: Planificar en 90 días
+
+6. **ℹ️ INFO: Resumen de estructura**
+   - Total de OUs, profundidad máxima, OUs con GPOs vs sin GPOs
+   - type_id: OU_STRUCTURE_SUMMARY
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: OU_BLOCKED_INHERITANCE, OU_EMPTY, OU_EXCESSIVE_NESTING, OU_NO_GPO_LINKED, OU_NAMING_INCONSISTENT, OU_STRUCTURE_SUMMARY
+- **Título**: "[N] OUs con [problema específico]"
+- **Descripción**: Impacto en aplicación de políticas y administración
+- **Recomendación**: Comandos PowerShell específicos
+- **Evidencia**: affected_objects con nombres/rutas reales de OUs`,
+
+    Domains: `Eres un arquitecto de Active Directory especializado en configuración de dominio y bosque.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta datos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de dominios, niveles funcionales ni configuraciones.
+
+**🚫 NO HACER:**
+- NO inventar nombres de dominio o bosque
+- NO asumir configuraciones que no estén en los datos
+- NO estimar valores
+
+**⚠️ CONTEXTO DE ANÁLISIS:**
+La configuración a nivel de dominio define las capacidades disponibles para todo el entorno AD. Un nivel funcional bajo impide usar características de seguridad modernas. Configuraciones inadecuadas a este nivel afectan a TODOS los objetos del dominio.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 CRITICAL: Nivel funcional de dominio/bosque obsoleto**
+   - DomainMode o ForestMode < Windows Server 2016
+   - Windows2008R2Domain o inferior: CRITICAL — sin soporte, sin Protected Users, sin Authentication Policies
+   - Windows2012R2Domain: HIGH — fin de soporte, sin Privileged Access Management
+   - Windows2016Domain: MEDIUM — funcional pero sin últimas mejoras
+   - type_id: DOMAIN_FUNCTIONAL_LEVEL_LOW
+   - Impacto: No se pueden usar Protected Users group, Authentication Policies, Kerberos armoring
+   - Comando verificar: (Get-ADDomain).DomainMode; (Get-ADForest).ForestMode
+   - Comando elevar: Set-ADDomainMode -DomainMode Windows2016Domain -Identity domain.com
+   - Pre-requisito: TODOS los DCs deben ejecutar >= Windows Server 2016
+   - Timeline: Planificar elevación en 90 días (requiere compatibilidad de todos los DCs)
+
+2. **🔴 HIGH: AD Recycle Bin deshabilitado**
+   - RecycleBinEnabled = false
+   - Riesgo: Objetos eliminados accidentalmente no se pueden recuperar (solo authoritative restore desde backup)
+   - type_id: DOMAIN_RECYCLE_BIN_DISABLED
+   - Comando habilitar: Enable-ADOptionalFeature -Identity "Recycle Bin Feature" -Scope ForestOrConfigurationSet -Target (Get-ADForest).Name
+   - NOTA: Es irreversible (no se puede desactivar una vez habilitado) pero es best practice universal
+   - Timeline: Habilitar INMEDIATAMENTE (1 hora)
+
+3. **⚠️ MEDIUM: Fine-Grained Password Policies ausentes**
+   - No hay PSOs (Password Settings Objects) configurados
+   - Riesgo: Todos los usuarios (incluyendo admins) comparten la misma política de contraseñas
+   - type_id: DOMAIN_NO_FINE_GRAINED_PWD
+   - Impacto: Admins deberían tener políticas más estrictas (longitud > 16, rotación > frecuente)
+   - Comando verificar: Get-ADFineGrainedPasswordPolicy -Filter *
+   - Recomendación: Crear PSOs para Tier 0 (20 chars, 30 días), Tier 1 (16 chars, 60 días)
+   - Timeline: Implementar en 30 días
+
+4. **⚠️ MEDIUM: Tombstone Lifetime inadecuado**
+   - TombstoneLifetime < 180 días
+   - Riesgo: Lingering objects si un DC está offline más tiempo que el TSL
+   - type_id: DOMAIN_TOMBSTONE_LOW
+   - Comando verificar: (Get-ADObject "CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,DC=domain,DC=com" -Properties tombstoneLifetime).tombstoneLifetime
+   - Recomendación: Aumentar a 180 días mínimo
+   - Timeline: Ajustar en 14 días
+
+5. **ℹ️ INFO: Resumen de dominio**
+   - Nombre de dominio, nivel funcional, número de DCs, sites, trusts
+   - type_id: DOMAIN_SUMMARY
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: DOMAIN_FUNCTIONAL_LEVEL_LOW, DOMAIN_RECYCLE_BIN_DISABLED, DOMAIN_NO_FINE_GRAINED_PWD, DOMAIN_TOMBSTONE_LOW, DOMAIN_SUMMARY
+- **Título**: Descriptivo con datos reales del JSON
+- **Descripción**: Impacto en capacidades de seguridad y operación
+- **Recomendación**: Comandos PowerShell específicos, prerrequisitos, plan de migración si aplica
+- **Evidencia**: affected_objects con nombres reales, count exacto`,
+
+    Containers: `Eres un especialista en higiene de Active Directory enfocado en la organización de objetos.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta contenedores y objetos que aparezcan EXPLÍCITAMENTE en los datos JSON.
+
+**🚫 NO HACER:**
+- NO inventar nombres de objetos ni contenedores
+- NO estimar conteos
+- NO asumir que existen objetos en contenedores default si no están en los datos
+
+**⚠️ CONTEXTO DE ANÁLISIS:**
+En AD, los contenedores default (CN=Users, CN=Computers, CN=Builtin) son ubicaciones genéricas donde se crean objetos cuando no se especifica una OU. Tener muchos objetos en estos contenedores indica que no se está usando una estructura organizacional adecuada, lo que impide aplicar GPOs específicas (los contenedores default NO soportan GPO links directos).
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **⚠️ HIGH: Objetos en CN=Users (contenedor default de usuarios)**
+   - Usuarios y grupos creados en CN=Users en lugar de OUs específicas
+   - Riesgo: No se pueden aplicar GPOs específicas a estos objetos
+   - type_id: CONTAINER_OBJECTS_IN_DEFAULT_USERS
+   - Impacto: Cuentas sin políticas de seguridad departamentales, sin delegación administrativa
+   - Comando verificar: Get-ADUser -SearchBase "CN=Users,DC=domain,DC=com" -SearchScope OneLevel -Filter *
+   - Comando fix: Move-ADObject -Identity "CN=usuario,CN=Users,DC=domain,DC=com" -TargetPath "OU=Departamento,DC=domain,DC=com"
+   - Timeline: Planificar migración en 30 días
+
+2. **⚠️ HIGH: Equipos en CN=Computers (contenedor default de equipos)**
+   - Equipos que se unieron al dominio sin especificar OU de destino
+   - Riesgo: Sin GPOs de seguridad (antivirus, firewall, BitLocker no se aplican)
+   - type_id: CONTAINER_OBJECTS_IN_DEFAULT_COMPUTERS
+   - Impacto: Equipos sin hardening, vulnerables a ataques
+   - Comando redirigir default: redircmp "OU=Workstations,DC=domain,DC=com"
+   - Timeline: Redirigir default + mover existentes en 14 días
+
+3. **⚠️ MEDIUM: Contenedores con objetos obsoletos**
+   - Contenedores con objetos deshabilitados o inactivos acumulados
+   - type_id: CONTAINER_STALE_OBJECTS
+   - Timeline: Limpiar en 30 días
+
+4. **ℹ️ INFO: Distribución de objetos**
+   - Reportar cuántos objetos hay en contenedores default vs OUs organizadas
+   - type_id: CONTAINER_DISTRIBUTION_SUMMARY
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: CONTAINER_OBJECTS_IN_DEFAULT_USERS, CONTAINER_OBJECTS_IN_DEFAULT_COMPUTERS, CONTAINER_STALE_OBJECTS, CONTAINER_DISTRIBUTION_SUMMARY
+- **Título**: "[N] objetos en contenedor default [NOMBRE] sin políticas de grupo aplicables"
+- **Descripción**: Por qué los contenedores default son problemáticos, impacto en GPOs
+- **Recomendación**: Comandos para mover objetos a OUs + redircmp/redirusr para cambiar default
+- **Evidencia**: affected_objects con nombres reales, count exacto`,
+
+    Infrastructure: `Eres un arquitecto de infraestructura de Active Directory especializado en configuraciones de servicio y mantenimiento operativo.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta datos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes configuraciones, nombres ni valores.
+
+**⚠️ CONTEXTO:**
+Esta categoría agrupa configuraciones de infraestructura que soportan el funcionamiento de AD: DNS scavenging, estructura de OUs a nivel de infraestructura, Tombstone Lifetime, y sincronización de tiempo. Son configuraciones de mantenimiento que, mal configuradas, causan degradación gradual.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 CRITICAL: Sincronización de Tiempo (NTP) incorrecta**
+   - PDC Emulator usando "Local CMOS Clock" o "VM IC Time Sync Provider" como fuente
+   - Riesgo: Drift de tiempo > 5 minutos causa fallos de Kerberos en todo el dominio
+   - type_id: INFRA_TIME_SYNC_CRITICAL
+   - Comando verificar: w32tm /query /source (en PDC Emulator)
+   - Comando fix: w32tm /config /manualpeerlist:"time.windows.com,0x9" /syncfromflags:manual /reliable:yes /update
+   - Timeline: Remediar INMEDIATAMENTE (24 horas)
+
+2. **⚠️ HIGH: Tombstone Lifetime inadecuado**
+   - TSL < 180 días (default es 60 o 180 dependiendo de versión)
+   - Riesgo: DCs offline por más tiempo que TSL crean lingering objects al reconectarse
+   - type_id: INFRA_TOMBSTONE_LOW
+   - Comando verificar: (Get-ADObject "CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,DC=domain,DC=com" -Properties tombstoneLifetime).tombstoneLifetime
+   - Timeline: Ajustar en 14 días
+
+3. **⚠️ MEDIUM: DNS Scavenging mal configurado**
+   - Aging habilitado en server pero no en zona (o viceversa): NO se borra nada
+   - No-Refresh interval + Refresh interval > 14 días: registros crecen indefinidamente
+   - type_id: INFRA_DNS_SCAVENGING_BROKEN
+   - Comando verificar: Get-DnsServerScavenging; Get-DnsServerZone | Get-DnsServerZoneAging
+   - Timeline: Corregir en 30 días
+
+4. **⚠️ MEDIUM: Estructura de OUs para infraestructura**
+   - DCs, servidores miembro, o service accounts fuera de OUs dedicadas
+   - type_id: INFRA_OU_STRUCTURE_WEAK
+   - Timeline: Reorganizar en 60 días
+
+5. **ℹ️ INFO: Resumen de configuración de infraestructura**
+   - type_id: INFRA_CONFIG_SUMMARY
+   - Incluir: fuente NTP, TSL, estado de scavenging
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: INFRA_TIME_SYNC_CRITICAL, INFRA_TOMBSTONE_LOW, INFRA_DNS_SCAVENGING_BROKEN, INFRA_OU_STRUCTURE_WEAK, INFRA_CONFIG_SUMMARY
+- **Título**: Descriptivo del hallazgo
+- **Descripción**: Impacto operativo (no de seguridad ofensiva)
+- **Recomendación**: Comandos PowerShell específicos
+- **Evidencia**: Datos reales del JSON`,
+
+    SecurityHardening: `Eres un especialista en hardening de Active Directory enfocado en configuraciones de seguridad y protección de protocolos.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta configuraciones que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes valores ni estados de configuración.
+
+**⚠️ CONTEXTO:**
+Esta categoría agrupa sub-configuraciones de seguridad individuales: KerberosConfig, LAPS, SMBv1Status, NTLMSettings, RC4EncryptionTypes, BackupStatus, ProtectedUsers. Cada una puede indicar debilidades de hardening que facilitan lateral movement y credential theft.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 CRITICAL: LAPS no desplegado**
+   - LAPSEnabled = false o ComputersWithLAPS = 0 o LAPSCoverage < 50%
+   - Riesgo: Passwords de administrador local idénticos en todos los equipos = lateral movement trivial
+   - MITRE ATT&CK: T1078.003 (Valid Accounts: Local Accounts)
+   - type_id: HARDENING_LAPS_MISSING
+   - Comando verificar: Get-ADComputer -Filter * -Properties ms-Mcs-AdmPwd | Where-Object {$_.'ms-Mcs-AdmPwd' -eq $null} | Measure-Object
+   - Timeline: Implementar en 30 días
+
+2. **🔴 CRITICAL: SMBv1 habilitado**
+   - SMBv1Enabled = true en cualquier DC o servidor
+   - Riesgo: EternalBlue (CVE-2017-0144), WannaCry, NotPetya
+   - type_id: HARDENING_SMBV1_ENABLED
+   - Comando deshabilitar: Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
+   - Timeline: Deshabilitar en 7 días
+
+3. **🔴 HIGH: NTLM Authentication Level bajo**
+   - LMCompatibilityLevel < 5 en DCs
+   - Riesgo: Pass-the-Hash, NTLM relay attacks
+   - type_id: HARDENING_NTLM_INSECURE
+   - Comando verificar: Get-ItemProperty "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa" -Name "LmCompatibilityLevel"
+   - Timeline: Elevar a Level 5 en 14 días
+
+4. **🔴 HIGH: RC4 Encryption habilitado**
+   - Cuentas usando RC4 para Kerberos en lugar de AES
+   - Riesgo: Kerberoasting mucho más efectivo con RC4 (crackeable en minutos vs horas con AES)
+   - type_id: HARDENING_RC4_ENABLED
+   - Comando verificar: Get-ADUser -Filter * -Properties msDS-SupportedEncryptionTypes | Where-Object {$_.'msDS-SupportedEncryptionTypes' -band 0x4}
+   - Timeline: Migrar a AES en 60 días
+
+5. **⚠️ MEDIUM: Protected Users Group vacío o insuficiente**
+   - Grupo Protected Users con 0 miembros o < 50% de cuentas Tier 0
+   - Riesgo: Cuentas admin sin protección contra credential theft, pass-the-hash, delegation
+   - type_id: HARDENING_PROTECTED_USERS_EMPTY
+   - Comando verificar: Get-ADGroupMember "Protected Users" | Measure-Object
+   - Timeline: Implementar en 14 días
+
+6. **⚠️ MEDIUM: Kerberos Config subóptima**
+   - MaxTicketAge > 10 horas, MaxClockSkew > 5 minutos, MaxRenewAge > 7 días
+   - Riesgo: Tickets de larga duración = mayor ventana para ataques
+   - type_id: HARDENING_KERBEROS_CONFIG_WEAK
+   - Timeline: Ajustar en 30 días
+
+7. **⚠️ MEDIUM: Backup de AD no reciente**
+   - LastBackupDate > 30 días o BackupStatus no OK
+   - Riesgo: Incapacidad de recuperar ante ransomware o corrupción de AD
+   - type_id: HARDENING_BACKUP_STALE
+   - Timeline: Realizar backup INMEDIATAMENTE si > 30 días
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: HARDENING_LAPS_MISSING, HARDENING_SMBV1_ENABLED, HARDENING_NTLM_INSECURE, HARDENING_RC4_ENABLED, HARDENING_PROTECTED_USERS_EMPTY, HARDENING_KERBEROS_CONFIG_WEAK, HARDENING_BACKUP_STALE
+- **Título**: Descriptivo con datos reales
+- **Descripción**: Riesgo específico con referencia MITRE/CIS, impacto
+- **Recomendación**: Comandos PowerShell, path de GPO si aplica, timeline
+- **Evidencia**: affected_objects reales, count exacto, details con valores de configuración`,
+
+    IdentityRisks: `Eres un especialista en riesgos de identidad y escalación de privilegios en Active Directory.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta objetos y configuraciones que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de cuentas, permisos ni configuraciones.
+
+**⚠️ CONTEXTO:**
+Esta categoría agrupa los riesgos de identidad más críticos: DCSync permissions, Unconstrained Delegation, AdminSDHolder abuse, y AdminCount orphans. Son los vectores de escalación de privilegios más utilizados en compromisos reales de AD.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 CRITICAL: DCSyncPermissions — Permisos de replicación no autorizados**
+   - Principals con Replicating Directory Changes + Replicating Directory Changes All
+   - Solo deberían tener esto: Domain Controllers, Enterprise Domain Controllers
+   - CUALQUIER otra cuenta con estos permisos es un compromiso potencial o una backdoor
+   - MITRE ATT&CK: T1003.006 (OS Credential Dumping: DCSync)
+   - type_id: IDENTITY_DCSYNC_PERMISSIONS
+   - Impacto: Permite extraer NTLM hashes de TODAS las cuentas del dominio (incluyendo krbtgt)
+   - Comando verificar: Get-ObjectAcl -DistinguishedName "DC=domain,DC=com" -ResolveGUIDs | Where-Object {$_.ObjectAceType -match "DS-Replication"}
+   - Timeline: Remediar INMEDIATAMENTE (4 horas)
+
+2. **🔴 CRITICAL: UnconstrainedDelegation — Delegación sin restricciones**
+   - Cuentas de usuario o equipos (NO DCs) con TrustedForDelegation = true
+   - Riesgo: Cualquier usuario que se autentique contra ese servicio deja su TGT en memoria
+   - Ataques: Print Spool attack (SpoolSample), Unconstrained delegation abuse
+   - MITRE ATT&CK: T1550.003 (Use Alternate Authentication Material: Pass the Ticket)
+   - type_id: IDENTITY_UNCONSTRAINED_DELEGATION
+   - Impacto: Compromiso del equipo con delegación = acceso como cualquier usuario que se autenticó
+   - Comando verificar: Get-ADComputer -Filter {TrustedForDelegation -eq $true} -Properties TrustedForDelegation | Where-Object {$_.Name -notlike "*DC*"}
+   - Comando fix: Set-ADComputer -Identity "SERVIDOR" -TrustedForDelegation $false
+   - Alternativa: Migrar a Constrained Delegation o Resource-Based Constrained Delegation
+   - Timeline: Remediar en 48 horas
+
+3. **🔴 HIGH: AdminSDHolder — Persistencia por modificación de ACLs protegidas**
+   - ACLs modificadas en el objeto AdminSDHolder (CN=AdminSDHolder,CN=System)
+   - El proceso SDProp copia estas ACLs a TODOS los objetos protegidos cada 60 minutos
+   - Si un atacante modifica AdminSDHolder, obtiene persistencia sobre todos los admins
+   - MITRE ATT&CK: T1078.002 (Valid Accounts: Domain Accounts)
+   - type_id: IDENTITY_ADMINSDHOLDER_MODIFIED
+   - Impacto: Backdoor persistente que sobrevive a password resets y limpieza de grupos
+   - Comando verificar: (Get-ACL "AD:\\CN=AdminSDHolder,CN=System,DC=domain,DC=com").Access | Where-Object {$_.IdentityReference -notmatch "Domain Admins|Administrators|SYSTEM|Enterprise Admins"}
+   - Timeline: Auditar INMEDIATAMENTE, limpiar ACLs no autorizadas
+
+4. **⚠️ MEDIUM: AdminCountObjects — Objetos con AdminCount=1 huérfano**
+   - Cuentas con AdminCount=1 que ya no pertenecen a grupos privilegiados
+   - Problema: SDProp NO limpia AdminCount cuando se remueve de un grupo protegido
+   - Resultado: Herencia de ACLs bloqueada permanentemente, permisos inconsistentes
+   - type_id: IDENTITY_ORPHANED_ADMINCOUNT
+   - Impacto: Cuentas con permisos rotos que no se auditan correctamente
+   - Comando verificar: Get-ADUser -Filter {AdminCount -eq 1 -and Enabled -eq $true} -Properties AdminCount,MemberOf
+   - Comando fix: Set-ADUser -Identity "usuario" -Clear AdminCount; Enable inheritance on object
+   - Timeline: Limpiar en 30 días
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: IDENTITY_DCSYNC_PERMISSIONS, IDENTITY_UNCONSTRAINED_DELEGATION, IDENTITY_ADMINSDHOLDER_MODIFIED, IDENTITY_ORPHANED_ADMINCOUNT
+- **Título**: Descriptivo con datos reales y severidad clara
+- **Descripción**: Vector de ataque específico, técnica MITRE, impacto real
+- **Recomendación**: Procedimiento de remediación paso a paso con comandos PowerShell
+- **Evidencia**: affected_objects con cuentas/objetos reales, count exacto, details con permisos específicos`,
+
+    ADCSInventory: `Eres un especialista en seguridad de PKI (Public Key Infrastructure) y Active Directory Certificate Services (ADCS).
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta CAs, plantillas y configuraciones que aparezcan EXPLÍCITAMENTE en los datos JSON. NO inventes nombres de CAs, plantillas ni OIDs.
+
+**🚫 NO HACER:**
+- NO inventar nombres de Certificate Authorities o plantillas
+- NO asumir vulnerabilidades ESC que no estén evidenciadas en los datos
+- NO estimar conteos
+
+**⚠️ CONTEXTO:**
+ADCS es uno de los vectores de ataque más explotados en AD moderno. Las vulnerabilidades ESC1-ESC8 (publicadas por SpecterOps) permiten escalación de privilegios desde usuario estándar hasta Domain Admin mediante abuso de certificados.
+
+**🎯 PRIORIDADES DE DETECCIÓN (ESC1-ESC8):**
+
+1. **🔴 CRITICAL: ESC1 — Enrollee Supplies Subject + Client Auth**
+   - Plantillas con: EnrolleeSuppliesSubject = true AND ClientAuthentication EKU
+   - Riesgo: Cualquier usuario puede solicitar certificado como Domain Admin
+   - type_id: ADCS_ESC1_VULNERABLE_TEMPLATE
+   - Impacto: Escalación directa a Domain Admin en minutos
+   - Comando verificar: certutil -v -dstemplate | findstr /i "msPKI-Certificate-Name-Flag.*ENROLLEE_SUPPLIES_SUBJECT"
+   - Comando fix: Remove "Enrollee Supplies Subject" o restringir enrollment permissions
+   - Timeline: Remediar INMEDIATAMENTE (24 horas)
+
+2. **🔴 CRITICAL: ESC2 — Any Purpose EKU o SubCA**
+   - Plantillas con EKU = Any Purpose (OID 2.5.29.37.0) o SubCA
+   - Riesgo: Certificado puede usarse para cualquier propósito incluyendo authentication as anyone
+   - type_id: ADCS_ESC2_ANY_PURPOSE
+   - Timeline: Remediar en 48 horas
+
+3. **🔴 HIGH: ESC3 — Enrollment Agent Templates**
+   - Plantillas de Certificate Request Agent que permiten solicitar certs en nombre de otros
+   - Riesgo: Un usuario con este cert puede solicitar certificados como cualquier otro usuario
+   - type_id: ADCS_ESC3_ENROLLMENT_AGENT
+   - Timeline: Restringir enrollment agents en 7 días
+
+4. **🔴 HIGH: ESC4 — Vulnerable Template ACLs**
+   - Principals con WriteDACL, WriteOwner, o WriteProperty sobre plantillas de certificados
+   - Riesgo: Pueden modificar la plantilla para hacerla vulnerable a ESC1
+   - type_id: ADCS_ESC4_TEMPLATE_ACLS
+   - Timeline: Limpiar ACLs en 48 horas
+
+5. **🔴 HIGH: ESC6 — EDITF_ATTRIBUTESUBJECTALTNAME2 flag en CA**
+   - CA con flag EDITF_ATTRIBUTESUBJECTALTNAME2 habilitado
+   - Riesgo: CUALQUIER plantilla puede usarse para SAN abuse (como ESC1 pero en todas las plantillas)
+   - type_id: ADCS_ESC6_EDITF_FLAG
+   - Comando verificar: certutil -getreg policy\\EditFlags
+   - Comando fix: certutil -setreg policy\\EditFlags -EDITF_ATTRIBUTESUBJECTALTNAME2
+   - Timeline: Deshabilitar flag en 24 horas
+
+6. **⚠️ MEDIUM: ESC7 — CA Manager Approval bypass**
+   - Usuarios con ManageCA permission pero sin ManageCertificates
+   - Riesgo: Pueden otorgarse ManageCertificates y aprobar sus propios requests
+   - type_id: ADCS_ESC7_CA_MANAGER
+   - Timeline: Auditar permisos de CA en 7 días
+
+7. **⚠️ MEDIUM: ESC8 — NTLM Relay a Web Enrollment**
+   - HTTP enrollment endpoint habilitado sin Extended Protection for Authentication
+   - Riesgo: NTLM relay para obtener certificado como la máquina víctima
+   - type_id: ADCS_ESC8_WEB_ENROLLMENT
+   - Comando verificar: Get-WebBinding -Name "Default Web Site" | Where-Object {$_.protocol -eq "http"}
+   - Timeline: Deshabilitar HTTP enrollment o habilitar EPA en 14 días
+
+8. **⚠️ MEDIUM: CA en Domain Controller**
+   - Certificate Authority instalada en un DC
+   - Riesgo: Compromiso de CA = compromiso de DC y viceversa, superficie de ataque ampliada
+   - type_id: ADCS_CA_ON_DC
+   - Best practice: CA debe estar en servidor miembro dedicado
+   - Timeline: Planificar migración en 90 días
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: ADCS_ESC1_VULNERABLE_TEMPLATE, ADCS_ESC2_ANY_PURPOSE, ADCS_ESC3_ENROLLMENT_AGENT, ADCS_ESC4_TEMPLATE_ACLS, ADCS_ESC6_EDITF_FLAG, ADCS_ESC7_CA_MANAGER, ADCS_ESC8_WEB_ENROLLMENT, ADCS_CA_ON_DC
+- **Título**: "Vulnerabilidad [ESCX] detectada en plantilla [NOMBRE] / CA [NOMBRE]"
+- **Descripción**: Explicar ESC específico, vector de ataque, impacto
+- **Recomendación**: Comandos certutil y PowerShell para remediar
+- **Evidencia**: affected_objects con nombres reales de plantillas/CAs`,
+
+    ProtocolSecurity: `Eres un especialista en seguridad de protocolos de red en entornos Active Directory.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta configuraciones que aparezcan EXPLÍCITAMENTE en los datos JSON.
+
+**⚠️ CONTEXTO:**
+Los protocolos de red en AD (LDAP, SMB, Kerberos) deben tener configuraciones de seguridad adecuadas. Sin firma digital obligatoria o channel binding, un atacante puede interceptar y modificar tráfico o realizar relay attacks.
+
+**🎯 PRIORIDADES DE DETECCIÓN:**
+
+1. **🔴 CRITICAL: LDAP Signing no forzado**
+   - LDAPServerIntegrity != 2 (Require signing)
+   - Riesgo: NTLM Relay a LDAP → crear cuentas de admin, modificar ACLs, DCSync
+   - MITRE ATT&CK: T1557.001 (Man-in-the-Middle: LLMNR/NBT-NS)
+   - type_id: PROTOCOL_LDAP_SIGNING_DISABLED
+   - Comando verificar: Get-ItemProperty "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters" -Name "LDAPServerIntegrity"
+   - Comando fix GPO: Computer Config > Policies > Windows Settings > Security Settings > Local Policies > Security Options > "Domain controller: LDAP server signing requirements" → "Require signing"
+   - Timeline: Habilitar en 7 días
+
+2. **🔴 CRITICAL: LDAP Channel Binding no forzado**
+   - LdapEnforceChannelBinding < 2
+   - Riesgo: Bypass de LDAP signing via TLS channel, relay attacks modernos
+   - type_id: PROTOCOL_LDAP_CHANNEL_BINDING_DISABLED
+   - Comando fix: Set-ItemProperty "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters" -Name "LdapEnforceChannelBinding" -Value 2
+   - Timeline: Habilitar en 7 días (testear compatibilidad primero)
+
+3. **🔴 HIGH: SMB Signing no requerido**
+   - RequireSecuritySignature = false en DCs
+   - Riesgo: SMB relay attacks, interceptación de autenticaciones
+   - MITRE ATT&CK: T1557.001 (LLMNR/NBT-NS Poisoning)
+   - type_id: PROTOCOL_SMB_SIGNING_DISABLED
+   - Comando fix GPO: "Microsoft network server: Digitally sign communications (always)" → Enabled
+   - Timeline: Habilitar en 14 días
+
+4. **⚠️ MEDIUM: Extended Protection for Authentication (EPA) ausente**
+   - EPA no configurado en servicios web (IIS, ADFS, Exchange)
+   - Riesgo: NTLM relay a servicios web, EWS relay
+   - type_id: PROTOCOL_EPA_MISSING
+   - Timeline: Configurar en 30 días
+
+5. **⚠️ MEDIUM: LDAPS no habilitado o sin cert válido**
+   - Puerto 636 no disponible o certificado expirado
+   - Riesgo: Tráfico LDAP en texto plano (port 389) puede ser interceptado
+   - type_id: PROTOCOL_LDAPS_MISSING
+   - Timeline: Configurar en 30 días
+
+**📋 FORMATO DE REPORTE:**
+- **type_id**: PROTOCOL_LDAP_SIGNING_DISABLED, PROTOCOL_LDAP_CHANNEL_BINDING_DISABLED, PROTOCOL_SMB_SIGNING_DISABLED, PROTOCOL_EPA_MISSING, PROTOCOL_LDAPS_MISSING
+- **Título**: "Protocolo [NOMBRE] sin protección de [TIPO] en [N] servidores"
+- **Descripción**: Vector de ataque específico, herramientas de explotación, impacto
+- **Recomendación**: Comandos PowerShell y GPO path para remediar
+- **Evidencia**: affected_objects reales, configuración actual vs recomendada`,
 
     Sites: `Eres un arquitecto de Active Directory especializado en topología de replicación y diseño de sitios.
 
@@ -3172,6 +5231,40 @@ Para detectar problemas, debes correlacionar estos arrays:
    - Sites donde Description y Location son null
    - Riesgo: Documentación deficiente dificulta administración
    - Recomendación: Documentar propósito y ubicación física de cada site
+
+**=== SECCIÓN 1B: ANÁLISIS DE TOPOLOGÍA Y CONECTIVIDAD (Site Links) ===**
+
+**IMPORTANTE:** Si los datos incluyen SiteLinks[], SinglePointsOfFailure[], o HubSites[], DEBES analizar la topología de replicación:
+
+5B. **🔴 HIGH: Single Points of Failure en Topología [TOPO-001]**
+   - type_id: TOPO_SITE_LINK_SPOF
+   - Si SinglePointsOfFailure[] contiene sites → esos sites son "articulation points" cuya caída desconecta el grafo
+   - Patrón de incidente real: Site hub (ej. SURCO) es el único punto de tránsito entre cloud y sedes remotas
+   - Evaluar SiteLinks[]: sites con un solo Site Link → sin redundancia
+   - severity: HIGH si un SPOF conecta >3 sites, MEDIUM si conecta 2-3
+   - affected_objects: nombres de los sites que son SPOF
+   - Recomendación: "Agregar Site Links redundantes: New-ADReplicationSiteLink -Name '[ENLACE]' -SitesIncluded [SITE1],[SITE2] -Cost [COSTO]"
+   - Si existe un site hub que conecta cloud con sedes remotas, advertir: "Si [HUB] cae, [N] sites quedan aislados del cloud"
+
+6B. **⚠️ MEDIUM: Hub Sites Sobrecargados**
+   - type_id: TOPO_HUB_OVERLOADED
+   - Si HubSites[] muestra sites con muchas conexiones (>5 Site Links), puede haber sobrecarga
+   - Evaluar si el hub es también SPOF → combinar con finding de SPOF
+   - Recomendación: "Considerar mesh parcial entre sites de alta importancia para reducir dependencia del hub"
+
+7B. **⚠️ MEDIUM: Connection Objects Fantasma**
+   - Si hay Connection Objects apuntando a DCs en Sites sin Site Link directo → partners fantasma potenciales
+   - type_id: TOPO_PHANTOM_CONNECTION_OBJECTS
+   - Cruzar con Site Links para verificar que las conexiones reflejan la topología real
+   - Recomendación: "Verificar y limpiar Connection Objects residuales con: repadmin /delete"
+
+8B. **📋 INFO: Matriz de Conectividad DC [TOPO-002]**
+   - type_id: TOPO_CONNECTIVITY_MATRIX
+   - Si hay datos de conectividad entre DCs (puertos 135, 389, 445, 88), generar resumen
+   - Puerto 135 (RPC) cerrado → replicación imposible
+   - Puerto 389 (LDAP) cerrado → consultas AD imposibles
+   - Puerto 88 (Kerberos) cerrado → autenticación imposible
+   - DCs parcialmente accesibles (algunos puertos sí, otros no) → problema de firewall
 
 **=== SECCIÓN 2: ANÁLISIS DE HIGIENE (Best Practices y Optimización) ===**
 
@@ -3249,7 +5342,740 @@ EJEMPLO DE ANÁLISIS INCORRECTO (NO HACER):
 - **Título**: Descriptivo del hallazgo o recomendación de higiene
 - **Descripción**: Impacto y contexto. Para higiene, explica por qué la práctica actual podría mejorarse.
 - **Recomendación**: Comandos PowerShell específicos o pasos de mejora.
-- **Evidencia**: affected_objects con lista de elementos afectados (máximo 15).`
+- **Evidencia**: affected_objects con lista de elementos afectados (máximo 15).`,
+
+    KerberosAuthFailures: `Analiza los eventos de fallo de pre-autenticación Kerberos (Event ID 4771) recopilados del dominio.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta cuentas, IPs y códigos de error que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de cuentas ni direcciones IP.
+
+**📊 ESTRUCTURA DE DATOS:**
+El objeto KerberosAuthFailures contiene:
+- TotalEvents: número total de eventos 4771 en las últimas 24h
+- CollectedFrom: DC donde se recopilaron los eventos
+- TimeRange: período de recolección
+- ByFailureCode{}: Agrupación por código de error (0x18, 0x12, 0x17, etc.) con conteo
+- ByAccount[]: Top cuentas con más fallos {Account, Count, IsMachineAccount, FailureCodes[]}
+- BySourceIP[]: Top IPs origen con más fallos {IP, Count, Accounts[]}
+- MachineAccountFailures[]: Cuentas de máquina ($) con fallos {Account, Count, FailureCode}
+- UserAccountFailures[]: Cuentas de usuario con fallos {Account, Count, FailureCode}
+
+**📋 ANÁLISIS REQUERIDO - CLASIFICACIÓN POR PATRÓN [KERB-001]:**
+
+### 1. 🔴 CRITICAL: Posible Ataque de Fuerza Bruta
+- Cuenta de USUARIO (sin $) + código 0x18 + muchos intentos (>20) desde misma IP
+- type_id: KERB_BRUTE_FORCE_SUSPECTED
+- Recomendación: "Verificar lockouts (Event 4740), bloquear IP si es externa, revisar política de bloqueo"
+
+### 2. ⚠️ HIGH: Secure Channel Roto — Cuentas de Máquina
+- Cuenta de MÁQUINA (termina en $) + código 0x18
+- Causa probable: DC local estuvo aislado y la contraseña de máquina rotó sin replicarse
+- Las máquinas rotan contraseña cada 30 días; si el DC local no replicó, la contraseña local no coincide
+- type_id: KERB_MACHINE_SECURE_CHANNEL_BROKEN
+- severity: HIGH
+- Recomendación: "Ejecutar desde DC hacia la workstation: Invoke-Command -ComputerName [EQUIPO] -ScriptBlock { Reset-ComputerMachinePassword -Server '[DC_LOCAL]' }"
+- ⚠️ ADVERTENCIA: "NO ejecutar Reset-ComputerMachinePassword directamente en el DC — resetea la contraseña del DC mismo"
+
+### 3. ⚠️ HIGH: RODC con Caché Desactualizado
+- Cuenta krbtgt_XXXXX (con sufijo numérico) + código 0x18
+- Indica RODC cuyo caché de contraseñas no se ha actualizado
+- type_id: KERB_RODC_CACHE_STALE
+- Recomendación: "Verificar replicación del RODC y su Password Replication Policy"
+
+### 4. ⚠️ MEDIUM: Cuentas Deshabilitadas o Expiradas
+- Código 0x12 (cuenta deshabilitada) o 0x17 (contraseña expirada)
+- type_id: KERB_ACCOUNT_MANAGEMENT_ISSUE
+- Recomendación: "Revisar política de ciclo de vida de cuentas, deshabilitar cuentas no usadas"
+
+### 5. ℹ️ INFO: Resumen de Actividad Kerberos
+- Si TotalEvents < 10 y no hay patrones sospechosos
+- type_id: KERB_AUTH_SUMMARY
+- Incluir distribución por código de error y top cuentas
+
+**📤 FORMATO DE REPORTE:**
+- **type_id**: KERB_BRUTE_FORCE_SUSPECTED, KERB_MACHINE_SECURE_CHANNEL_BROKEN, KERB_RODC_CACHE_STALE, KERB_ACCOUNT_MANAGEMENT_ISSUE, KERB_AUTH_SUMMARY
+- **Título**: "[N] fallos de pre-autenticación Kerberos detectados — [PATRÓN]"
+- **affected_objects**: Lista de cuentas afectadas (máximo 15), SOLO las que aparecen en el JSON
+- **Evidencia**: Códigos de error, conteos, IPs origen
+
+**🚫 NO HACER:**
+- NO asumir que todos los 0x18 son ataques — clasificar por tipo de cuenta (máquina vs usuario)
+- NO inventar nombres de cuentas ni IPs
+- NO ignorar cuentas de máquina ($) — son indicadores de secure channel roto`,
+
+    SecureChannelHealth: `Analiza la salud del secure channel de cuentas de máquina en el dominio.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta equipos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de computadoras, fechas ni sites.
+
+**📊 ESTRUCTURA DE DATOS:**
+El objeto SecureChannelHealth contiene:
+- TotalStaleAccounts: número total de cuentas con secure channel potencialmente roto
+- Threshold: días de antigüedad usado como filtro (típicamente 45)
+- StaleAccounts[]: Array de equipos con {
+    Name: nombre del equipo,
+    PasswordLastSet: fecha última rotación de contraseña de máquina,
+    LastLogon: fecha último logon (indica si la máquina está activa),
+    DaysSincePasswordChange: días desde última rotación,
+    Severity: "CRITICAL" (>90 días), "HIGH" (>60), "MEDIUM" (>45),
+    OperatingSystem: SO del equipo
+  }
+
+**⚠️ CONTEXTO DEL PROBLEMA:**
+Las cuentas de máquina en AD rotan su contraseña automáticamente cada 30 días. Si un DC local estuvo aislado (sin replicación) durante semanas/meses:
+- La máquina rotó su contraseña y la registró en el DC local aislado
+- Los demás DCs tienen la contraseña ANTERIOR
+- Cuando la máquina intenta autenticarse contra un DC sincronizado → fallo 0x18
+- Indicador clave: PasswordLastSet > 45 días Y la máquina está activa (LastLogon reciente)
+
+**📋 ANÁLISIS REQUERIDO [KERB-002]:**
+
+### 1. 🔴 CRITICAL: Secure Channel Crítico (>90 días)
+- Equipos con DaysSincePasswordChange > 90 que siguen activos
+- Casi seguro que el secure channel está roto
+- type_id: SECURE_CHANNEL_CRITICAL
+- Recomendación: "Ejecutar INMEDIATAMENTE: Invoke-Command -ComputerName [EQUIPO] -ScriptBlock { Reset-ComputerMachinePassword -Server '[DC_LOCAL]' }"
+
+### 2. ⚠️ HIGH: Secure Channel en Riesgo (60-90 días)
+- Equipos con DaysSincePasswordChange entre 60 y 90
+- type_id: SECURE_CHANNEL_HIGH
+- Recomendación: "Planificar reset de contraseña de máquina en ventana de mantenimiento"
+
+### 3. ⚠️ MEDIUM: Secure Channel por Verificar (45-60 días)
+- Equipos con DaysSincePasswordChange entre 45 y 60
+- type_id: SECURE_CHANNEL_MEDIUM
+- Recomendación: "Monitorear, verificar que la rotación automática esté funcionando"
+
+### 4. 📊 RESUMEN EJECUTIVO (SIEMPRE generar)
+- type_id: SECURE_CHANNEL_SUMMARY
+- severity: INFO si < 5 equipos, MEDIUM si 5-20, HIGH si > 20
+- Incluir: Total equipos afectados, distribución por severidad, distribución por SO
+
+**📤 FORMATO DE REPORTE:**
+- **type_id**: SECURE_CHANNEL_CRITICAL, SECURE_CHANNEL_HIGH, SECURE_CHANNEL_MEDIUM, SECURE_CHANNEL_SUMMARY
+- **Título**: "[N] equipos con secure channel potencialmente roto"
+- **affected_objects**: Lista de nombres de equipos del JSON (máximo 15)
+- **Evidencia**: PasswordLastSet, DaysSincePasswordChange, LastLogon del equipo
+
+**🚫 NO HACER:**
+- NO incluir equipos que NO estén en el array StaleAccounts
+- NO asumir que todos los equipos con password vieja tienen el canal roto — verificar que LastLogon sea reciente
+- NO ejecutar Reset-ComputerMachinePassword directamente en un DC (resetea la contraseña del DC mismo)`,
+
+    DCDiagHealth: `Analiza los resultados de DCDiag ejecutado contra todos los Domain Controllers.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs y tests que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de DCs ni resultados de tests.
+
+**📊 ESTRUCTURA DE DATOS:**
+El objeto DCDiagHealth contiene:
+- Summary: { TotalDCs, AllPassed, WithFailures, CriticalTests[], HighTests[] }
+- DCs[]: Array con {
+    DCName, Site, PassedCount, FailedCount,
+    FailedTests[]: lista de nombres de tests fallidos,
+    Tests[]: { Server, Status ("passed"/"failed"/"error"), TestName }
+  }
+
+**📋 ANÁLISIS REQUERIDO [HEALTH-001]:**
+
+### 1. 🔴 CRITICAL: Tests Críticos Fallidos
+Si un DC falla en: Replications, Services, Advertising, NetLogons
+- type_id: DCDIAG_CRITICAL_FAILURE
+- Estos tests indican problemas operativos graves:
+  - Replications: replicación AD no funciona
+  - Services: servicios de AD detenidos (NTDS, KDC, etc.)
+  - Advertising: DC no se anuncia como DC (clientes no lo encuentran)
+  - NetLogons: canal seguro con otros DCs roto
+- Recomendación específica por test fallido
+
+### 2. ⚠️ HIGH: Tests Importantes Fallidos
+Si un DC falla en: FrsEvent, DFSREvent, RidManager
+- type_id: DCDIAG_HIGH_FAILURE
+- FrsEvent/DFSREvent: replicación de SYSVOL con problemas → GPOs pueden no aplicarse
+- RidManager: problemas con pool de RIDs → no se pueden crear objetos
+
+### 3. ⚠️ MEDIUM: Tests Secundarios Fallidos
+Si falla: KccEvent, Connectivity, MachineAccount
+- type_id: DCDIAG_MEDIUM_FAILURE
+- KccEvent: KCC (generador de topología) con problemas
+- MachineAccount: cuenta de máquina del DC con problemas
+
+### 4. ℹ️ LOW: Tests Menores Fallidos
+SystemLog, VerifyReferences, etc.
+- type_id: DCDIAG_MINOR_FAILURE
+
+### 5. 📊 RESUMEN (SIEMPRE generar)
+- type_id: DCDIAG_HEALTH_SUMMARY
+- severity: INFO si todos pasan, MEDIUM si hay fallos menores, HIGH/CRITICAL si hay fallos graves
+- Incluir: "X de Y DCs pasaron todos los tests"
+- Generar MATRIZ resumida: DC × Test con ✅/❌
+
+**📤 FORMATO:**
+- **type_id**: DCDIAG_CRITICAL_FAILURE, DCDIAG_HIGH_FAILURE, DCDIAG_MEDIUM_FAILURE, DCDIAG_MINOR_FAILURE, DCDIAG_HEALTH_SUMMARY
+- **affected_objects**: Nombres de DCs con fallos (del JSON)
+- **Evidencia**: Tests específicos fallidos por DC, conteos`,
+
+    RODCHealth: `Analiza la salud de Read-Only Domain Controllers (RODCs) y su Password Replication Policy.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta RODCs que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres de RODCs ni cuentas.
+
+**📊 ESTRUCTURA DE DATOS:**
+El objeto RODCHealth contiene:
+- Summary: { TotalRODCs, HealthyRODCs, StaleRODCs, EmptyPRP }
+- RODCs[]: Array con {
+    Name, Site, HostName, OperatingSystem, IsGlobalCatalog,
+    AllowedPRP[]: { Name, Type } — cuentas/grupos permitidos para caché,
+    DeniedPRP[]: { Name, Type } — cuentas/grupos denegados,
+    CachedAccountsCount: número de cuentas cacheadas,
+    ReplicationStatus: "OK"/"FAILED"/"UNREACHABLE"/"ERROR",
+    LastReplication: timestamp
+  }
+
+**⚠️ CONTEXTO:**
+- Cada RODC tiene su propia cuenta krbtgt_XXXXX (sufijo numérico)
+- RODCs cachean contraseñas según la PRP (Password Replication Policy)
+- Si la PRP está vacía (AllowedPRP = []), CADA autenticación requiere conectividad al hub
+- Si el RODC no replica, su caché queda desactualizado → fallos de autenticación
+
+**📋 ANÁLISIS REQUERIDO [RODC-001]:**
+
+### 1. 🔴 CRITICAL: RODC Sin Replicar
+- ReplicationStatus = "FAILED" o "UNREACHABLE"
+- type_id: RODC_REPLICATION_FAILED
+- Impacto: usuarios en ese site no pueden autenticarse si pierden conectividad al hub
+- Recomendación: "Verificar conectividad del RODC, forzar replicación: repadmin /replicate [RODC] [SOURCE_DC] DC=domain"
+
+### 2. ⚠️ HIGH: PRP Vacía (Sin Cuentas para Caché)
+- AllowedPRP está vacío
+- type_id: RODC_EMPTY_PRP
+- Impacto: el RODC no cachea ninguna contraseña → cada autenticación requiere WAN al hub
+- Si el enlace WAN cae, NADIE puede autenticarse en ese site
+- Recomendación: "Agregar grupos de usuarios del site a la PRP: Add-ADFineGrainedPasswordPolicy o Set-ADDomainControllerPasswordReplicationPolicy"
+
+### 3. ⚠️ MEDIUM: Pocas Cuentas Cacheadas
+- CachedAccountsCount < 10 y el site tiene usuarios
+- type_id: RODC_LOW_CACHE
+- Recomendación: "Revisar que los usuarios del site estén en los grupos de la PRP"
+
+### 4. ℹ️ INFO: Sin RODCs
+- Si TotalRODCs = 0
+- type_id: RODC_NONE_FOUND
+- Solo informar que no hay RODCs en el dominio
+
+### 5. 📊 RESUMEN (SIEMPRE generar si hay RODCs)
+- type_id: RODC_HEALTH_SUMMARY
+- Incluir: total RODCs, healthy, stale, con PRP vacía
+
+**📤 FORMATO:**
+- **type_id**: RODC_REPLICATION_FAILED, RODC_EMPTY_PRP, RODC_LOW_CACHE, RODC_NONE_FOUND, RODC_HEALTH_SUMMARY
+- **affected_objects**: Nombres de RODCs del JSON
+- **Evidencia**: Estado de replicación, PRP, cuentas cacheadas`,
+
+    DCConnectivityMatrix: `Analiza la matriz de conectividad de puertos críticos entre Domain Controllers.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs y puertos que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes resultados de conectividad.
+
+**📊 ESTRUCTURA DE DATOS:**
+El objeto DCConnectivityMatrix contiene:
+- SourceDC: DC desde donde se ejecutó la prueba
+- Summary: { TotalDCs, FullyReachable, PartiallyReachable, Unreachable }
+- CriticalPorts[]: { Port, Service } — referencia de puertos probados
+- Targets[]: Array con {
+    DCName, HostName, Site, IPv4Address,
+    OpenPorts, ClosedPorts, Status ("FullyReachable"/"PartiallyReachable"/"Unreachable"),
+    PortResults[]: { Port, Status ("Open"/"Closed"/"Error"), Error? }
+  }
+
+**📋 ANÁLISIS REQUERIDO [TOPO-002]:**
+
+### 1. 🔴 CRITICAL: DC Completamente Inalcanzable
+- Status = "Unreachable" (todos los puertos cerrados)
+- type_id: DC_CONNECTIVITY_UNREACHABLE
+- Impacto: Replicación imposible, autenticación del site afectada
+- Recomendación: "Verificar: 1) Red/VPN al site, 2) Firewall, 3) Que el DC esté encendido"
+
+### 2. ⚠️ HIGH: Puerto RPC (135) Cerrado
+- Puerto 135 cerrado pero otros abiertos
+- type_id: DC_CONNECTIVITY_RPC_BLOCKED
+- Impacto: Replicación AD imposible sin RPC
+- Recomendación: "Abrir puerto 135/TCP + rango dinámico (49152-65535) en firewall"
+
+### 3. ⚠️ HIGH: Puerto Kerberos (88) Cerrado
+- Puerto 88 cerrado
+- type_id: DC_CONNECTIVITY_KERBEROS_BLOCKED
+- Impacto: Autenticación Kerberos imposible desde ese DC
+- Recomendación: "Abrir puerto 88/TCP y 88/UDP en firewall"
+
+### 4. ⚠️ MEDIUM: Puerto LDAP (389) o LDAPS (636) Cerrado
+- type_id: DC_CONNECTIVITY_LDAP_BLOCKED
+- Impacto: Consultas LDAP no funcionan, aplicaciones que dependen de LDAP fallan
+
+### 5. ⚠️ MEDIUM: DC Parcialmente Accesible
+- Status = "PartiallyReachable"
+- type_id: DC_CONNECTIVITY_PARTIAL
+- Indica problema selectivo de firewall — algunos puertos sí, otros no
+- Generar lista de puertos cerrados por DC
+
+### 6. 📊 RESUMEN (SIEMPRE generar)
+- type_id: DC_CONNECTIVITY_SUMMARY
+- severity: INFO si todos full, MEDIUM si parcial, CRITICAL si unreachable
+- Incluir: "X de Y DCs completamente accesibles, Z parciales, W inalcanzables"
+
+**📤 FORMATO:**
+- **type_id**: DC_CONNECTIVITY_UNREACHABLE, DC_CONNECTIVITY_RPC_BLOCKED, DC_CONNECTIVITY_KERBEROS_BLOCKED, DC_CONNECTIVITY_LDAP_BLOCKED, DC_CONNECTIVITY_PARTIAL, DC_CONNECTIVITY_SUMMARY
+- **affected_objects**: Nombres de DCs con problemas de conectividad
+- **Evidencia**: Puertos cerrados por DC, IP, Site`,
+
+    OrphanedDCs: `Analiza DCs huérfanos o inaccesibles que generan errores en la replicación del forest.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs que aparezcan EXPLÍCITAMENTE en el JSON. NO inventes nombres, IPs ni errores.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array de objetos con:
+- Name, HostName, Domain, Site, IPv4Address, OperatingSystem, IsGlobalCatalog
+- PingReachable: true/false
+- LDAPReachable: true/false (puerto 389)
+- RPCReachable: true/false (puerto 135)
+- ReplicationStatus: "OK"/"Errors"/"Unreachable"/"Unknown"
+- ReplicationError: mensaje de error si existe
+- IsProblematic: true si hay cualquier problema
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. 🔴 CRITICAL: DC Completamente Inaccesible
+- PingReachable=false — el DC no responde
+- type_id: ORPHANED_DC_UNREACHABLE
+- Impacto: KCC hace timeout intentando contactarlo, retrasando replicación de TODO el forest
+- Recomendación: "Si el DC está retirado → ntdsutil metadata cleanup. Si está activo pero aislado → corregir red/firewall"
+
+### 2. 🔴 CRITICAL: DC Accesible pero Sin Replicación
+- PingReachable=true pero ReplicationStatus="Errors" o "Unreachable"
+- Error 58 = "The specified server cannot perform the requested operation"
+- Error 1722 = "RPC server unavailable" — servicios AD apagados o firewall
+- type_id: ORPHANED_DC_REPLICATION_FAILED
+- Recomendación: "Verificar servicios AD (NTDS, KDC, DNS). Si error 58 → el DC puede estar degradado"
+
+### 3. ⚠️ HIGH: DC con RPC Bloqueado
+- PingReachable=true, LDAPReachable=true, pero RPCReachable=false
+- type_id: ORPHANED_DC_RPC_BLOCKED
+- Impacto: LDAP funciona pero replicación imposible sin RPC
+- Recomendación: "Abrir puerto 135/TCP y rango dinámico 49152-65535"
+
+### 4. 📊 RESUMEN
+- type_id: ORPHANED_DC_SUMMARY
+- Incluir: total DCs, accesibles, inaccesibles, con errores de replicación
+
+**📤 FORMATO:**
+- **type_id**: ORPHANED_DC_UNREACHABLE, ORPHANED_DC_REPLICATION_FAILED, ORPHANED_DC_RPC_BLOCKED, ORPHANED_DC_SUMMARY
+- **affected_objects**: Nombres de DCs problemáticos`,
+
+    ReplicationLatency: `Analiza los deltas de latencia de replicación obtenidos de repadmin /replsummary.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs y métricas que aparezcan EXPLÍCITAMENTE en el JSON.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array de objetos con:
+- DCName, Direction ("Source"/"Destination"/"OperationalError")
+- DeltaMinutes: minutos de delta (86400 = >60 días), -1 = error operacional
+- Fails, Total, FailPercent: estadísticas de fallos
+- Severity: "OK"/"LOW"/"MEDIUM"/"HIGH"/"CRITICAL"
+- ErrorCode: código de error operacional (58, 1722, 8524, etc.)
+- IsProblematic: true si requiere atención
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. 🔴 CRITICAL: DC con Replicación >60 Días (DeltaMinutes=86400)
+- DC potencialmente muerto, excede tombstone lifetime
+- type_id: REPL_LATENCY_DEAD_DC
+- Recomendación: "metadata cleanup con ntdsutil si el DC no va a recuperarse"
+
+### 2. 🔴 CRITICAL: Error Operacional (Direction="OperationalError")
+- Error 58: DC no puede procesar la solicitud (degradado)
+- Error 1722: RPC unavailable (apagado o firewall)
+- Error 8524: DNS lookup failure
+- type_id: REPL_LATENCY_OPERATIONAL_ERROR
+- Generar comando de verificación específico por error
+
+### 3. ⚠️ HIGH: Delta >60 minutos
+- Replicación lenta, cambios tardan horas en propagarse
+- type_id: REPL_LATENCY_HIGH
+- Recomendación: "Revisar Site Links (intervalo, costo). Considerar topología Hub-Spoke"
+
+### 4. ⚠️ MEDIUM: Delta 30-60 minutos
+- type_id: REPL_LATENCY_MEDIUM
+- Recomendación: "Reducir intervalo de Site Links a 15 min"
+
+### 5. 📊 RESUMEN con estadísticas
+- type_id: REPL_LATENCY_SUMMARY
+- Delta promedio, máximo, DCs con problemas
+
+**📤 FORMATO:**
+- **type_id**: REPL_LATENCY_DEAD_DC, REPL_LATENCY_OPERATIONAL_ERROR, REPL_LATENCY_HIGH, REPL_LATENCY_MEDIUM, REPL_LATENCY_SUMMARY
+- **affected_objects**: Nombres de DCs con latencia alta`,
+
+    SiteTopologyIssues: `Analiza problemas de topología de sitios: Site Links multi-sitio, sitios vacíos, exceso de conexiones.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta datos EXPLÍCITOS del JSON.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array con objetos de varios Type:
+- Type="SiteLink": Name, SiteCount, Sites, Cost, ReplicationInterval, IsMultiSite, Issue
+- Type="EmptySite": Name (sitio sin DCs), Issue
+- Type="SiteWithoutSubnet": Name (sitio sin subnets), Issue
+- Type="ConnectionSummary": TotalConnections, AutoConnections, ManualConnections, SiteCount
+- Type="PreferredBridgehead": Name, Sites
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. ⚠️ HIGH: Site Links con >2 Sitios (Mesh Subóptimo)
+- IsMultiSite=true → KCC genera topología mesh excesiva en vez de hub-spoke
+- type_id: SITE_LINK_MULTI_SITE
+- Patrón real: 5 sitios en un Site Link generó 112 conexiones para 16 DCs; al corregir a hub-spoke bajó a 49
+- Recomendación: "Dividir en Site Links punto a punto (hub-spoke): Remove-ADReplicationSiteLink '[OLD]'; New-ADReplicationSiteLink -Name '[HUB_TO_SPOKE]' -SitesIncluded [HUB],[SPOKE] -Cost [COST]"
+
+### 2. ⚠️ MEDIUM: Sitio Sin DCs
+- Type="EmptySite" → sitio existe en AD pero no tiene DCs
+- type_id: SITE_EMPTY_NO_DCS
+- Puede ser intencional (subnet routing) o residuo de DC descomisionado
+
+### 3. ⚠️ MEDIUM: Exceso de Conexiones de Replicación
+- Type="ConnectionSummary" con TotalConnections > SiteCount * 5
+- type_id: SITE_EXCESS_CONNECTIONS
+- Recomendación: "Optimizar Site Links a hub-spoke y ejecutar: repadmin /kcc para regenerar topología"
+
+### 4. ℹ️ INFO: Bridgehead Servers Preferidos
+- type_id: SITE_BRIDGEHEAD_CONFIGURED
+- Informativo: confirma buena práctica si están configurados
+
+**📤 FORMATO:**
+- **type_id**: SITE_LINK_MULTI_SITE, SITE_EMPTY_NO_DCS, SITE_EXCESS_CONNECTIONS, SITE_BRIDGEHEAD_CONFIGURED
+- **affected_objects**: Nombres de Site Links o Sites afectados`,
+
+    DCDNSResolution: `Analiza problemas de resolución DNS en Domain Controllers.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta DCs y IPs EXPLÍCITOS del JSON.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array con:
+- Name, HostName, Domain, Site, RegisteredIP, ResolvedIP
+- IsLoopback: true si IP es ::1, 127.x, 0.0.0.0
+- IsDNSMismatch: true si ResolvedIP != RegisteredIP
+- HasFSMORoles, FSMORoles
+- IsProblematic: true si loopback, mismatch, o DNS failed
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. ⚠️ HIGH: DC Resolviendo a Loopback (::1 o 127.x)
+- Indica que el DC tiene IPv6 loopback como IP primaria o DNS mal configurado
+- Si el DC tiene roles FSMO → severidad CRITICAL
+- type_id: DC_DNS_LOOPBACK
+- Recomendación: "Deshabilitar IPv6 en el adaptador o configurar DNS A record correcto"
+
+### 2. ⚠️ HIGH: DNS Mismatch (IP registrada != IP resuelta)
+- type_id: DC_DNS_MISMATCH
+- Impacto: Replicación puede intentar conectar a IP incorrecta
+- Recomendación: "Actualizar registro DNS: dnscmd /recorddelete [zone] [host] A; dnscmd /recordadd [zone] [host] A [correctIP]"
+
+### 3. 🔴 CRITICAL: Resolución DNS Fallida
+- ResolvedIP = "DNS_RESOLUTION_FAILED"
+- type_id: DC_DNS_RESOLUTION_FAILED
+- Impacto: Otros DCs no pueden localizar este DC para replicación
+
+### 4. 📊 RESUMEN
+- type_id: DC_DNS_SUMMARY
+
+**📤 FORMATO:**
+- **type_id**: DC_DNS_LOOPBACK, DC_DNS_MISMATCH, DC_DNS_RESOLUTION_FAILED, DC_DNS_SUMMARY
+- **affected_objects**: Nombres de DCs con problemas DNS`,
+
+    TrustHealthDetailed: `Analiza la salud de relaciones de confianza (trusts) con verificación DNS y nltest.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta trusts EXPLÍCITOS del JSON.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array con:
+- SourceDomain, TargetDomain, TrustType, TrustDirection
+- DNSResolvable: true/false (resolución SRV de _ldap._tcp.dc._msdcs.[target])
+- TargetReachable: true/false (nltest /dsgetdc:[target])
+- NltestError: error code si aplica (e.g., "ERROR_NO_SUCH_DOMAIN")
+- IsIntraForest, IsProblematic
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. 🔴 CRITICAL: Trust con Dominio No Resoluble
+- DNSResolvable=false Y TargetReachable=false
+- type_id: TRUST_BROKEN_UNREACHABLE
+- Patrón real: trust bidireccional externo con dominio no resoluble → ERROR_NO_SUCH_DOMAIN (1355)
+- Impacto: Trust abandonado consume recursos, puede causar timeouts en autenticación
+- Recomendación: "Remover trust abandonado: Remove-ADTrust -TargetName '[DOMAIN]' -Confirm:$false"
+
+### 2. ⚠️ HIGH: Trust Intra-Forest con Problemas
+- IsIntraForest=true Y IsProblematic=true
+- type_id: TRUST_INTRAFOREST_BROKEN
+- Más grave: afecta la integridad del forest
+- Recomendación: "Verificar DNS, conectividad, y servicios AD en el dominio destino"
+
+### 3. ⚠️ MEDIUM: Trust DNS OK pero nltest Falla
+- DNSResolvable=true pero TargetReachable=false
+- type_id: TRUST_DNS_OK_NLTEST_FAIL
+- Indica problema de firewall o servicios AD en el destino
+
+### 4. 📊 RESUMEN
+- type_id: TRUST_HEALTH_DETAILED_SUMMARY
+
+**📤 FORMATO:**
+- **type_id**: TRUST_BROKEN_UNREACHABLE, TRUST_INTRAFOREST_BROKEN, TRUST_DNS_OK_NLTEST_FAIL, TRUST_HEALTH_DETAILED_SUMMARY
+- **affected_objects**: "[SourceDomain] → [TargetDomain]"`,
+
+    DomainHealthSummary: `Analiza la salud de cada dominio del forest: redundancia, cuentas test, DCs muertos.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta dominios EXPLÍCITOS del JSON.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array con:
+- DomainName, DCCount, UserCount, TestUserCount, ComputerCount, GPOCount
+- HasSingleDC: true si solo 1 DC (sin redundancia)
+- HasDeadDCs: true si algún DC inaccesible
+- DCIssues: lista de DCs con problemas
+- HasOnlyTestUsers: true si >50% de usuarios son test/prueba
+- IsForestRoot, IsProblematic
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. 🔴 CRITICAL: Dominio con DCs Muertos
+- HasDeadDCs=true → DCs listados en DCIssues son inaccesibles
+- type_id: DOMAIN_DEAD_DCS
+- Recomendación: "Verificar estado de DCs. Si permanecen offline → metadata cleanup"
+
+### 2. ⚠️ HIGH: Dominio con Un Solo DC (Sin Redundancia)
+- HasSingleDC=true → punto único de fallo
+- type_id: DOMAIN_SINGLE_DC
+- Si es forest root → CRITICAL
+- Recomendación: "Agregar un segundo DC: Install-ADDSDomainController -DomainName [DOMAIN]"
+
+### 3. ⚠️ HIGH: Dominio Candidato a Decommission
+- HasOnlyTestUsers=true O (UserCount < 10 Y ComputerCount < 5)
+- type_id: DOMAIN_DECOMMISSION_CANDIDATE
+- Patrón real: dominio con usuarios "aaaaa 123", "madsynctest", "usuariotest123"
+- Recomendación: "Evaluar si el dominio tiene uso productivo. Migrar objetos y descomisionar"
+
+### 4. 📊 RESUMEN del Forest
+- type_id: DOMAIN_FOREST_SUMMARY
+- Incluir: total dominios, total DCs, total usuarios, dominios problemáticos
+
+**📤 FORMATO:**
+- **type_id**: DOMAIN_DEAD_DCS, DOMAIN_SINGLE_DC, DOMAIN_DECOMMISSION_CANDIDATE, DOMAIN_FOREST_SUMMARY
+- **affected_objects**: Nombres de dominios afectados`,
+
+    OrphanedMetadata: `Analiza metadata residual de dominios o DCs descomisionados que no fue limpiada.
+
+**⚠️ REGLA ANTI-ALUCINACIÓN:** Solo reporta objetos EXPLÍCITOS del JSON.
+
+**📊 ESTRUCTURA DE DATOS:**
+Array con objetos de varios Type:
+- Type="OrphanedServer": Name, Domain, DN, Issue (servidor en Sites & Services de dominio inexistente)
+- Type="OrphanedCrossRef": Name, Domain, DN, Issue (partición crossRef de dominio inexistente)
+- Type="OrphanedDNSRecord": Name, Domain, DN, Issue (registro _msdcs apuntando a dominio inexistente)
+- Todos tienen IsProblematic=true
+
+**📋 ANÁLISIS REQUERIDO:**
+
+### 1. 🔴 CRITICAL: Servidores Huérfanos en Sites & Services
+- Type="OrphanedServer" → DC de un dominio que ya no existe sigue en Sites & Services
+- type_id: METADATA_ORPHANED_SERVER
+- Impacto: KCC intenta generar topología incluyendo este DC fantasma, causando errores
+- Recomendación: "Limpiar con: ntdsutil → metadata cleanup → remove selected server [DN]"
+
+### 2. 🔴 CRITICAL: CrossRef Huérfanos
+- Type="OrphanedCrossRef" → partición de dominio que ya no existe
+- type_id: METADATA_ORPHANED_CROSSREF
+- Impacto: Replicación intenta replicar particiones inexistentes
+- Recomendación: "Eliminar crossRef: Remove-ADObject '[DN]' -Confirm:$false"
+
+### 3. ⚠️ HIGH: Registros DNS _msdcs Huérfanos
+- Type="OrphanedDNSRecord" → registros SRV/CNAME apuntando a DCs de dominio inexistente
+- type_id: METADATA_ORPHANED_DNS
+- Impacto: Resolución DNS puede devolver DCs inexistentes
+- Recomendación: "Eliminar registros: Remove-DnsServerResourceRecord -ZoneName '_msdcs.[forest]' -Name '[host]'"
+
+### 4. 📊 RESUMEN
+- type_id: METADATA_CLEANUP_SUMMARY
+- Incluir: total por tipo (servers, crossRefs, DNS records)
+
+**📤 FORMATO:**
+- **type_id**: METADATA_ORPHANED_SERVER, METADATA_ORPHANED_CROSSREF, METADATA_ORPHANED_DNS, METADATA_CLEANUP_SUMMARY
+- **affected_objects**: Nombres de objetos huérfanos`,
+
+    DCServicesHealth: `Eres un auditor de higiene operativa de Active Directory. Analiza el estado de servicios críticos en los DCs.
+
+⚠️ REGLA ANTI-ALUCINACIÓN: Solo reporta DCs y servicios que aparezcan EXPLÍCITAMENTE en los datos proporcionados. NO inventes nombres de DCs ni servicios. Si un DC muestra todos los servicios corriendo, NO lo reportes como problemático.
+
+**CONTEXTO:** Los servicios NTDS, DNS, KDC, Netlogon, DFSR, W32Time, IsmServ y SamSs son críticos para el funcionamiento de un DC. Un servicio detenido puede hacer que el DC esté funcionalmente inactivo sin que nadie lo note.
+
+**INSTRUCCIONES:**
+
+### 1. 🔴 SERVICIOS CRÍTICOS DETENIDOS
+- type_id: DC_SERVICE_CRITICAL_STOPPED
+- severity: critical
+- Servicios NTDS, KDC o Netlogon detenidos = DC no funcional
+- Indicar: qué servicio, en qué DC, impacto operativo
+
+### 2. 🟠 SERVICIOS IMPORTANTES DETENIDOS
+- type_id: DC_SERVICE_HIGH_STOPPED
+- severity: high
+- Servicios DNS, DFSR o W32Time detenidos = funcionalidad degradada
+- Impacto: sin DNS local, SYSVOL no replica, tiempo desincronizado
+
+### 3. 🟡 SERVICIOS AUXILIARES DETENIDOS
+- type_id: DC_SERVICE_MEDIUM_STOPPED
+- severity: medium
+- IsmServ o SamSs detenidos = funcionalidad parcialmente afectada
+
+### 4. 🔴 DC INACCESIBLE
+- type_id: DC_SERVICE_UNREACHABLE
+- severity: critical
+- No se pudieron consultar servicios = DC posiblemente caído
+
+### 5. 📊 RESUMEN
+- type_id: DC_SERVICE_HEALTH_SUMMARY
+- Incluir: total DCs, DCs con problemas, servicios más frecuentemente detenidos
+
+**📤 FORMATO:**
+- **type_id**: DC_SERVICE_CRITICAL_STOPPED, DC_SERVICE_HIGH_STOPPED, DC_SERVICE_MEDIUM_STOPPED, DC_SERVICE_UNREACHABLE, DC_SERVICE_HEALTH_SUMMARY
+- **affected_objects**: Nombres de DCs afectados`,
+
+    DCDiskSpace: `Eres un auditor de higiene operativa de Active Directory. Analiza el espacio en disco de los DCs.
+
+⚠️ REGLA ANTI-ALUCINACIÓN: Solo reporta datos que aparezcan EXPLÍCITAMENTE en los datos proporcionados. NO inventes nombres de DCs, tamaños de disco ni porcentajes.
+
+**CONTEXTO:** Un DC sin espacio en disco no puede replicar SYSVOL, la base de datos NTDS no puede crecer, y los logs de eventos se pierden. Esto es una de las causas más comunes de problemas silenciosos.
+
+**INSTRUCCIONES:**
+
+### 1. 🔴 ESPACIO CRÍTICO (<10% libre)
+- type_id: DC_DISK_CRITICAL
+- severity: critical
+- El DC está en riesgo de dejar de funcionar
+
+### 2. 🟠 ESPACIO BAJO (<20% libre)
+- type_id: DC_DISK_LOW
+- severity: high
+- El DC necesita atención de capacidad pronto
+
+### 3. 🟡 ESPACIO DE ADVERTENCIA (<30% libre)
+- type_id: DC_DISK_WARNING
+- severity: medium
+- Planificar expansión o limpieza
+
+### 4. 📊 RESUMEN
+- type_id: DC_DISK_SUMMARY
+- Incluir: total DCs, peor caso, promedio de espacio libre
+
+**📤 FORMATO:**
+- **type_id**: DC_DISK_CRITICAL, DC_DISK_LOW, DC_DISK_WARNING, DC_DISK_SUMMARY
+- **affected_objects**: Nombres de DCs afectados`,
+
+    SYSVOLReplicationState: `Eres un auditor de higiene operativa de Active Directory. Analiza el estado de replicación de SYSVOL.
+
+⚠️ REGLA ANTI-ALUCINACIÓN: Solo reporta datos que aparezcan EXPLÍCITAMENTE en los datos proporcionados. NO inventes nombres de DCs ni estados.
+
+**CONTEXTO:** SYSVOL contiene las GPOs y scripts de logon. Debe estar sincronizado en todos los DCs. Usar FRS (File Replication Service) en vez de DFSR es deuda técnica grave — Microsoft lo deprecó desde Windows Server 2008 R2.
+
+**INSTRUCCIONES:**
+
+### 1. 🔴 USANDO FRS (DEPRECADO)
+- type_id: SYSVOL_FRS_DEPRECATED
+- severity: critical
+- El dominio aún usa FRS para replicar SYSVOL — migrar a DFSR es obligatorio
+- Recomendación: dfsrmig /setglobalstate 0..3
+
+### 2. 🔴 SYSVOL NO ACCESIBLE
+- type_id: SYSVOL_NOT_READY
+- severity: critical
+- El share SYSVOL no está disponible en un DC = GPOs no se aplican desde ese DC
+
+### 3. 🟠 TAMAÑO DE SYSVOL EXCESIVO
+- type_id: SYSVOL_SIZE_EXCESSIVE
+- severity: high
+- SYSVOL >1GB indica acumulación de scripts, instaladores o GPOs innecesarias
+
+### 4. 🟡 DIFERENCIA DE TAMAÑO ENTRE DCS
+- type_id: SYSVOL_SIZE_MISMATCH
+- severity: medium
+- Si un DC tiene SYSVOL significativamente más grande/pequeño que otro, la replicación puede estar fallando
+
+### 5. 📊 RESUMEN
+- type_id: SYSVOL_REPLICATION_SUMMARY
+- Incluir: mecanismo (DFSR/FRS), DCs con SYSVOL ready, tamaño promedio
+
+**📤 FORMATO:**
+- **type_id**: SYSVOL_FRS_DEPRECATED, SYSVOL_NOT_READY, SYSVOL_SIZE_EXCESSIVE, SYSVOL_SIZE_MISMATCH, SYSVOL_REPLICATION_SUMMARY
+- **affected_objects**: Nombres de DCs afectados`,
+
+    GPOComplexity: `Eres un auditor de higiene operativa de Active Directory. Analiza la complejidad y salud de las GPOs.
+
+⚠️ REGLA ANTI-ALUCINACIÓN: Solo reporta GPOs que aparezcan EXPLÍCITAMENTE en los datos proporcionados. NO inventes nombres de GPOs ni cantidades de settings.
+
+**CONTEXTO:** Las GPOs son el mecanismo central de configuración en AD. GPOs monolíticas (con decenas de settings), GPOs vacías, GPOs sin enlaces y desincronización DS/Sysvol son señales claras de mala administración y deuda técnica.
+
+**INSTRUCCIONES:**
+
+### 1. 🟠 GPO MONOLÍTICA (>50 settings)
+- type_id: GPO_MONOLITHIC
+- severity: high
+- GPOs con demasiados settings = difícil mantenimiento, logon lento, cambios riesgosos
+- Recomendación: dividir en GPOs más pequeñas por función
+
+### 2. 🟡 GPO VACÍA
+- type_id: GPO_EMPTY
+- severity: medium
+- GPOs con versión DS=0 y Computer=0 = nunca configuradas, basura administrativa
+- Recomendación: eliminar si no tiene propósito
+
+### 3. 🟡 GPO SIN ENLACE
+- type_id: GPO_UNLINKED
+- severity: medium
+- GPOs que no están enlazadas a ninguna OU/dominio/sitio = no se aplican, ocupan espacio en SYSVOL
+
+### 4. 🔴 DESINCRONIZACIÓN DS vs SYSVOL
+- type_id: GPO_VERSION_MISMATCH
+- severity: critical
+- La versión en AD Directory Services no coincide con la versión en el filesystem SYSVOL
+- Indica problema de replicación — la GPO editada puede no aplicarse correctamente
+
+### 5. 📊 RESUMEN
+- type_id: GPO_COMPLEXITY_SUMMARY
+- Incluir: total GPOs, monolíticas, vacías, sin enlace, con mismatch
+
+**📤 FORMATO:**
+- **type_id**: GPO_MONOLITHIC, GPO_EMPTY, GPO_UNLINKED, GPO_VERSION_MISMATCH, GPO_COMPLEXITY_SUMMARY
+- **affected_objects**: Nombres de GPOs afectadas`,
+
+    DuplicateSPNs: `Eres un auditor de higiene operativa de Active Directory. Analiza Service Principal Names (SPNs) duplicados.
+
+⚠️ REGLA ANTI-ALUCINACIÓN: Solo reporta SPNs y cuentas que aparezcan EXPLÍCITAMENTE en los datos proporcionados. NO inventes nombres de SPNs ni cuentas.
+
+**CONTEXTO:** Un SPN (Service Principal Name) identifica de forma única un servicio en AD para autenticación Kerberos. Cuando dos cuentas tienen el mismo SPN, Kerberos no puede determinar cuál usar y la autenticación falla silenciosamente. Esto causa problemas intermitentes muy difíciles de diagnosticar.
+
+**INSTRUCCIONES:**
+
+### 1. 🔴 SPN DUPLICADO EN CUENTAS DIFERENTES
+- type_id: SPN_DUPLICATE_CRITICAL
+- severity: critical
+- El mismo SPN registrado en 2+ cuentas = autenticación Kerberos falla para ese servicio
+- Indicar: el SPN, las cuentas propietarias, tipo de objeto (user/computer)
+- Recomendación: setspn -D [spn] [cuenta_incorrecta]
+
+### 2. 🟠 SPNs DUPLICADOS MÚLTIPLES
+- type_id: SPN_DUPLICATE_WIDESPREAD
+- severity: high
+- Más de 5 SPNs duplicados = problema sistemático de gestión de SPNs
+- Indica falta de proceso de alta/baja de servicios
+
+### 3. 📊 RESUMEN
+- type_id: SPN_DUPLICATE_SUMMARY
+- Incluir: total SPNs en el dominio, cantidad de duplicados, servicios más afectados
+
+**📤 FORMATO:**
+- **type_id**: SPN_DUPLICATE_CRITICAL, SPN_DUPLICATE_WIDESPREAD, SPN_DUPLICATE_SUMMARY
+- **affected_objects**: Los SPNs duplicados y sus cuentas propietarias`
   };
 
   // Map specialized categories to broader prompts
@@ -3275,6 +6101,7 @@ EJEMPLO DE ANÁLISIS INCORRECTO (NO HACER):
     'AdminSDHolder': 'IdentityRisks',
     'AdminCountObjects': 'IdentityRisks',
 
+    'CertServices': 'ADCSInventory',
     'ADCSInventory': 'ADCSInventory',
     'ProtocolSecurity': 'ProtocolSecurity',
 
