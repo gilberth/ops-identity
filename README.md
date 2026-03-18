@@ -1,254 +1,181 @@
-# 🩺 OpsIdentity
+# OpsIdentity
+
 **Enterprise Active Directory Hygiene, Architecture & Configuration Drift Platform**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-18.3-61dafb)](https://react.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-18-green)](https://nodejs.org/)
+[![Bun](https://img.shields.io/badge/Bun-Runtime-f9f1e1)](https://bun.sh/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)](https://www.docker.com/)
 
-## 🚀 Features
+OpsIdentity detects **administrative disorder, architectural debt, and suboptimal configurations** in Active Directory environments. It identifies what deviates from best practices — not attack vectors.
 
-- 🤖 **AI-Powered Analysis**: Advanced security assessment using OpenAI GPT models
-- 🎯 **MITRE ATT&CK Mapping**: Automated threat technique identification and mapping
-- 📊 **Compliance Frameworks**: CIS Controls, NIST 800-53, ISO 27001, PCI-DSS, SOX, GDPR
-- 📄 **Professional Reports**: Generate comprehensive Word documents with implementation roadmaps
-- 🔐 **15+ AD Categories**: Users, Groups, GPOs, Kerberos, DNS, DHCP, Security, and more
-- 🛡️ **Enterprise-Grade Prompts**: Specialized AI prompts for each category with 4-5 phase implementation roadmaps
-- 🐳 **Self-Hosted Solution**: Complete Docker Compose deployment with PostgreSQL backend
-- 📈 **Real-Time Analysis**: Live progress tracking and detailed logging
+> _"No busco hackers. Busco desorden administrativo, mala arquitectura y configuraciones suboptimas."_
 
-## 📋 Assessment Categories
+## Features
 
-| Category      | Focus Areas                                                | Severity Levels        |
-| ------------- | ---------------------------------------------------------- | ---------------------- |
-| **Users**     | Inactive accounts, privileged users, password policies     | CRITICAL, HIGH, MEDIUM |
-| **Groups**    | Domain Admins, Protected Users, Tier 0 separation          | CRITICAL, HIGH         |
-| **GPOs**      | Unlinked policies, disabled settings, permission issues    | HIGH, MEDIUM           |
-| **Kerberos**  | KRBTGT rotation, Golden Ticket detection, encryption types | CRITICAL, HIGH         |
-| **Security**  | NTLM levels, SMB protocols, LAPS deployment                | CRITICAL, HIGH         |
-| **DNS**       | Zone transfers, forwarders, scavenging                     | HIGH, MEDIUM           |
-| **DHCP**      | Rogue servers, scope security, auditing                    | CRITICAL, MEDIUM       |
-| **DC Health** | Replication, services, disk space                          | HIGH, MEDIUM           |
+- **AI-Powered Analysis**: Multi-provider AI (Anthropic Claude, OpenAI, Gemini, DeepSeek) with specialized prompts per category
+- **48 AD Categories**: From Users and GPOs to DC Services Health, SYSVOL State, and Duplicate SPNs
+- **Anti-Hallucination Engine**: 3-layer validation with 194+ rules ensures findings are grounded in source data
+- **Professional Reports**: DOCX with compliance mappings (CIS, NIST, ISO 27001, PCI-DSS, SOX, GDPR) and implementation roadmaps
+- **Raw Data PDF Export**: Complete AD inventory with all collected data
+- **Real-Time Progress**: Live analysis tracking with per-category status
+- **Multi-Tenant**: Client isolation with separate assessments per organization
+- **OAuth2 SSO**: Authentik integration for enterprise authentication
 
-## 🏗️ Architecture
+## Assessment Categories
+
+### Core Hygiene (Sonnet)
+| Category | Focus |
+|----------|-------|
+| **Users** | Inactive accounts, password never expires, privilege creep |
+| **Groups** | Empty groups, excessive privileges, Domain Admins sprawl |
+| **Computers** | Stale machines, legacy OS, unconstrained delegation |
+| **GPOs** | Unlinked policies, disabled settings, permission issues |
+| **OUs** | Empty OUs, excessive nesting, blocked inheritance |
+| **DNS** | Public forwarders, scavenging misconfigured, stale records |
+| **DHCP** | Rogue servers, scope exhaustion, options audit |
+| **Password Policies** | Weak length, no complexity, reversible encryption |
+
+### Infrastructure Health (Sonnet)
+| Category | Focus |
+|----------|-------|
+| **DC Health** | Services status, disk space, replication errors |
+| **DC Services Health** | NTDS, DNS, KDC, DFSR, Netlogon stopped |
+| **DC Disk Space** | Low disk = SYSVOL stops replicating |
+| **SYSVOL Replication** | FRS (deprecated) vs DFSR, sync state |
+| **Sites & Topology** | Empty sites, multi-site links, bridgehead servers |
+| **DC Connectivity** | Port matrix (RPC, LDAP, SMB, Kerberos) |
+| **DC DNS Resolution** | Loopback, mismatch, resolution failures |
+| **Replication Latency** | replsummary deltas, operational errors |
+| **FSMO Roles** | Single point of failure, RID pool exhaustion |
+
+### Complex Analysis (Opus)
+| Category | Focus |
+|----------|-------|
+| **Kerberos** | KRBTGT rotation, weak encryption types |
+| **Kerberos Auth Failures** | Event 4771, brute force patterns |
+| **Secure Channel** | Machine account staleness, DC isolation |
+| **Security** | NTLM levels, SMB protocols, LAPS deployment |
+| **ACLs** | Broken inheritance, dangerous permissions |
+| **Certificate Services** | ESC1-ESC8, CA placement, template permissions |
+| **Trust Health** | DNS/nltest verification, SID filtering |
+| **Orphaned DCs** | Unreachable DCs, failed replication |
+| **Orphaned Metadata** | Post-decommission residual objects |
+
+### GPO & SPN Hygiene (Sonnet)
+| Category | Focus |
+|----------|-------|
+| **GPO Complexity** | Monolithic GPOs (>50 settings), empty, unlinked, DS/Sysvol mismatch |
+| **Duplicate SPNs** | SPNs registered on multiple accounts = silent auth failures |
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Frontend (React + TS)                    │
-│  • Assessment Dashboard • Report Generation • Real-time Logs │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ HTTP/REST API
-┌──────────────────────▼──────────────────────────────────────┐
-│                   Backend (Node.js 18)                       │
-│  • AI Analysis Engine • Category Processing • Data Chunking  │
-│  • OpenAI Integration • PostgreSQL Queries                   │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ SQL
-┌──────────────────────▼──────────────────────────────────────┐
-│                   PostgreSQL Database                        │
-│  • Assessments • Findings • Raw Data (gzip) • Logs           │
-└──────────────────────────────────────────────────────────────┘
+client/                  React 18 + TypeScript + Vite (SWC)
+  src/
+    components/          shadcn/ui + Radix UI primitives
+    pages/               Dashboard, AssessmentDetail, NewAssessment, Admin
+    lib/                 reportGenerator.ts (DOCX), rawDataPdfGenerator.ts (PDF)
+
+server/
+  server.js              Express backend (~8000 lines)
+                         - 48 category prompts with anti-hallucination rules
+                         - 194+ ATTRIBUTE_VALIDATION_RULES
+                         - Smart pre-filtering (70% token reduction)
+                         - Multi-provider AI client
+  copilot.js             AI provider wrapper (Anthropic, OpenAI, Gemini, DeepSeek)
+  analyzers/             Deterministic rule analyzers (userRules.js)
+  init.sql               PostgreSQL schema (auto-init on startup)
+
+docker-compose.yml       App + PostgreSQL 15
 ```
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-### Frontend
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | React 18.3, TypeScript 5.8, Vite 5.4, Tailwind CSS, shadcn/ui, TanStack Query v5 |
+| **Backend** | Bun runtime, Express, PostgreSQL 15 |
+| **AI Providers** | Anthropic (Opus/Sonnet), OpenAI, Google Gemini, DeepSeek |
+| **Reports** | docx 9.5 (Word), jspdf (PDF), pako (gzip) |
+| **Auth** | Passport OAuth2, Authentik SSO |
+| **Deploy** | Docker Compose, GitHub Actions CI/CD |
 
-- **React 18.3** - UI framework
-- **TypeScript 5.8** - Type safety
-- **Vite 5.4** - Build tool
-- **Tailwind CSS** - Styling
-- **shadcn/ui** - UI components
-- **docx 9.5** - Word report generation
-- **pako** - Gzip decompression
+## Quick Start
 
-### Backend
+### Docker (Production)
 
-- **Node.js 18** - Runtime
-- **Express** - Web framework
-- **PostgreSQL** - Database
-- **OpenAI API** - AI analysis
-- **zlib** - Data compression
-
-### DevOps
-
-- **Docker Compose** - Container orchestration
-- **Nginx** - Frontend web server
-- **GitHub Actions** (ready for CI/CD)
-
-## 🚀 Despliegue en Servidor Nuevo (Docker)
-
-Sigue estos pasos para desplegar la aplicación en un servidor limpio (Ubuntu/Debian recomendado) con Docker y Docker Compose instalados.
-
-### 1. Clonar el Repositorio
 ```bash
 git clone https://github.com/gilberth/ops-identity.git
 cd ops-identity
-```
-
-### 2. Configurar Variables de Entorno
-Crea el archivo `.env` copiando el ejemplo:
-
-```bash
 cp env.example .env
-nano .env
-```
-
-**Modificaciones necesarias en `.env`:**
-
-*   **`OPENAI_API_KEY`**: (Obligatorio) Tu clave de API de OpenAI para el análisis de IA.
-*   **`POSTGRES_PASSWORD`**: (Recomendado) Cambia la contraseña por defecto de la base de datos.
-*   **`VITE_VPS_ENDPOINT`**: (Opcional) Si usas un dominio o IP específica, configúralo aquí (ej: `http://mi-servidor.com`). Si lo dejas vacío, la aplicación usará rutas relativas.
-
-### 3. Iniciar los Contenedores
-Ejecuta el siguiente comando para construir e iniciar los servicios (App unificada + Base de datos):
-
-```bash
+# Edit .env: set OPENAI_API_KEY or ANTHROPIC_API_KEY
 docker compose up -d --build
 ```
 
-### 4. Verificar el Despliegue
-Accede a tu servidor a través del navegador:
-`http://<TU-IP-SERVIDOR>:3000`
+Access: `http://localhost:3000`
 
-*   **Frontend**: Servido directamente en la raíz `/`.
-*   **Backend API**: Disponible en `/api`.
-*   **Base de Datos**: Puerto 5432 (interno).
-
----
-
-## 💻 Desarrollo Local
-
-Para ejecutar el entorno de desarrollo en tu máquina local:
+### Local Development
 
 ```bash
-# 1. Instalar dependencias
-npm install
-
-# 2. Configurar entorno
-cp env.example .env
-# (Asegúrate de poner tu OPENAI_API_KEY en .env)
-
-# 3. Iniciar base de datos
+# Start database
 docker compose up -d db
 
-# 4. Iniciar servidor de desarrollo (Frontend + Backend)
-npm run dev
+# Backend (Terminal 1)
+cd server && bun --watch server.js
+
+# Frontend (Terminal 2)
+cd client && npm run dev
 ```
 
-Accede a: `http://localhost:5173` (Frontend) y `http://localhost:3000` (Backend).
+Access: Frontend `http://localhost:8080`, Backend `http://localhost:3000`
 
-## 📖 Usage
+## Usage
 
-1. **Upload AD Assessment Data**: Upload JSON file from PowerShell assessment script
-2. **AI Analysis**: System automatically analyzes 15+ categories using specialized AI prompts
-3. **Review Findings**: View categorized findings with severity levels and MITRE mapping
-4. **Generate Report**: Download comprehensive Word document with:
-   - Executive Summary
-   - AD Forest/Domain Summary
-   - GPO Analysis
-   - Findings by Severity (Critical, High, Medium, Low)
-   - Implementation Roadmaps (4-5 phases)
-   - Compliance Mapping
-   - Remediation Commands (PowerShell)
+1. **Generate Script**: Select AD modules and generate a PowerShell collection script
+2. **Run on DC**: Execute the PS1 script on a Domain Controller (requires RSAT/AD module)
+3. **Upload JSON**: Upload the collected JSON file (up to 500MB, supports resumable uploads)
+4. **AI Analysis**: System analyzes 48 categories with specialized prompts per category
+5. **Review Findings**: Dashboard with security score, severity breakdown, and category analysis
+6. **Export Reports**: Download DOCX (executive report), PDF (scorecard), CSV (raw data)
 
-## 🔐 Security Features
+## Environment Variables
 
-- **Secret Management**: Environment variables for API keys
-- **Data Compression**: Gzip compression for large datasets
-- **Input Sanitization**: SQL injection and XSS prevention
-- **Error Handling**: Comprehensive error logging without exposing sensitive data
-- **Access Control**: Ready for authentication integration
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes* | Anthropic API key (recommended) |
+| `OPENAI_API_KEY` | Yes* | OpenAI API key (*one AI key required) |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `AI_PROVIDER` | No | `anthropic` / `openai` / `gemini` / `deepseek` |
+| `AI_MODEL` | No | Model override |
+| `POSTGRES_PASSWORD` | No | Database password (default: changeme) |
+| `VITE_VPS_ENDPOINT` | No | Frontend API endpoint (empty = relative paths) |
 
-## 📊 Example Findings
+## Model Selection
 
-### Critical: KRBTGT Password Never Rotated
+Complex categories use **Claude Opus** for deeper analysis. Standard categories use **Claude Sonnet** for efficiency.
 
-```
-Título: Cuenta KRBTGT sin renovar por 3537 días (9.7 años) - Riesgo de Golden Ticket
-Severidad: CRITICAL
-MITRE ATT&CK: T1558.001 - Golden Ticket
-CIS Control: 5.2.1, 5.4
-Timeline: 7 días (procedimiento dual con 10h de espera)
+| Model | Categories |
+|-------|-----------|
+| **Opus** | Kerberos, Security, ACLs, CertServices, TrustHealth, FSMORoles, KerberosAuthFailures, SecureChannel, ReplicationHealthAllDCs, DCDiagHealth, OrphanedDCs, OrphanedMetadata, TrustHealthDetailed, DCServicesHealth |
+| **Sonnet** | All other categories (34) |
 
-Roadmap 5 Fases:
-FASE 1 - PRE-VALIDACIÓN (Día 0)
-FASE 2 - PRIMERA ROTACIÓN (Día 1, 2 AM)
-FASE 3 - PERIODO ESPERA (10+ horas)
-FASE 4 - SEGUNDA ROTACIÓN (Día 2)
-FASE 5 - POST-VALIDACIÓN (Día 3)
+## Anti-Hallucination System
 
-Comandos PowerShell: New-CtmADKrbtgtKeys.ps1 -Confirm:$false
-```
+Every finding is validated against source data through 3 layers:
 
-## 🤝 Contributing
+1. **Per-chunk validation**: Verify affected objects exist in the data chunk
+2. **Post-merge validation**: Verify objects exist in the full assessment dataset
+3. **Attribute validation**: 194+ rules verify objects actually have the claimed issue
 
-This is a private repository. For collaboration:
+All prompts include: _"Solo reporta objetos que aparezcan EXPLICÍTAMENTE en los datos. NO inventes nombres."_
 
-1. Request access from repository owner
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Commit changes: `git commit -m '✨ Add amazing feature'`
-4. Push to branch: `git push origin feature/amazing-feature`
-5. Open Pull Request
+## Deployment
 
-## 📝 License
+- **Production**: `10.10.10.232`, path `/data/activeinsight`
+- **CI/CD**: GitHub Actions builds and pushes `ghcr.io/gilberth/ops-identity:latest` on push to `main`
+- **Deploy**: `ssh root@10.10.10.232 "cd /data/activeinsight && docker compose pull app && docker compose up -d app"`
 
-This project is proprietary and confidential. All rights reserved.
+## License
 
-## 🔗 GitHub MCP Integration
-
-This repository supports **GitHub Model Context Protocol (MCP)** for AI-assisted development:
-
-### Available MCP Tools
-
-- ✅ `github-pull-request_formSearchQuery` - Build GitHub search queries
-- ✅ `github-pull-request_doSearch` - Execute searches on issues and PRs
-- ✅ `github-pull-request_renderIssues` - Display issues in markdown tables
-
-### MCP Server Configuration
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
-      }
-    }
-  }
-}
-```
-
-### Usage with AI Assistants
-
-```typescript
-// Search for open security issues
-const query = await github.formSearchQuery({
-  naturalLanguageString: "open security findings with critical severity",
-  repo: { owner: "gilberth", name: "ad-insight-360" },
-});
-
-const results = await github.doSearch(query);
-```
-
-## 📞 Support
-
-For support and inquiries:
-
-- **Repository**: [github.com/gilberth/ad-insight-360](https://github.com/gilberth/ad-insight-360)
-- **Issues**: [GitHub Issues](https://github.com/gilberth/ad-insight-360/issues)
-
-## 🏆 Credits
-
-Developed with AI assistance using:
-
-- GitHub Copilot
-- Claude Sonnet 4.5
-- Model Context Protocol (MCP)
-
----
-
-**⚠️ CONFIDENTIAL**: This repository contains proprietary security assessment tools. Unauthorized access or distribution is prohibited.
+Proprietary and confidential. All rights reserved.
